@@ -77,6 +77,10 @@ class MemoryUnavailable(Exception):
     """Hindsight could not answer within the call's limits: timeout, refused, denied or malformed."""
 
 
+class BankNotFound(MemoryUnavailable):
+    """The granted bank does not exist on the server yet: nothing has been retained to it."""
+
+
 class BankGrant(Contract):
     bank_id: Annotated[str, Field(pattern=BANK_ID_PATTERN)]
     board: Annotated[str, Field(pattern=BOARD_SLUG_PATTERN)]
@@ -225,6 +229,9 @@ def _request(
     except urllib.error.HTTPError as error:
         if error.code in {401, 403}:
             raise MemoryAccessError(f"Hindsight refused the credentials for bank {bank_id!r} (HTTP {error.code})") from None
+        # Hindsight 1.0 names the bank in a missing-bank 404; a wrong route says only "Not Found".
+        if error.code == 404 and _detail(error) == f"Bank '{bank_id}' not found":
+            raise BankNotFound(f"bank {bank_id!r} not found") from None
         raise MemoryUnavailable(f"HTTP {error.code}") from None
     except urllib.error.URLError as error:
         raise MemoryUnavailable(_reason(error.reason)) from None
@@ -236,6 +243,13 @@ def _request(
         return json.loads(raw)
     except ValueError:
         raise MemoryUnavailable("response is not JSON") from None
+
+
+def _detail(error: urllib.error.HTTPError) -> object:
+    try:
+        return json.loads(error.read(1024)).get("detail")
+    except (ValueError, AttributeError, OSError):
+        return None
 
 
 def _reason(reason: object) -> str:
@@ -280,8 +294,11 @@ def recall(config: MemoryConfig, project: str, bank_id: str, query: str, repo_ro
         "budget": "low",
         "max_tokens": config.budgets.recall_max_tokens,
     }
-    response = _parse(_RecallResponse, _request(config, bank_id, "/memories/recall", body))
-    return {"bank_id": bank_id, **shape_recall(response.model_dump(), repo_root, config.budgets)}
+    try:
+        response = _parse(_RecallResponse, _request(config, bank_id, "/memories/recall", body)).model_dump()
+    except BankNotFound:
+        response = {"results": []}
+    return {"bank_id": bank_id, **shape_recall(response, repo_root, config.budgets)}
 
 
 def shape_recall(response: dict[str, Any], repo_root: Path, budgets: MemoryBudgets) -> dict[str, Any]:
