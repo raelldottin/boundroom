@@ -153,6 +153,7 @@ The adapter was run against a real Hindsight server for the first time, with the
 | `snapshot` | Two memories (the fact and Hindsight's consolidated observation) with `total` 2, written as `<sha256>.json`. |
 | Restart read-back | After a clean stop and start, a new snapshot was byte-identical to the one taken before, and had the same ids and `total`. |
 | `reflect` | **Failed.** See the findings below. |
+| Backup and restore | `pg_dump -Fc` of the live database (105 kB, mode 600, kept outside any repository) restored with `pg_restore` into a throwaway cluster with no errors. A second server on that copy returned a snapshot byte-identical to the live one (same sha256, ids and `total`) and the same recall ids. The copy was then stopped and deleted. |
 
 **Findings.**
 
@@ -169,4 +170,4 @@ An operator runs the snapshot export by hand, and no supervisor, policy or conte
 ## For the owner
 
 - **License metadata mismatch.** At the pinned revision, the repository `LICENSE` is MIT, but `info.license` in `hindsight-docs/static/openapi.json` says "Apache 2.0". The two differ. This is recorded for the owner, and nothing here chooses a license.
-- **Not done here:** a local chat model (so that inference stays on the machine), an egress-denied run, a backup and restore of the pg0 data, reflect on a tool-calling route, and any real project bank. The [live proof](#live-proof-on-a-local-server-p02-2026-11-01) covers a running server, a live snapshot and restart read-back.
+- **Not done here:** a local chat model (so that inference stays on the machine), an egress-denied run, reflect on a tool-calling route, and any real project bank. The [live proof](#live-proof-on-a-local-server-p02-2026-11-01) covers a running server, a live snapshot, restart read-back and a backup restored into a second server.
