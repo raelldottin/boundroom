@@ -6,6 +6,7 @@ tests never touch ``~/.hermes`` or a real board.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import sqlite3
@@ -244,3 +245,80 @@ def test_cli_prints_the_projection_and_fails_cleanly(tmp_path, capsys):
 
     assert kp.main(["--board-dir", str(tmp_path / "missing"), "--overlay", str(OVERLAY)]) == 1
     assert "missing board database" in capsys.readouterr().err
+
+
+def mapped_overlay(**changes: object) -> kp.KanbanOverlay:
+    """The example overlay with every approved task mapped to queue slice ``q.<task>``."""
+    document = json.loads(OVERLAY.read_text(encoding="utf-8"))
+    for task_id, approval in document["approved"].items():
+        approval["queue_slice_id"] = f"q.{task_id}"
+    document.update(changes)
+    return kp.KanbanOverlay.model_validate(document)
+
+
+def mirror(projection: kp.Projection) -> dict:
+    """The JSON queue the projection stands for, under the ``q.<task>`` ids."""
+    rename = {slice_id: f"q.{slice_id.rsplit('.', 1)[1]}" for slice_id in by_id(projection)}
+    slices = [
+        {**copy.deepcopy(record), "slice_id": rename[record["slice_id"]], "depends_on": [rename[d] for d in record["depends_on"]]}
+        for record in projection.queue["slices"]
+    ]
+    return {**projection.queue, "slices": slices}
+
+
+def test_a_matching_queue_has_an_empty_shadow_diff(tmp_path):
+    overlay = mapped_overlay()
+    projection = kp.project(kp.read_board(make_board(tmp_path)), overlay)
+
+    diff = kp.shadow_diff(projection, overlay, mirror(projection))
+
+    assert all("queue_slice_id" not in record for record in projection.queue["slices"])  # never projected
+    assert diff["mismatches"] == [] and diff["unmapped_tasks"] == diff["missing_from_queue"] == diff["queue_only"] == []
+    assert diff["next"]["queue"] == diff["next"]["kanban"] is not None
+
+
+def test_the_shadow_diff_reports_every_difference(tmp_path):
+    overlay = mapped_overlay()
+    unmapped = overlay.approved["t_000000a7"].model_copy(update={"queue_slice_id": None})
+    overlay = overlay.model_copy(update={"approved": {**overlay.approved, "t_000000a7": unmapped}})
+    projection = kp.project(kp.read_board(make_board(tmp_path)), overlay)
+    queue = mirror(projection)
+    slices = {record["slice_id"]: record for record in queue["slices"]}
+    slices["q.t_000000a1"]["status"] = "blocked"
+    slices["q.t_000000a1"]["entry_condition"] = "Waiting."
+    slices["q.t_000000a1"]["allowed_paths"].reverse()  # order alone is not a difference
+    slices["q.t_000000a2"]["required_validations"] = []
+    del slices["q.t_000000a4"]
+    slices["q.extra"] = {**slices["q.t_000000a3"], "slice_id": "q.extra", "depends_on": []}
+    queue = {**queue, "slices": list(slices.values())}
+
+    diff = kp.shadow_diff(projection, overlay, queue)
+
+    assert sorted((m["slice"], m["field"]) for m in diff["mismatches"]) == [
+        ("q.t_000000a1", "status"),
+        ("q.t_000000a2", "required_validations"),
+    ]
+    assert diff["unmapped_tasks"] == [sid("t_000000a7")]
+    assert diff["missing_from_queue"] == ["q.t_000000a4"]
+    assert "q.extra" in diff["queue_only"] and "q.t_000000a7" in diff["queue_only"]
+
+
+def test_two_tasks_mapped_to_one_queue_slice_are_refused(tmp_path):
+    overlay = mapped_overlay()
+    twin = overlay.approved["t_000000a2"].model_copy(update={"queue_slice_id": "q.t_000000a1"})
+    overlay = overlay.model_copy(update={"approved": {**overlay.approved, "t_000000a2": twin}})
+    projection = kp.project(kp.read_board(make_board(tmp_path)), overlay)
+
+    with pytest.raises(kp.ProjectionError, match="more than one task"):
+        kp.shadow_diff(projection, overlay, mirror(projection))
+
+
+def test_the_cli_prints_the_shadow_diff(tmp_path, capsys):
+    overlay_path = tmp_path / "overlay.json"
+    overlay_path.write_text(mapped_overlay().model_dump_json(exclude_none=True), encoding="utf-8")
+    board_dir = make_board(tmp_path)
+    queue_path = tmp_path / "slices.json"
+    queue_path.write_text(json.dumps(mirror(kp.project(kp.read_board(board_dir), mapped_overlay()))), encoding="utf-8")
+
+    assert kp.main(["--board-dir", str(board_dir), "--overlay", str(overlay_path), "--shadow-queue", str(queue_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["shadow"]["mismatches"] == []
