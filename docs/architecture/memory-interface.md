@@ -126,6 +126,40 @@ python -m automation.context.memory snapshot --config <memory map> --project <pr
 
 Exit codes: `0` written (the path, bank and memory count print as JSON), `1` Hindsight unavailable, `2` refused (map, grant, budget, credential or directory).
 
+## Live proof on a local server (P0.2, 2026-11-01)
+
+The adapter was run against a real Hindsight server for the first time, with the owner's approval. All text was synthetic, held in a throwaway git repository. No project memory was retained, and Hermes's own memory settings were not changed.
+
+**The server.**
+
+| | |
+| --- | --- |
+| Package | `hindsight-api` 1.0.0, the pinned upstream revision, installed with `uv tool install` (no Docker) |
+| Listen address | `127.0.0.1:8888` only. Hindsight's default is `0.0.0.0`, so the launch script sets `HINDSIGHT_API_HOST`. |
+| Authentication | The built-in `ApiKeyTenantExtension`. The key lives in a mode-600 file outside any repository, and the adapter reads it as `HINDSIGHT_API_KEY`. |
+| Storage | The embedded PostgreSQL, instance `pg0://hindsight-p02` |
+| Embeddings and reranker | Local: `BAAI/bge-small-en-v1.5` and `cross-encoder/ms-marco-MiniLM-L-6-v2`, downloaded once from Hugging Face |
+| LLM | A route on the operator's LiteLLM gateway at `127.0.0.1:4000`, reached with a dedicated virtual key that has a budget. The route serves a **hosted** model. |
+
+**What the adapter showed.**
+
+| Check | Result |
+| --- | --- |
+| A request with no key | Refused with `401`. |
+| `retain` of one committed file with `commit:<sha>` | Accepted in 19 s, carrying the file's `source_sha256` and the evidence reference. |
+| `recall`, and `recall_section` for a context bundle | Returned the retained fact with its provenance verified against the checkout. |
+| Recall after the source file changed | The same memory was rejected as `source changed since retained`, and the section reported `empty`. |
+| A project recalling another project's bank | Refused by the map before any request (`MemoryAccessError`). |
+| `snapshot` | Two memories (the fact and Hindsight's consolidated observation) with `total` 2, written as `<sha256>.json`. |
+| Restart read-back | After a clean stop and start, a new snapshot was byte-identical to the one taken before, and had the same ids and `total`. |
+| `reflect` | **Failed.** See the findings below. |
+
+**Findings.**
+
+- **Reflect needs native tool calls.** Hindsight's reflect is agentic. The configured route returned its tool call as plain text instead of a `tool_calls` entry, so Hindsight answered `500` and the adapter reported `MemoryUnavailable: HTTP 500`. The context workflow never calls reflect, so recall is unaffected. Reflect needs a route that does native tool calling, which Hindsight can take separately (`HINDSIGHT_API_REFLECT_LLM_*`).
+- **A missing bank reads as unavailable.** Recall on a granted bank that holds nothing yet gets a `404`, which the adapter reports as `unavailable`. It refuses nothing it should allow, but `empty` would describe it better.
+- **Local inference is still open.** Embeddings and reranking ran locally, but retain and consolidation used a hosted model, so the synthetic text left this machine. P0.2's local-inference and egress-denied acceptance are not met by this run.
+
 ## Performance evidence
 
 `build_context_bundle` is a registered performance-critical path. `test_build_context_bundle_benchmark` is unchanged and still measures the bundle with no memory map, which is the default path and the existing baseline. Shaping and verifying a recall response (`memory.shape_recall`) is a new path on that registered path. Its cost grows with the number of results and the size of the source files it hashes, so it is registered separately and benchmarked by `test_shape_memory_recall_benchmark` against the bundled fixtures. The benchmark uses no server and exercises both the kept and the rejected branches.
@@ -135,4 +169,4 @@ The snapshot export is not a performance-critical path. An operator runs it by h
 ## For the owner
 
 - **License metadata mismatch.** At the pinned revision, the repository `LICENSE` is MIT, but `info.license` in `hindsight-docs/static/openapi.json` says "Apache 2.0". The two differ. This is recorded for the owner, and nothing here chooses a license.
-- **Not done here:** installing or running Hindsight, a snapshot of a live bank, the local-model profile, an egress-denied integration test against a real server, and durable read-back and backup verification. Those belong to the deployment and canary work (RA-CP-005).
+- **Not done here:** a local chat model (so that inference stays on the machine), an egress-denied run, a backup and restore of the pg0 data, reflect on a tool-calling route, and any real project bank. The [live proof](#live-proof-on-a-local-server-p02-2026-11-01) covers a running server, a live snapshot and restart read-back.
