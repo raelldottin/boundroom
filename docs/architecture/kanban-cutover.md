@@ -8,12 +8,14 @@ Code: `automation/supervisor/kanban_writer.py`, and `KanbanQueue` in `automation
 
 ```bash
 python automation/supervisor/run_next.py --kanban-board ~/.hermes/kanban/boards/<slug> \
-  --kanban-overlay <overlay.json> [--hermes "hermes"] [--agent-cmd …]
+  --kanban-overlay <overlay.json> [--hermes "hermes"] [--agent-cmd …] \
+  [--memory-config <map.json> --memory-project <project>]
 ```
 
 - **The board is the queue.** `--queue` is ignored and no JSON queue is read or written, so nothing is dual-written. Each loop reads a fresh projection.
 - **Claim before the agent.** Setting a slice `in_progress` claims its task at the revision just projected. A refused claim stops the run (`stop: …`, exit 2) before the agent starts.
 - **Record after the decision.** Every later status, including each failure path, is recorded on that claim. A failure before the agent wrote a handoff is recorded with `handoff sha256 none`; a `done` verdict always has its handoff.
+- **Memory.** With `--memory-config` and `--memory-project`, each slice's context bundle recalls from that project's Hindsight bank before the claim ([memory interface](memory-interface.md#context-bundle-section)). Without them, nothing is recalled.
 - **Claim TTL.** The claim lasts `handoff_timeout_seconds` from the overlay's policy plus 30 minutes (`CLAIM_MARGIN_SECONDS`), so it outlasts the agent and the validation replay.
 - **Continuation.** A slice the supervisor finished is in Kanban `review`, so the projection shows it as blocked. Its Kanban children stay `todo` until a person approves it, and the loop can't run ahead of that approval.
 

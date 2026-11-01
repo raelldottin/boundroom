@@ -17,11 +17,13 @@ from pathlib import Path
 import pytest
 
 from automation.supervisor import run_next
-from automation.tests import test_kanban_writer
+from automation.tests import test_kanban_writer, test_memory
 from automation.tests.test_kanban_writer import BOARD, READY, calls, execute, row
 
 board = test_kanban_writer.board
 hermes = test_kanban_writer.hermes
+fake = test_memory.fake
+api_key = test_memory.api_key
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OVERLAY = REPO_ROOT / "automation/examples/kanban-overlay.json"
@@ -54,9 +56,17 @@ def consumer(tmp_path, monkeypatch):
     return repo
 
 
-def supervise(monkeypatch, board_dir: Path, hermes_cmd: tuple[str, ...], agent: Path, exit_code: int = 0) -> int:
-    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(agent))} {{handoff_file}} {{slice_id}} {exit_code}"
-    argv = ["run_next", "--kanban-board", str(board_dir), "--kanban-overlay", str(OVERLAY), "--agent-cmd", command]
+def supervise(
+    monkeypatch,
+    board_dir: Path,
+    hermes_cmd: tuple[str, ...],
+    agent: Path,
+    exit_code: int = 0,
+    extra: tuple[str, ...] = (),
+    before_agent: str = "",
+) -> int:
+    command = f"{before_agent}{shlex.quote(sys.executable)} {shlex.quote(str(agent))} {{handoff_file}} {{slice_id}} {exit_code}"
+    argv = ["run_next", "--kanban-board", str(board_dir), "--kanban-overlay", str(OVERLAY), "--agent-cmd", command, *extra]
     monkeypatch.setattr(sys, "argv", [*argv, "--autonomous-limit", "1", "--hermes", shlex.join(hermes_cmd)])
     return run_next._cli_entry()
 
@@ -152,3 +162,31 @@ def test_another_running_task_stops_the_supervisor(consumer, board, hermes, agen
 
     assert "already has in_progress slice" in capsys.readouterr().err
     assert calls(tmp_path) == []
+
+
+def test_recalled_memory_reaches_the_agent(consumer, board, hermes, agent, fake, api_key, monkeypatch, tmp_path):
+    config = tmp_path / "memory-config.json"
+    config.write_text(test_memory.make_config(fake.endpoint).model_dump_json(), encoding="utf-8")
+    seen = tmp_path / "context.json"
+    # Provenance is checked against the consumer checkout, so the two cited sources must be committed there.
+    for cited in ("automation/examples/example-handoff.json", "automation/examples/example-slices.json"):
+        (consumer / cited).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / cited, consumer / cited)
+    git = ["git", "-C", str(consumer), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "cited sources"], check=True)
+    memory_flags = ("--memory-config", str(config), "--memory-project", "example-project")
+
+    assert supervise(monkeypatch, board, hermes, agent, extra=memory_flags, before_agent=f"cp {{context_file}} {seen} && ") == 0
+
+    section = json.loads(seen.read_text(encoding="utf-8"))["memory"]
+    assert (section["project"], section["bank_id"]) == ("example-project", "example-bank")
+    assert [item["id"] for item in section["results"]] == ["fact-001", "fact-002"]
+    assert fake.requests[0]["body"]["query"] == section["query"]
+
+
+def test_a_memory_map_without_a_project_stops_before_the_claim(consumer, board, hermes, agent, monkeypatch, capsys, tmp_path):
+    assert supervise(monkeypatch, board, hermes, agent, extra=("--memory-config", str(tmp_path / "unused.json"))) == 2
+
+    assert "--memory-config and --memory-project go together" in capsys.readouterr().err
+    assert calls(tmp_path) == [] and row(board, "SELECT status FROM tasks WHERE id = ?", READY) == ("ready",)
