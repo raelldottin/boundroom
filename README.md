@@ -1,7 +1,5 @@
 # repo-automation
 
-[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/raelldottin/repo-automation?utm_source=badge)
-
 Reusable supervised automation for bounded agent work.
 
 **Architecture direction (proposed):** The proposed top layer is a canonical **Hermes Kanban board**, **self-hosted Hindsight external project memory**, and a generated **Swarm Wiki** powered by [hermes-swarm-protocol](https://github.com/raelldottin/hermes-swarm-protocol). The existing supervisor stays beneath this layer and retains sole authority over slice execution and continuation. See [SPEC-001](docs/architecture/control-plane.md) and the [sequenced roadmap](docs/roadmap.md). These are target contracts, not yet implemented integrations. The existing Swarm Wiki requires an upstream source-adapter migration before it can read Hindsight data. The fully open-source, local-inference profile additionally requires owner-approved licenses for both project repositories and audited model/dependency licenses.
@@ -74,11 +72,8 @@ For real adoption, copy the example queue shape into your repository, replace th
 
 ## Continuous Integration
 
-The repository ships with seven GitHub Actions workflows in `.github/`:
+The GitHub Actions configuration in `.github/` includes:
 
-- **CodSpeed** (`.github/workflows/codspeed.yml`) — runs `pytest-codspeed`
-  benchmarks defined in `automation/tests/test_benchmarks.py` on every push
-  and pull request. Uses OIDC authentication with the CodSpeed GitHub App.
 - **Lint** (`.github/workflows/lint.yml`) — `uv`-driven `ruff check`,
   `ruff format --check`, and `ty check` across `automation/` and `Tools/` on
   Python 3.11 and 3.12. Ruff and ty configuration lives in `pyproject.toml`;

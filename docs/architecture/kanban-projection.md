@@ -92,7 +92,7 @@ Expected-revision semantics come before any write adapter:
 | deterministic repeat | `test_repeat_projection_is_byte_identical` |
 | traceability | `test_slice_id_traces_back_to_board_and_task`, `test_creator_is_provenance_not_a_dependency` |
 
-The projection is a registered performance-critical path, benchmarked by `test_project_kanban_board_benchmark` on the bundled fixture. This slice leaves `load_queue` and `select_next_slice` unchanged. The pull request's CodSpeed run is their evidence.
+This slice leaves `load_queue` and `select_next_slice` unchanged.
 
 ## Shadow diff against the JSON queue
 
@@ -106,7 +106,7 @@ The projection is a registered performance-critical path, benchmarked by `test_p
 | `mismatches` | Per mapped pair, each differing field among `title`, `status`, `domain`, `allowed_paths`, `required_validations`, `max_files_changed` and `depends_on`. Kanban dependencies are translated through the map first. `allowed_paths` and `depends_on` are compared as sets. |
 | `next` | What `select_next_slice` picks on each side, in queue ids. Priority numbers differ by construction, so this is how order is compared. |
 
-Two tasks mapped to one queue slice are refused. Tests: `test_a_matching_queue_has_an_empty_shadow_diff`, `test_the_shadow_diff_reports_every_difference`, `test_two_tasks_mapped_to_one_queue_slice_are_refused`, `test_the_cli_prints_the_shadow_diff`. The diff is an operator tool, not on a supervisor path, so it is not registered for CodSpeed. Running it against a live board and queue is the operator's step.
+Two tasks mapped to one queue slice are refused. Tests: `test_a_matching_queue_has_an_empty_shadow_diff`, `test_the_shadow_diff_reports_every_difference`, `test_two_tasks_mapped_to_one_queue_slice_are_refused`, `test_the_cli_prints_the_shadow_diff`. The diff is an operator tool, not on a supervisor path. Running it against a live board and queue is the operator's step.
 
 ## Not in this slice
 

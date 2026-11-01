@@ -62,7 +62,7 @@ This is evidence about the CLI contract, not the canary: no real board, gateway 
 
 ## Performance evidence
 
-The writer runs once or twice per slice and is bounded by a subprocess, so it is not a performance-critical path. It shares `read_only` with `kanban_projection.read_board`, which is registered. `build_context_bundle`, also registered, gained an optional `queue_data` argument that skips its own `load_queue` when a caller already holds the queue. Each pull request's CodSpeed run covers those paths.
+The writer runs once or twice per slice and is bounded by a subprocess. It shares `read_only` with `kanban_projection.read_board`. `build_context_bundle` gained an optional `queue_data` argument that skips its own `load_queue` when a caller already holds the queue.
 
 ## Canary (2026-10-29)
 

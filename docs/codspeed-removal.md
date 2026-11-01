@@ -1,6 +1,6 @@
 # CodSpeed removal roadmap
 
-Status: **proposed** (2026-11-01). Nothing here is in effect until each step lands: `Run CodSpeed benchmarks` stays a required check until step 1, and the Performance Evidence rules in `AGENTS.md` apply until step 2 merges.
+Status: **done in the repository** (2026-11-01). Steps 1 to 3 have landed. Step 4, the CodSpeed GitHub App and codspeed.io project, is the owner's. This page is kept as the record of why and how CodSpeed was removed.
 
 ## Why
 

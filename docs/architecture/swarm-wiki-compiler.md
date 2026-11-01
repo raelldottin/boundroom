@@ -54,7 +54,7 @@ The job is not one of the required checks on `main`. Whether to make it one is t
 
 ## Performance evidence
 
-This is not a performance-critical path. An operator or CI runs it by hand. It sits on no supervisor, policy or context-building path, and it adds no code to any registered path.
+An operator or CI runs it by hand. It sits on no supervisor, policy or context-building path.
 
 ## Not done here
 

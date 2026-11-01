@@ -123,6 +123,13 @@ class AutomationHarnessTests(unittest.TestCase):
         self.assertEqual("Reviewed values exist.", reports[0].entry_condition)
         self.assertEqual("review-packet", reports[0].recommended_unblocker)
 
+    def test_example_queue_loads_and_selects_its_first_eligible_slice(self) -> None:
+        queue_data = self.example_queue_data()
+
+        self.assertEqual(1, queue_data["version"])
+        self.assertEqual(3, len(queue_data["slices"]))
+        self.assertEqual("today-continue-ui-regression-coverage", self.require_selected_slice(queue_data)["slice_id"])
+
     def test_example_handoff_matches_schema(self) -> None:
         handoff = policy.load_json(self.example_handoff_path)
         handoff_schema = models.Handoff

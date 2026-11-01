@@ -162,9 +162,9 @@ The adapter was run against a real Hindsight server for the first time, with the
 
 ## Performance evidence
 
-`build_context_bundle` is a registered performance-critical path. `test_build_context_bundle_benchmark` is unchanged and still measures the bundle with no memory map, which is the default path and the existing baseline. Shaping and verifying a recall response (`memory.shape_recall`) is a new path on that registered path. Its cost grows with the number of results and the size of the source files it hashes, so it is registered separately and benchmarked by `test_shape_memory_recall_benchmark` against the bundled fixtures. The benchmark uses no server and exercises both the kept and the rejected branches.
+Without a memory map, `build_context_bundle` builds the bundle exactly as before. With one, it shapes and verifies a recall response (`memory.shape_recall`), whose cost grows with the number of results and the size of the source files it hashes.
 
-The snapshot export is not a performance-critical path. An operator runs it by hand, and no supervisor, policy or context-building path reaches it, so it has no benchmark. Its HTTP helper is shared with recall, but `shape_recall`, the registered part of recall, is unchanged.
+An operator runs the snapshot export by hand, and no supervisor, policy or context-building path reaches it. Its HTTP helper is shared with recall, but `shape_recall` is unchanged.
 
 ## For the owner
 

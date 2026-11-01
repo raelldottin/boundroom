@@ -117,7 +117,7 @@ Existing CI/cleanroom benchmark experiments remain isolated: do not connect them
 - Wiki: verified upstream compatibility with **Hindsight snapshots rather than ByteRover Markdown**; captured source hashes and provenance; deterministic independent rebuild and matching `--check`; unresolved contradictions remain visible; compiler has no write access to canonical stores.
 - Integration: a complete task runs **only** through supervisor authorization, bounded context, independent live validation, immutable handoff, safe status commit and wiki update; failed or repeated operations are idempotent and traceable.
 - Rollback: tested restoration of previous board mapping, profile configuration and plugin pin without deleting task history, source memory or originals.
-- Release: CI checks, CodSpeed evidence for affected registered performance-critical paths, exact commit/model pins, **OSI/SPDX license and third-party notice audit**, local egress-denied deployment proof, change inventory and an operator-readable acceptance report.
+- Release: CI checks, exact commit/model pins, **OSI/SPDX license and third-party notice audit**, local egress-denied deployment proof, change inventory and an operator-readable acceptance report.
 
 ## Source references
 
