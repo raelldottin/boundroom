@@ -40,6 +40,7 @@ nav:
   - Memory Interface Contract: architecture/memory-interface.md
   - Swarm Wiki Compiler Pin: architecture/swarm-wiki-compiler.md
   - Roadmap: roadmap.md
+  - CodSpeed Removal Roadmap: codspeed-removal.md
   - Workflow: workflows/repo-automation.md
   - Effectiveness Benchmark: workflows/effectiveness-benchmark.md
 
