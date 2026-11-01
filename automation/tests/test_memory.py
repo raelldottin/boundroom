@@ -280,6 +280,22 @@ def test_empty_recall(fake, api_key):
     assert result["results"] == [] and result["rejected"] == [] and result["truncated"] is False
 
 
+def test_a_bank_with_nothing_retained_recalls_empty(fake, api_key):
+    fake.status, fake.body = 404, {"detail": "Bank 'example-bank' not found"}
+
+    result = memory.recall(make_config(fake.endpoint), "example-project", "example-bank", "q", REPO_ROOT)
+
+    assert result["status"] == "empty" and result["results"] == []
+
+
+@pytest.mark.parametrize("detail", ["Not Found", "Bank 'another-bank' not found", None])
+def test_other_404s_stay_unavailable(fake, api_key, detail):
+    fake.status, fake.body = 404, {"detail": detail}
+
+    with pytest.raises(memory.MemoryUnavailable, match="HTTP 404"):
+        memory.recall(make_config(fake.endpoint), "example-project", "example-bank", "q", REPO_ROOT)
+
+
 @pytest.mark.parametrize("body", [b"not json", {"results": "nope"}, {"unexpected": []}])
 def test_malformed_response_is_unavailable(fake, api_key, body):
     fake.body = body

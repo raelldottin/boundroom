@@ -86,7 +86,7 @@ A retain receipt (`server_success`, `server_items_count`) only repeats what the 
 | egress denied (`EPERM`) | `MemoryUnavailable("egress denied")` |
 | other HTTP status, non-JSON body, or a body that doesn't match the pinned schema | `MemoryUnavailable` |
 | ungranted project, bank or operation; missing credential; `401`/`403` | `MemoryAccessError`; for an authorization failure, no request is sent |
-| empty recall | `status: "empty"` |
+| empty recall, or recall on a granted bank the server doesn't have yet (`404` naming that bank) | `status: "empty"`; any other `404` stays `MemoryUnavailable` |
 | bank changed between snapshot pages | `MemoryUnavailable`; capture again |
 
 The timeout applies to each socket operation, not the whole call. A server that trickles bytes could keep one call open longer than `timeout_seconds`.
@@ -157,7 +157,7 @@ The adapter was run against a real Hindsight server for the first time, with the
 **Findings.**
 
 - **Reflect needs native tool calls.** Hindsight's reflect is agentic. The configured route returned its tool call as plain text instead of a `tool_calls` entry, so Hindsight answered `500` and the adapter reported `MemoryUnavailable: HTTP 500`. The context workflow never calls reflect, so recall is unaffected. Reflect needs a route that does native tool calling, which Hindsight can take separately (`HINDSIGHT_API_REFLECT_LLM_*`).
-- **A missing bank reads as unavailable.** Recall on a granted bank that holds nothing yet gets a `404`, which the adapter reports as `unavailable`. It refuses nothing it should allow, but `empty` would describe it better.
+- **A missing bank read as unavailable.** Recall on a granted bank that holds nothing yet gets a `404` whose detail names the bank (`Bank '<id>' not found`); a wrong route gets a bare `Not Found`. The adapter now reports the first as `empty` and keeps every other `404` as unavailable. Re-run against this server, `p02-other-bank` recalls `empty`.
 - **Local inference is still open.** Embeddings and reranking ran locally, but retain and consolidation used a hosted model, so the synthetic text left this machine. P0.2's local-inference and egress-denied acceptance are not met by this run.
 
 ## Performance evidence
