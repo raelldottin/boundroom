@@ -66,6 +66,9 @@ STATUS_MAP: dict[str, tuple[str, str]] = {
     "scheduled": ("deferred", "Kanban task is scheduled for later."),
 }
 TERMINAL_STATUSES = frozenset({"done", "archived"})
+# Slice fields the shadow diff compares. Priority is left out: the two queues number it
+# differently by construction, so ``next`` compares the order instead.
+SHADOW_FIELDS = ("title", "status", "domain", "allowed_paths", "required_validations", "max_files_changed", "depends_on")
 
 
 class ProjectionError(ValueError):
@@ -88,6 +91,8 @@ class KanbanSlicePolicy(Contract):
     recommended_unblocker: str = ""
     manual_proof: StrList = Field(default_factory=list)
     required_proof_level: Annotated[ProofLevel, Omittable]
+    # The JSON-queue slice this task stands for, for the shadow diff only. Never projected.
+    queue_slice_id: Optional[NonEmptyStr] = None
 
 
 class KanbanOverlay(Contract):
@@ -264,7 +269,7 @@ def _slice_record(
             status = "blocked"
             entry_condition = f"Kanban parent {parent_id} is open and not approved for projection."
 
-    record = approval.model_dump(exclude_none=True)
+    record = approval.model_dump(exclude_none=True, exclude={"queue_slice_id"})
     record.update(
         slice_id=slice_id_for(snapshot.board, task["id"]),
         title=task["title"],
@@ -275,6 +280,60 @@ def _slice_record(
     if status in {"blocked", "deferred"} and not approval.entry_condition.strip():
         record["entry_condition"] = entry_condition
     return record
+
+
+def shadow_diff(projection: Projection, overlay: KanbanOverlay, queue: dict[str, Any]) -> dict[str, Any]:
+    """Compare a projection with the live JSON queue through the overlay's ``queue_slice_id`` map.
+
+    Read-only and advisory: it reports differences and decides nothing. A dependency on a mapped
+    task is translated to its queue id before comparing; an unmapped one is compared as is.
+    """
+    to_queue: dict[str, str] = {}
+    for task_id, approval in overlay.approved.items():
+        if approval.queue_slice_id is None:
+            continue
+        if approval.queue_slice_id in to_queue.values():
+            raise ProjectionError(f"overlay maps more than one task to queue slice {approval.queue_slice_id!r}")
+        to_queue[slice_id_for(overlay.board, task_id)] = approval.queue_slice_id
+    queue_slices = {record["slice_id"]: record for record in queue["slices"]}
+
+    def comparable(record: dict[str, Any], translate: bool) -> dict[str, Any]:
+        fields = {name: record.get(name) for name in SHADOW_FIELDS}
+        deps = [to_queue.get(dep, dep) for dep in record["depends_on"]] if translate else record["depends_on"]
+        return {**fields, "allowed_paths": sorted(record["allowed_paths"]), "depends_on": sorted(deps)}
+
+    mismatches = []
+    for record in projection.queue["slices"]:
+        queue_id = to_queue.get(record["slice_id"])
+        if queue_id is None or queue_id not in queue_slices:
+            continue
+        kanban, json_queue = comparable(record, True), comparable(queue_slices[queue_id], False)
+        for name in SHADOW_FIELDS:
+            if kanban[name] != json_queue[name]:
+                mismatches.append(
+                    {
+                        "slice": queue_id,
+                        "kanban_slice": record["slice_id"],
+                        "field": name,
+                        "queue": json_queue[name],
+                        "kanban": kanban[name],
+                    }
+                )
+
+    projected = [record["slice_id"] for record in projection.queue["slices"]]
+    mapped = {to_queue[slice_id] for slice_id in projected if slice_id in to_queue}
+    queue_next = policy.select_next_slice(queue)
+    kanban_next = policy.select_next_slice(projection.queue)
+    return {
+        "unmapped_tasks": sorted(slice_id for slice_id in projected if slice_id not in to_queue),
+        "missing_from_queue": sorted(mapped - set(queue_slices)),
+        "queue_only": sorted(set(queue_slices) - mapped),
+        "mismatches": mismatches,
+        "next": {
+            "queue": queue_next["slice_id"] if queue_next else None,
+            "kanban": to_queue.get(kanban_next["slice_id"], kanban_next["slice_id"]) if kanban_next else None,
+        },
+    }
 
 
 def _json_object(payload: Optional[str]) -> dict[str, Any]:
@@ -294,18 +353,23 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Print a read-only Kanban board projection. Writes nothing.")
     parser.add_argument("--board-dir", type=Path, required=True, help="~/.hermes/kanban/boards/<slug>")
     parser.add_argument("--overlay", type=Path, required=True, help="repo-automation approval overlay JSON")
+    parser.add_argument("--shadow-queue", type=Path, help="JSON queue to compare the projection with (read only)")
     args = parser.parse_args(argv)
     try:
-        result = project(read_board(args.board_dir), load_overlay(args.overlay))
-    except (ProjectionError, policy.ConfigError) as error:
+        overlay = load_overlay(args.overlay)
+        result = project(read_board(args.board_dir), overlay)
+        shadow = shadow_diff(result, overlay, policy.load_queue(args.shadow_queue)) if args.shadow_queue else None
+    except (ValueError, policy.ConfigError) as error:  # load_queue reports an invalid queue as ValueError
         print(f"error: {error}", file=sys.stderr)
         return 1
-    output = {
+    output: dict[str, Any] = {
         "revision": result.revision,
         "event_watermark": result.event_watermark,
         "provenance": result.provenance,
         "queue": result.queue,
     }
+    if shadow is not None:
+        output["shadow"] = shadow
     print(json.dumps(output, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 

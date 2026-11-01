@@ -15,7 +15,7 @@ repo-automation approval overlay (JSON) ──load_overlay──▶ KanbanOverla
 - **Read path.** `read_board` opens `kanban.db` with `?mode=ro`, sets `PRAGMA query_only=ON` and reads every table inside one transaction, the same pattern as the Swarm Wiki compiler's `snapshot`. It never calls `hermes kanban`, because Hermes's `connect()` creates directories, takes the init lock and migrates the schema. A test makes the board directory and file read-only and checks the bytes are unchanged afterwards.
 - **Schema check.** Kanban's schema is unversioned (`user_version` 0). The adapter checks for the columns it reads (`REQUIRED_COLUMNS`) and refuses the board if any are missing.
 - **Output.** `Projection.queue` is a `SliceQueue` document. It must pass `policy.validate_document` and `policy.validate_queue_integrity` before it is returned, so `policy.load_queue` accepts it unchanged. A test checks that round trip.
-- **CLI.** `python -m automation.supervisor.kanban_projection --board-dir <dir> --overlay <json>` prints the projection, its provenance and its revision to stdout, for a shadow comparison with the JSON queue. It writes no files.
+- **CLI.** `python -m automation.supervisor.kanban_projection --board-dir <dir> --overlay <json> [--shadow-queue <queue.json>]` prints the projection, its provenance and its revision to stdout, and with `--shadow-queue` the [shadow diff](#shadow-diff-against-the-json-queue). It writes no files.
 
 ## Approval overlay
 
@@ -24,6 +24,8 @@ Kanban has no source for `domain`, `allowed_paths`, `required_validations`, `max
 ```json
 {"version": 1, "board": "<slug>", "policy": {<QueuePolicy>}, "approved": {"t_xxxxxxxx": {<policy fields>}}}
 ```
+
+An approved task may also name `queue_slice_id`, the JSON-queue slice it stands for. Only the shadow diff reads it; it is never projected.
 
 **Being listed in the overlay is the approval.** A task that isn't listed is never projected, so `select_next_slice` can never return it: no worker starts from a card nobody admitted. The overlay is admitted the way any queue change is admitted today, through a reviewed pull request. Overlays hold task ids and policy, never task text.
 
@@ -92,7 +94,20 @@ Expected-revision semantics come before any write adapter:
 
 The projection is a registered performance-critical path, benchmarked by `test_project_kanban_board_benchmark` on the bundled fixture. This slice leaves `load_queue` and `select_next_slice` unchanged. The pull request's CodSpeed run is their evidence.
 
+## Shadow diff against the JSON queue
+
+`shadow_diff(projection, overlay, queue)` compares a projection with the live JSON queue before any cutover (P0.1 exit evidence). Kanban slice ids (`kanban.<board>.<task>`) and queue slice ids are different namespaces, so the overlay's `queue_slice_id` is the map. It reads both sides, decides nothing and writes nothing. It reports:
+
+| Key | Meaning |
+| --- | --- |
+| `unmapped_tasks` | Projected slices whose task names no `queue_slice_id`. |
+| `missing_from_queue` | Mapped queue ids the queue doesn't have. |
+| `queue_only` | Queue slices no projected task maps to, including done work the board never held. |
+| `mismatches` | Per mapped pair, each differing field among `title`, `status`, `domain`, `allowed_paths`, `required_validations`, `max_files_changed` and `depends_on`. Kanban dependencies are translated through the map first. `allowed_paths` and `depends_on` are compared as sets. |
+| `next` | What `select_next_slice` picks on each side, in queue ids. Priority numbers differ by construction, so this is how order is compared. |
+
+Two tasks mapped to one queue slice are refused. Tests: `test_a_matching_queue_has_an_empty_shadow_diff`, `test_the_shadow_diff_reports_every_difference`, `test_two_tasks_mapped_to_one_queue_slice_are_refused`, `test_the_cli_prints_the_shadow_diff`. The diff is an operator tool, not on a supervisor path, so it is not registered for CodSpeed. Running it against a live board and queue is the operator's step.
+
 ## Not in this slice
 
-- A shadow diff against a live JSON queue. Kanban slice ids and queue slice ids are different namespaces, so a diff needs an id map that only a cutover plan can define (P0.1 exit evidence, RA-CP-005).
-- Any write adapter, any supervisor wiring, and multi-board projection.
+- Multi-board projection.
