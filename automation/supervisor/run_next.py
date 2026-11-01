@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from automation.context import memory
 from automation.context.build_context import build_context_bundle
 from automation.supervisor import kanban_projection, kanban_writer, policy
 
@@ -42,6 +43,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kanban-board", help="Take slices from this Kanban board directory instead of --queue.")
     parser.add_argument("--kanban-overlay", help="The approval overlay for --kanban-board.")
     parser.add_argument("--hermes", default="hermes", help="Command that runs the Hermes CLI, for Kanban writes.")
+    parser.add_argument("--memory-config", help="Operator-reviewed Hindsight project-to-bank map (JSON) to recall from.")
+    parser.add_argument("--memory-project", help="Project whose granted bank each context bundle recalls from.")
     return parser.parse_args()
 
 
@@ -96,6 +99,9 @@ def main() -> int:
     handoff_dir.mkdir(parents=True, exist_ok=True)
     if bool(args.kanban_board) != bool(args.kanban_overlay):
         raise policy.ConfigError("--kanban-board and --kanban-overlay go together")
+    if bool(args.memory_config) != bool(args.memory_project):
+        raise policy.ConfigError("--memory-config and --memory-project go together")
+    memory_config = memory.load_config(repo_root / args.memory_config) if args.memory_config else None
     store: JsonQueue | KanbanQueue
     if args.kanban_board:
         store = KanbanQueue(Path(args.kanban_board), Path(args.kanban_overlay), shlex.split(args.hermes))
@@ -153,6 +159,8 @@ def main() -> int:
             queue_path=repo_root / args.queue,
             handoff_dir=handoff_dir,
             slice_id=next_slice["slice_id"],
+            memory_config=memory_config,
+            memory_project=args.memory_project,
             queue_data=queue_data,
         )
 

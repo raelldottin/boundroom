@@ -106,7 +106,7 @@ The timeout applies to each socket operation, not the whole call. A server that 
 }
 ```
 
-An unavailable server doesn't stop the bundle. The section records `status: "unavailable"` and the `error`, with no results. A map error does stop it. The section contains no timestamps, and `rejected` is sorted, so the same server response always produces the same section. `run_next` doesn't pass a memory map yet, so no supervised run gets this section today. `run_next.render_prompt` builds the agent prompt from named bundle fields, and memory is not one of them.
+An unavailable server doesn't stop the bundle. The section records `status: "unavailable"` and the `error`, with no results. A map error does stop it. The section contains no timestamps, and `rejected` is sorted, so the same server response always produces the same section. `run_next` takes the same pair, `--memory-config <json> --memory-project <name>`, on either queue (the JSON queue or `--kanban-board`). It loads and checks the map before it selects a slice, so a bad map stops the run before anything is claimed. Each slice's bundle then carries the section. The agent sees it in the context file and in the prompt's full context JSON; no named prompt field shows memory on its own. Without the pair, a supervised run recalls nothing.
 
 ## Snapshot export for the Swarm Wiki (RA-CP-004)
 
@@ -135,4 +135,4 @@ The snapshot export is not a performance-critical path. An operator runs it by h
 ## For the owner
 
 - **License metadata mismatch.** At the pinned revision, the repository `LICENSE` is MIT, but `info.license` in `hindsight-docs/static/openapi.json` says "Apache 2.0". The two differ. This is recorded for the owner, and nothing here chooses a license.
-- **Not done here:** installing or running Hindsight, a snapshot of a live bank, the local-model profile, an egress-denied integration test against a real server, durable read-back and backup verification, and wiring memory into `run_next`. Those belong to the deployment and canary work (RA-CP-005).
+- **Not done here:** installing or running Hindsight, a snapshot of a live bank, the local-model profile, an egress-denied integration test against a real server, and durable read-back and backup verification. Those belong to the deployment and canary work (RA-CP-005).
