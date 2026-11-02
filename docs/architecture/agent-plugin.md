@@ -35,13 +35,23 @@ Each skill first finds the synced copy at `<repository>/automation/`. If there i
 | Skill | Does | Writes |
 | --- | --- | --- |
 | `repo-automation-status` | Loads the queue with `policy.load_queue`, names the next slice with `policy.select_next_slice`, and, given a board and overlay, prints the Kanban projection's shadow diff | nothing |
-| `repo-automation-run-next` | Runs `python3 automation/supervisor/run_next.py <user flags> --autonomous-limit 1`, then reports the handoff path and the stop reason. It refuses user flags that contain `--autonomous-limit`, and it appends its own last, so the user can't raise it. | what `run_next` writes, under its own gates |
+| `repo-automation-run-next` | Runs the documented command `python3 automation/supervisor/run_next.py --single-slice <user flags>`, then reports the handoff path and the stop reason. If the synced copy doesn't know `--single-slice`, it stops and says the copy is too old. | what `run_next` writes, under its own gates |
 | `repo-automation-evaluate-handoff` | Runs `automation/supervisor/evaluate_handoff.py` on a handoff the user names | nothing |
 | `repo-automation-sync` | In a consumer repository, runs `Tools/repo-automation-sync.sh` against a released tag or pinned commit, with `--check` first | only after the user says go, and then only through a branch and a pull request in that consumer |
 
 ## Rules the plugin must keep
 
-1. **One slice per invocation, enforced.** A bare `run_next.py` is a loop. It keeps selecting slices until the queue's `policy.consecutive_autonomous_limit` stops it, so one call can run several slices. The skill therefore always passes `--autonomous-limit 1` and refuses a user-supplied limit. The skill itself does not loop, schedule itself or chain to the next slice. A regression test in the plugin pull request queues two eligible slices, invokes the skill's command once, and asserts that the agent ran exactly once and that the second slice is still `queued`. This is the existing rule that no worker or sub-agent may start the next slice.
+1. **One slice per invocation, enforced in the supervisor, not in prose.** A bare `run_next.py` is a loop. It keeps selecting slices until the queue's `policy.consecutive_autonomous_limit` stops it, so one call can run several slices. A skill is Markdown. It can instruct the agent to run a command, but it can't validate flags or guarantee which command the model actually runs. So the limit lives in trusted code, in three layers:
+    - **The supervisor's own gate (exists today).** `policy.consecutive_autonomous_limit` and the completion decision stop any `run_next` run, however it was started. This remains the safety boundary for an agent that ignores the skill.
+    - **`run_next.py --single-slice` (new, in the plugin pull request).** It runs at most one slice. It exits 64 before claiming anything if `--autonomous-limit` appears at all, in any form or position: `--autonomous-limit 2`, `--autonomous-limit=2`, before or after `--single-slice`, or repeated. This is the enforcement point for invocations that use it.
+    - **The skill (guidance).** It documents the one supported invocation, `run_next.py --single-slice`, in a single fenced command, and tells the agent not to add a limit. It doesn't loop, schedule itself or chain to the next slice.
+
+    Tests in the plugin pull request:
+    - On a queue with two eligible slices, `--single-slice` runs the agent exactly once and leaves the second slice `queued`.
+    - Each `--autonomous-limit` variant above, combined with `--single-slice`, exits 64 with no agent run and no status change.
+    - A test reads the fenced command out of the run-next `SKILL.md` and runs exactly that command on the two-slice queue. That checks the invocation the skill tells agents to use, not a paraphrase of it.
+
+    This keeps the existing rule that no worker or sub-agent may start the next slice. It doesn't claim that a model can't run `run_next.py` some other way. Only the supervisor gate covers that case.
 2. **The runner rule stands.** `run_next` already picks the runner from the nearest enclosing harness and refuses a mismatch (raelldottin/repo-automation#68). The plugin never sets `REPO_AUTOMATION_AGENT_RUNNER`, so Claude Code runs Claude, Codex runs Codex and Hermes runs Hermes.
 3. **No hooks, MCP servers or daemons.** Nothing runs at session start or on a tool call, and there is no server process. An MCP server would edge toward the "no coordination daemon" rule in SPEC-001 and would need its own design decision.
 4. **No credentials.** The plugin holds no keys. The Hindsight and Kanban flags of `run_next` keep reading their credentials the way they do now.
@@ -49,7 +59,12 @@ Each skill first finds the synced copy at `<repository>/automation/`. If there i
 
 ## Versions and releases
 
-A release is still a `vX.Y.Z` tag on a commit already on `main`, built by `release.yml`. The manifests carry the same number without the `v`: tag `v0.2.0` means `"version": "0.2.0"` in every manifest. All marketplaces install from the GitHub repository at a ref, so no new publishing workflow is needed and nothing is uploaded anywhere else. A unit test checks that every manifest has the same `name` and a `version` in `X.Y.Z[-prerelease]` form. `release.yml` refuses a tag whose number differs from the manifests'.
+A release is still a `vX.Y.Z` tag on a commit already on `main`, built by `release.yml`. The manifests carry the same number without the `v`: tag `v0.2.0` means `"version": "0.2.0"` in every manifest. All marketplaces install from the GitHub repository at a ref, so no new publishing workflow is needed and nothing is uploaded anywhere else. A unit test checks that every manifest has the same `name` and a `version` in `X.Y.Z[-prerelease]` form.
+
+**The release gate doesn't exist yet.** Today `release.yml` checks the tag's syntax and that its commit is on `main`. It does not compare the tag with any manifest. Before the first plugin release, a separate change must add that comparison, as a small checked-in script that `release.yml` calls. That keeps the check testable outside a release run. The script reads every manifest present (`plugin.json`, `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`). It requires that they all declare the same `version`, and that this version equals the tag without its `v`. Otherwise it refuses, naming each file and its version. The existing tag-syntax and ancestry guards stay as they are. Its negative tests:
+- a `v0.2.0` tag over manifests that declare `0.1.0` is refused;
+- two manifests that disagree are refused, whatever the tag;
+- a `v0.2.0-rc.1` tag passes only over manifests that declare `0.2.0-rc.1`.
 
 The plugin and a consumer's synced copy can be at different versions. The skills read only stable command-line interfaces (`run_next.py`, `evaluate_handoff.py`, `kanban_projection.py`, the sync script) and report the synced copy's version when one is recorded. A skill that needs a flag the synced copy lacks says so and stops.
 
@@ -86,8 +101,9 @@ Each step is its own pull request through the required checks.
 1. This spec.
 2. The license pull request described above. It may be prepared now. It merges only after the authorship, third-party and consumer-distribution checks pass, and no GPL release is published before then.
 3. `AGENTS.md`: name the plugin as a supported front end in "Consumer Repositories". State that it carries no supervisor code and that consumers still change only through the sync script and a pull request. Agent-instruction files go in their own pull request.
-4. The plugin: the manifests, the marketplace catalogs, the four skills and three tests. The first test checks that every manifest parses and agrees on `name` and `version`. The second checks that every skill has the frontmatter all three harnesses require. The third is the one-slice regression test above. Install it locally in each harness and record the result. `hermes plugins validate` and `claude plugin validate` check the manifests.
-5. A release, only with the owner's explicit approval, then a canary: install in one harness, then run `repo-automation-status` and `repo-automation-run-next` against one consumer that has passed the audit.
+4. The plugin: the manifests, the marketplace catalogs, the four skills, `run_next.py --single-slice`, and their tests. The tests check that every manifest parses and agrees on `name` and `version`, and that every skill has the frontmatter all three harnesses require. They also include the one-slice tests above. Install it locally in each harness and record the result. `hermes plugins validate` and `claude plugin validate` check the manifests.
+5. The release version gate described under [Versions and releases](#versions-and-releases), with its negative tests. It is a prerequisite of step 6.
+6. A release, only with the owner's explicit approval, then a canary: install in one harness, then run `repo-automation-status` and `repo-automation-run-next` against one consumer that has passed the audit.
 
 ## Performance
 
