@@ -18,9 +18,9 @@ All three harnesses read the same `skills/<name>/SKILL.md` layout. Each wants it
 
 | Harness | Manifest | Install |
 | --- | --- | --- |
-| Claude Code | `plugins/repo-automation/.claude-plugin/plugin.json`, listed by `.claude-plugin/marketplace.json` at the repository root | `claude plugin marketplace add raelldottin/repo-automation`, then `claude plugin install repo-automation@repo-automation` |
+| Claude Code | `plugins/repo-automation/.claude-plugin/plugin.json`, listed by `.claude-plugin/marketplace.json` at the repository root | `claude plugin marketplace add raelldottin/repo-automation@<tag>`, then `claude plugin install repo-automation@repo-automation` |
 | Codex 0.166 | `plugins/repo-automation/.codex-plugin/plugin.json` (`"skills": "./skills/"`) beside the portable `plugin.json`, listed by `.agents/plugins/marketplace.json` at the repository root with a `local` source | `codex plugin marketplace add raelldottin/repo-automation@<tag>`, then `codex plugin add repo-automation@repo-automation` |
-| Hermes (`~/.hermes/hermes-agent` at `31bde0d`) | `plugins/repo-automation/plugin.json` in the portable **Agent Plugins v1** format (`$schema` `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`) | `hermes plugins install raelldottin/repo-automation#plugins/repo-automation --ref <sha>`, then `hermes plugins enable repo-automation`; Hermes installs portable packages disabled |
+| Hermes (`~/.hermes/hermes-agent` at `31bde0d`) | `plugins/repo-automation/plugin.json` in the portable **Agent Plugins v1** format (`$schema` `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`) | `hermes plugins install raelldottin/repo-automation#plugins/repo-automation --ref <sha>`, where `<sha>` is the full commit the tag points to (Hermes refuses a tag name), then `hermes plugins enable repo-automation`; Hermes installs portable packages disabled |
 
 Hermes's native `plugin.yaml` and `register(ctx)` format is not needed. Agent Plugins v1 discovers `skills/` with no Python, and Hermes already ignores `.claude-plugin/` and `.codex-plugin/` during discovery. Superpowers ships the same Claude and Codex manifests side by side in one repository.
 
@@ -102,6 +102,14 @@ The owner confirmed these decisions in reviewing this spec. Agents do not choose
 **Inbound code is compatible today.** The only runtime dependency, `pydantic`, is MIT. The concepts adapted from `mattpocock/skills` are MIT. Hindsight and Hermes are MIT and are invoked, not bundled. Running a separate program at arm's length is unaffected, as `run_agent.sh` invokes Codex (Apache-2.0). Later dependencies need a license check; `dependency-review.yml` can take an allow-list, and that change to a required check needs its own pull request.
 
 **Authorship.** Git history shows one human author, the owner. Dependabot commits only bump version pins. CodSpeed's one commit edits workflow setup and a badge. Neither adds original work that would need another contributor's agreement.
+
+**Installed from the `v0.2.1` release (2026-11-02).** Each tool installed the released tag from GitHub into a throwaway home. All three reported `0.2.1`, enabled, with all four skills, and the sync skill carried the lock-pin step.
+
+| Tool | Install |
+| --- | --- |
+| Claude Code | `claude plugin marketplace add raelldottin/repo-automation@v0.2.1`, then `claude plugin install repo-automation@repo-automation` |
+| Codex 0.166 | `codex plugin marketplace add raelldottin/repo-automation@v0.2.1` cloned the tag and resolved `.agents/plugins/marketplace.json`; then `codex plugin add repo-automation@repo-automation` |
+| Hermes | `--ref v0.2.1` was refused: `--ref` must be a full 40-character commit SHA. `--ref 8daaeb422aa06fda8be242ad1d8af775eaf0c51a`, the tag's commit, installed; then `hermes plugins enable repo-automation` |
 
 ## Rollout
 

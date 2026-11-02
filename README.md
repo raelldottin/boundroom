@@ -110,14 +110,22 @@ live end-to-end:
 
 `plugins/repo-automation/` is one plugin for Claude Code, Codex and Hermes, specified in [SPEC-002](docs/architecture/agent-plugin.md). It was first released in `v0.2.0`. It holds four skills and no supervisor code: status, run-next, evaluate-handoff and sync. Each skill drives the repo-automation copy already synced into the repository you work in, and stops if there isn't one. The run-next skill runs `run_next.py --single-slice`, which runs at most one slice.
 
+Install from a release tag, such as `v0.2.1`, not from `main`:
+
 ```bash
-claude plugin marketplace add raelldottin/repo-automation
+claude plugin marketplace add raelldottin/repo-automation@<tag>
 claude plugin install repo-automation@repo-automation
 ```
 
 ```bash
-codex plugin marketplace add raelldottin/repo-automation
+codex plugin marketplace add raelldottin/repo-automation@<tag>
 codex plugin add repo-automation@repo-automation
+```
+
+Hermes takes only a full commit SHA, so look up the commit the tag points to first:
+
+```bash
+git ls-remote https://github.com/raelldottin/repo-automation.git 'refs/tags/<tag>^{}'
 ```
 
 ```bash
