@@ -50,13 +50,15 @@ Agents MUST NOT hand-build, upload, or edit a release asset, and MUST NOT create
 
 Consumers receive changes only through `Tools/repo-automation-sync.sh`, driven by `automation/reusable-manifest.json`, from a released tag or a pinned commit. The result lands through a pull request in the consumer repository.
 
-An agent MAY deliver a sync to a consumer, but only as a reviewable pull request: run the sync script from a released tag or a pinned commit, commit exactly its result on a new branch, push that branch, and open a pull request against the consumer's default branch. This is what the plugin's `repo-automation-sync` skill does, after the user's go-ahead.
+An agent MAY deliver a sync to a consumer, but only as a reviewable pull request: run the sync script from a released tag or a pinned commit, commit exactly its result, and the consumer's lock pin as described below, on a new branch, push that branch, and open a pull request against the consumer's default branch. This is what the plugin's `repo-automation-sync` skill does, after the user's go-ahead.
 
 Agents MUST NOT:
 
 - merge that pull request, which is the consumer owner's decision;
 - push to, force-push or delete a consumer's default branch;
-- commit anything to a consumer branch beyond the sync result, or use `--allow-unverified-source`.
+- commit anything to a consumer branch beyond the sync result and that lock pin, or use `--allow-unverified-source`.
+
+**The consumer's lock.** The sync script refuses to write `automation/repo-automation.lock`, because the consumer's `make` runs what its pin names. A consumer that keeps a lock checks its vendored files against that pin before a push: Owlory's pre-push hook runs `make repo-automation-check`, so a sync committed under the old pin cannot be pushed. In the same commit as the sync result, an agent MAY set the lock's `commit` to the full SHA it passed as `--pin`, and `imported_at` to the import time, after showing the user those values and getting a yes. It MUST NOT change any other field of the lock, including `remote` and `repository`, and MUST NOT skip the consumer's hooks to push.
 
 Automatic consumer updates, including Owlory, are not implemented. Every sync starts from a person's request.
 
