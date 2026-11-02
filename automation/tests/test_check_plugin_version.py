@@ -85,6 +85,8 @@ def test_a_prerelease_tag_must_match_exactly(plugin):
 
 
 def test_the_cli_exits_nonzero_and_names_each_problem(plugin):
+    for name in gate.MANIFESTS:
+        set_version(plugin, name, "0.2.0")
     set_version(plugin, gate.MANIFESTS[1], "9.9.9")
 
     result = subprocess.run([sys.executable, str(SCRIPT), "v0.2.0"], cwd=plugin, capture_output=True, text=True)
