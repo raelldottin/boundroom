@@ -52,6 +52,21 @@ Consumers receive changes only through `Tools/repo-automation-sync.sh`, driven b
 
 Agents MUST NOT commit or push to a consumer repository on this repository's behalf. Automatic consumer updates, including Owlory, are not implemented.
 
+### Agent-Harness Plugin
+
+[SPEC-002](docs/architecture/agent-plugin.md) specifies one optional plugin for Claude Code, Codex and Hermes. It is **accepted as a design and not implemented**. Do not describe it as installed or available.
+
+The plugin is a front end, not another supervisor or authority. It is skills and manifests only. Its skills drive the supervisor copy that `Tools/repo-automation-sync.sh` placed in the repository being worked on. That synced copy, its queue and the supervisor's gates remain the authority. A repository without a synced copy has nothing for the plugin to run.
+
+Agents MUST NOT:
+
+- put supervisor, policy, queue or schema code in the plugin, or let it fall back to a bundled copy;
+- use the plugin to deliver repo-automation to a consumer, or to change a consumer except through the sync script and a pull request;
+- add a hook, MCP server or background process to the plugin without a separate design decision;
+- describe a skill's instructions as enforcement. One slice per invocation is enforced only by `run_next.py --single-slice` when it is used, and the queue's `consecutive_autonomous_limit` is a default a caller can override, not a ceiling.
+
+A plugin release follows the Releases rules above. It also needs the pre-release check from SPEC-002, which requires every plugin manifest to declare the tag's version.
+
 ### Out of Scope
 
 Runtime deployment, including the Hermes runtime and benchmark execution environments, is not covered by this policy.
