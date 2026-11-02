@@ -50,7 +50,15 @@ Agents MUST NOT hand-build, upload, or edit a release asset, and MUST NOT create
 
 Consumers receive changes only through `Tools/repo-automation-sync.sh`, driven by `automation/reusable-manifest.json`, from a released tag or a pinned commit. The result lands through a pull request in the consumer repository.
 
-Agents MUST NOT commit or push to a consumer repository on this repository's behalf. Automatic consumer updates, including Owlory, are not implemented.
+An agent MAY deliver a sync to a consumer, but only as a reviewable pull request: run the sync script from a released tag or a pinned commit, commit exactly its result on a new branch, push that branch, and open a pull request against the consumer's default branch. This is what the plugin's `repo-automation-sync` skill does, after the user's go-ahead.
+
+Agents MUST NOT:
+
+- merge that pull request, which is the consumer owner's decision;
+- push to, force-push or delete a consumer's default branch;
+- commit anything to a consumer branch beyond the sync result, or use `--allow-unverified-source`.
+
+Automatic consumer updates, including Owlory, are not implemented. Every sync starts from a person's request.
 
 ### Agent-Harness Plugin
 
