@@ -44,7 +44,7 @@ Each skill first finds the synced copy at `<repository>/automation/`. If there i
 | --- | --- | --- |
 | `repo-automation-status` | Loads the queue with `policy.load_queue`, names the next slice with `policy.select_next_slice`, and, given a board and overlay, prints the Kanban projection's shadow diff | nothing |
 | `repo-automation-run-next` | Runs the documented command `python3 automation/supervisor/run_next.py --single-slice <user flags>`, then reports the handoff path and the stop reason. If the synced copy doesn't know `--single-slice`, it stops and says the copy is too old. | what `run_next` writes, under its own gates |
-| `repo-automation-evaluate-handoff` | Runs `automation/supervisor/evaluate_handoff.py` on a handoff the user names | nothing |
+| `repo-automation-evaluate-handoff` | Runs `automation/supervisor/evaluate_handoff.py` on a handoff the user names, for a `queued` slice whose work was finished outside `run_next`. It cannot re-check a `done` slice. | nothing with `--dry-run`; without it, an accept marks the slice `done` |
 | `repo-automation-sync` | In a consumer repository, runs `Tools/repo-automation-sync.sh` against a released tag or pinned commit, with `--check` first | only after the user says go, and then only through a branch and a pull request in that consumer |
 
 ## Rules the plugin must keep
@@ -133,6 +133,13 @@ The owner approved the trial. It ran against **Owlory**, which has no eligible s
 | `repo-automation-run-next` on the old copy | Owlory's synced copy was from `751c851` (2026-09-28) and has no `--single-slice`. The skill read `--help`, said the copy was too old, and stopped. It ran no slice and wrote no handoff. |
 | `repo-automation-sync` | From a clean `v0.2.0` checkout, `--check` passed every provenance gate: pin, origin, clean source and quality gate. It reported 33 differences (19 changed, 14 missing). `--sync` applied them. The lock pin was updated, and Owlory's own `make repo-automation-check` reported `target is current`. Delivered as raelldottin/owlory#4 (34 files), which the owner merged as `ae1c4bd`. Owlory's `main` now pins `d516e8d`. |
 | `repo-automation-run-next` on the synced copy | The skill confirmed `--single-slice` in `--help`, then ran exactly `python3 automation/supervisor/run_next.py --single-slice`. Exit 0, `stop: no eligible queued slice found.` No slice was selected, the queue was unchanged and no handoff was written. |
+
+**`repo-automation-evaluate-handoff`, checked afterwards.** It ran against Owlory's own history, in a scratch clone of `main` at `1e906ba`, following the `v0.2.1` skill, with `--dry-run` throughout.
+
+- A `done` slice was rejected: `Slice status is 'done', expected 'queued'`. The evaluator closes queued slices; it does not re-check finished ones. The skill had said it could, and now says it can't.
+- With one slice set back to `queued` in the scratch copy only, `habitkit-progress-current-review-20261013` was rejected because the slice was not in the queue at its base commit.
+- `activity-ledger-unreadable-queue-refusal` (base `78e6e71`, head `f3d1b62`), also set back to `queued` in the scratch copy, was accepted. Five changed files were all in scope, and the supervisor replayed `make architecture` and `git diff --check` at the head in a temporary worktree, and both passed.
+- The queue file was byte-identical after every run, and a reject never writes the queue in any mode.
 
 **Findings.**
 
