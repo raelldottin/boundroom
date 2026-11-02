@@ -39,6 +39,7 @@ nav:
   - Kanban Write-back Contract: architecture/kanban-cutover.md
   - Memory Interface Contract: architecture/memory-interface.md
   - Swarm Wiki Compiler Pin: architecture/swarm-wiki-compiler.md
+  - Agent Plugin Specification: architecture/agent-plugin.md
   - Roadmap: roadmap.md
   - Workflow: workflows/repo-automation.md
   - Effectiveness Benchmark: workflows/effectiveness-benchmark.md
