@@ -91,7 +91,7 @@ Each step is its own pull request through the required checks.
 
 ## Performance
 
-The plugin adds Markdown and JSON only. It changes no registered performance-critical path. The skills call the same `policy.load_queue`, `policy.select_next_slice` and `kanban_projection` code that the existing benchmarks cover.
+The plugin adds Markdown and JSON only. It adds no file, network or subprocess work to the supervisor, policy, validation or context paths, and does not make their cost grow with any workload. Under the performance rule in `AGENTS.md`, it needs no measurement. The skills call the same code a manual `run_next` run does.
 
 ## Open questions for implementation
 
