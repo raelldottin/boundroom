@@ -207,8 +207,8 @@ SPDX identifiers come from the GitHub license API unless noted [E17], [E19].
 
 | Component | Role | SPDX | Risk |
 | --- | --- | --- | --- |
-| `raelldottin/repo-automation` | supervisor (this repo) | **none** (no root `LICENSE`, GitHub `license: null`) | **Owner-approved license decision needed.** Agents do not choose one. |
-| `raelldottin/hermes-swarm-protocol` | wiki compiler and swarm plugin | **none** (no `LICENSE` in the `main` tree, GitHub `license: null`) | **Owner-approved license decision needed.** The deployed plugin is therefore unlicensed code. |
+| `raelldottin/repo-automation` | supervisor (this repo) | `GPL-2.0-only` since 2026-11-02 (#138; GitHub detects GPL-2.0). Was **none** (no root `LICENSE`, GitHub `license: null`) when this register was taken. | Decided by the owner. Synced copies carry `automation/COPYING`. |
+| `raelldottin/hermes-swarm-protocol` | wiki compiler and swarm plugin | `GPL-2.0-only` since 2026-11-02 (raelldottin/hermes-swarm-protocol#9; GitHub detects GPL-2.0). Was **none** (no `LICENSE` in the `main` tree, GitHub `license: null`) when this register was taken. | Decided by the owner. Each fleet release is a checkout of one commit, so `COPYING` ships with it. |
 | `NousResearch/hermes-agent` | Kanban, dispatcher, gateway | MIT (local `LICENSE`: "Copyright (c) 2025 Nous Research") | Low. The deployed build is a 33-commit local fork; its added commits' provenance belongs in a P0.5 SBOM. |
 | `vectorize-io/hindsight` (incl. `hindsight-integrations/hermes`) | target memory | MIT | Low |
 | `campfirein/byterover-cli` (`brv` 3.16.1) | current memory | **Elastic-2.0** (GitHub reports `NOASSERTION`; the `LICENSE` file is "Elastic License 2.0 (ELv2)") | **Not OSI-approved.** It is a dependency of today's memory and of the wiki's input format, so it cannot be part of a fully open-source production profile. Historic `.brv` Markdown can still be read as data. |
@@ -240,7 +240,7 @@ SPDX identifiers come from the GitHub license API unless noted [E17], [E19].
 5. **The schema is unversioned** (`user_version` 0). Check required columns like the compiler's `REQUIRED`, and pin the Hermes commit.
 6. **Link semantics.** Dependency links and provenance links share one `task_links` table.
 7. **Not delivered here: the machine-checkable inventory template.** The roadmap's RA-CP-001 acceptance asks for one. This document is the reviewed prose register. A schema-validated template can follow once RA-CP-002 fixes which fields it must carry.
-8. **License decisions** for `repo-automation` and `hermes-swarm-protocol`, and the ByteRover Elastic-2.0 dependency, block the P0.5 open-source claim.
+8. **License decisions.** The owner licensed `repo-automation` and `hermes-swarm-protocol` `GPL-2.0-only` on 2026-11-02. The ByteRover Elastic-2.0 dependency, which is not an OSI license, still blocks the P0.5 open-source claim.
 9. **The Hermes fork drift** (33 local commits) needs provenance before P0.5 pins it.
 
 ## Appendix A: the reader
