@@ -1,6 +1,6 @@
 # SPEC-002: One plugin for Claude Code, Codex and Hermes
 
-Status: **accepted design; the plugin, its skills and `run_next.py --single-slice` are implemented but not released. The release version gate is implemented.**  
+Status: **accepted design; the plugin, its skills and `run_next.py --single-slice` are implemented and were first released in `v0.2.0`, behind the release version gate.**  
 Owner decisions recorded here (2026-11-01): build the plugin; the single portable-plugin architecture is approved in principle; license the repository `GPL-2.0-only` (see [License](#license)). Implementation waits for this spec to be accepted.  
 Authority: until the rollout below lands, the only way repo-automation reaches a consumer repository is `Tools/repo-automation-sync.sh`, as `AGENTS.md` says.
 
