@@ -33,16 +33,16 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          uv run --frozen pytest automation/tests/test_harness.py \
-            --deselect automation/tests/test_harness.py::AutomationHarnessTests::test_live_queue_configures_repo_owned_agent_command \
-            --deselect automation/tests/test_harness.py::AutomationHarnessTests::test_build_context_includes_compact_previous_handoff_and_relevant_docs \
+          # fail_under in pyproject.toml fails this step below the floor.
+          uv run --frozen pytest automation/tests \
             --cov=automation \
             --cov-report=xml \
             --cov-report=term-missing \
             --junit-xml=pytest.xml
 
       - name: Post coverage comment
-        if: github.event_name == 'pull_request'
+        # Post even when the floor fails, so the PR shows the number that failed it.
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         uses: MishaKav/pytest-coverage-comment@v1.12.3
         with:
           pytest-xml-coverage-path: coverage.xml
