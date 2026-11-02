@@ -10,8 +10,10 @@ This skill drives the supervisor that `Tools/repo-automation-sync.sh` copied int
 
 ## Before you run anything
 
-1. Work from the repository root. Confirm `automation/supervisor/run_next.py` exists there. If it doesn't, stop and say: "This repository has not adopted repo-automation."
-2. Run `python3 automation/supervisor/run_next.py --help` and confirm it lists `--single-slice`. If it doesn't, stop and say the synced copy is too old for this plugin and needs a sync to a newer repo-automation release.
+Run each check as its own command. Don't join them with `&&`, `;` or a pipe: a harness with a narrow command allowlist can refuse the combined form.
+
+1. Work from the repository root. Run `test -f automation/supervisor/run_next.py`. If it fails, stop and say: "This repository has not adopted repo-automation."
+2. Run `python3 automation/supervisor/run_next.py --help` and read its output for `--single-slice`. If it isn't listed, stop and say the synced copy is too old for this plugin and needs a sync to a newer repo-automation release.
 
 ## The one supported command
 

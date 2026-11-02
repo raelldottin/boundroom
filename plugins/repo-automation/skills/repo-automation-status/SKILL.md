@@ -10,7 +10,7 @@ This skill reads the supervisor copy that `Tools/repo-automation-sync.sh` placed
 
 ## Before you run anything
 
-Work from the repository root. Confirm `automation/supervisor/run_next.py` exists there. If it doesn't, stop and say: "This repository has not adopted repo-automation."
+Work from the repository root. Run `test -f automation/supervisor/run_next.py` on its own, not joined to another command. If it fails, stop and say: "This repository has not adopted repo-automation."
 
 ## Next slice
 

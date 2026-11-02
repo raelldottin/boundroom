@@ -10,7 +10,7 @@ This skill runs the evaluator in the supervisor copy that `Tools/repo-automation
 
 ## Before you run anything
 
-1. Work from the repository root. Confirm `automation/supervisor/evaluate_handoff.py` exists there. If it doesn't, stop and say: "This repository has not adopted repo-automation."
+1. Work from the repository root. Run `test -f automation/supervisor/evaluate_handoff.py` on its own, not joined to another command. If it fails, stop and say: "This repository has not adopted repo-automation."
 2. Get from the user, or from the handoff and git history:
    - the slice id;
    - the handoff file;

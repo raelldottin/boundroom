@@ -30,8 +30,14 @@ Tools/repo-automation-sync.sh --check --target <consumer-path> --pin <full-sha> 
 
 Show the user the drift report and wait for an explicit yes. Then run the same command with `--sync` in place of `--check`.
 
-## 3. Land it through a pull request
+## 3. Update the consumer's lock, if it keeps one
 
-In the consumer, commit the synced files on the new branch and open a pull request against its default branch. Name the repo-automation tag or commit in the description. Don't merge it; that is the consumer owner's decision. Don't push to the consumer's default branch.
+The script never writes `automation/repo-automation.lock`. It refuses that destination, because the consumer's `make` reads the pin from it and runs what the pin names. A consumer that keeps a lock expects the new pin committed together with the synced files.
+
+If the lock exists, show the user the change: `commit` becomes the full SHA you passed as `--pin`, and `imported_at` becomes today's date in the format the file already uses. Change those two fields only, and only after the user says yes. Then run the consumer's own check, such as `make repo-automation-check`, and report what it says.
+
+## 4. Land it through a pull request
+
+In the consumer, commit the synced files, and the lock if you updated it, on the new branch and open a pull request against its default branch. Name the repo-automation tag or commit in the description. Don't merge it; that is the consumer owner's decision. Don't push to the consumer's default branch.
 
 Synced files include `automation/COPYING`, the GPL-2.0 text that covers them. Leave it in place.
