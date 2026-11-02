@@ -1,0 +1,30 @@
+{
+  "name": "repo-automation",
+  "version": "0.2.0",
+  "description": "Drive a repository's synced repo-automation supervisor: see what is next, run exactly one slice, evaluate a handoff, and sync a consumer through a pull request.",
+  "author": {
+    "name": "Raell Dottin",
+    "url": "https://github.com/raelldottin"
+  },
+  "homepage": "https://github.com/raelldottin/repo-automation",
+  "repository": "https://github.com/raelldottin/repo-automation",
+  "license": "GPL-2.0-only",
+  "keywords": [
+    "automation",
+    "supervisor",
+    "agents",
+    "slices",
+    "kanban"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "repo-automation",
+    "shortDescription": "Run one supervised slice at a time",
+    "developerName": "Raell Dottin",
+    "category": "Coding",
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
+  }
+}
