@@ -1,6 +1,6 @@
 # CodSpeed removal roadmap
 
-Status: **done in the repository** (2026-11-01). Steps 1 to 3 have landed. Step 4, the CodSpeed GitHub App and codspeed.io project, is the owner's. This page is kept as the record of why and how CodSpeed was removed.
+Status: **done** (2026-11-01). All four steps have landed, including the owner's removal of the CodSpeed GitHub App. This page is kept as the record of why and how CodSpeed was removed.
 
 ## Why
 
