@@ -1,6 +1,6 @@
 ---
 name: repo-automation-evaluate-handoff
-description: Evaluate an existing repo-automation handoff artifact against its slice and report the supervisor's decision without changing the queue. Use when asked to check, review or re-evaluate a handoff file or a finished slice.
+description: Evaluate a repo-automation handoff for a queued slice whose work was finished outside run_next, and report the supervisor's decision without changing the queue. Use when asked to check or close a queued slice from its handoff file. It does not re-check a slice that is already done.
 license: GPL-2.0-only
 ---
 
@@ -18,6 +18,7 @@ This skill runs the evaluator in the supervisor copy that `Tools/repo-automation
    - the commit that holds the verified work (head).
 
    Use full commit SHAs, not branch names. If any of these is unclear, ask.
+3. Check the slice in `automation/queue/slices.json`. The evaluator accepts only a slice whose status is `queued`, and only if the slice was already in the queue at the base commit. It rejects a `done` slice, and a slice with no contract at the base. If either applies, say so and stop. Don't edit the queue to get past it.
 
 ## The command
 
@@ -29,4 +30,4 @@ Keep `--dry-run`. It reports the decision without changing the queue. Run withou
 
 ## After it returns
 
-Report the decision, the stop reason, and any validation, scope, diff-budget or proof failures it lists. Then stop. Don't start a slice.
+Report the decision, the stop reason, and any validation, scope, diff-budget or proof failures it lists. A reject never changes the queue, with or without `--dry-run`; an accept without `--dry-run` marks the slice `done`. Then stop. Don't start a slice.
