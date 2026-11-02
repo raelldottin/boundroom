@@ -30,14 +30,14 @@ Tools/repo-automation-sync.sh --check --target <consumer-path> --pin <full-sha> 
 
 Show the user the drift report and wait for an explicit yes. Then run the same command with `--sync` in place of `--check`.
 
-## 3. Leave the consumer's lock to its owner
+## 3. Update the consumer's lock pin, if it keeps one
 
-The script never writes `automation/repo-automation.lock`. It refuses that destination, because the consumer's `make` reads the pin from it and runs what the pin names. Don't edit or commit the lock yourself; it is not part of the sync result.
+The script never writes `automation/repo-automation.lock`. It refuses that destination, because the consumer's `make` reads the pin from it and runs what the pin names. A consumer that keeps a lock checks its vendored files against that pin before a push, so the sync can't be pushed under the old pin.
 
-If the lock exists, tell the user it still names the old commit, and give the new values: `commit` is the full SHA you passed as `--pin`, and `imported_at` is today's date in the format the file already uses. Say that the consumer owner updates it, and that the consumer's own check, such as `make repo-automation-check`, may fail until they do.
+If the lock exists, show the user the change: `commit` becomes the full SHA you passed as `--pin`, and `imported_at` becomes the import time, in the format the file already uses. Make the change only after the user says yes. Change those two fields and nothing else; never `remote` or `repository`. Then run the consumer's own check, such as `make repo-automation-check`, and report what it says.
 
 ## 4. Land it through a pull request
 
-In the consumer, commit exactly the synced files on the new branch and open a pull request against its default branch. Name the repo-automation tag or commit in the description, and, if the consumer keeps a lock, the pin it needs. Don't merge it; that is the consumer owner's decision. Don't push to the consumer's default branch.
+In the consumer, commit exactly the synced files, and the lock if you updated it, in one commit on the new branch and open a pull request against its default branch. Name the repo-automation tag or commit in the description. Don't merge it; that is the consumer owner's decision. Don't push to the consumer's default branch.
 
 Synced files include `automation/COPYING`, the GPL-2.0 text that covers them. Leave it in place.
