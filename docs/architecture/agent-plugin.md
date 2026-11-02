@@ -112,7 +112,25 @@ Each step is its own pull request through the required checks.
 3. `AGENTS.md`: name the plugin as a supported front end in "Consumer Repositories". State that it carries no supervisor code and that consumers still change only through the sync script and a pull request. Agent-instruction files go in their own pull request.
 4. The plugin: the manifests, the marketplace catalogs, the four skills, `run_next.py --single-slice`, and their tests. The tests check that every manifest parses and agrees on `name` and `version`, and that every skill has the frontmatter all three harnesses require. They also include the one-slice tests above. Install it locally in each harness and record the result. `hermes plugins validate` and `claude plugin validate` check the manifests.
 5. The release version gate described under [Versions and releases](#versions-and-releases), with its negative tests. It is a prerequisite of step 6.
-6. A release, only with the owner's explicit approval, then a canary: install in one harness, then run `repo-automation-status` and `repo-automation-run-next` against one consumer that has passed the audit.
+6. A release, only with the owner's explicit approval, then a canary: install in one harness, then run `repo-automation-status` and `repo-automation-run-next` against one consumer that has passed the audit. Done 2026-11-02: `v0.2.0` was released, and the canary is recorded under [Rollout trial](#rollout-trial-step-6-2026-11-02).
+
+## Rollout trial (step 6, 2026-11-02)
+
+The owner approved the trial. It ran against **Owlory**, which has no eligible slice, so a full `run-next` could only stop cleanly. Gymphant was not used, because its next slice is real iOS artifact work. Every consumer step ran in a fresh clone. The owner's own Owlory checkout was not touched; it had uncommitted work.
+
+| Step | Result |
+| --- | --- |
+| Install | `claude plugin marketplace add raelldottin/repo-automation@v0.2.0`, then `claude plugin install repo-automation@repo-automation`. `0.2.0` enabled at user scope in the operator's real Claude Code. Codex and Hermes were proven only in throwaway homes during implementation. |
+| `repo-automation-status` | A headless Claude Code session, allowed only to read and to run `run_next.py`, ran `run_next.py --dry-run --include-blocked`. It reported no eligible slice and the eight blocked or deferred slices with their unblockers. The clone was unchanged. |
+| `repo-automation-run-next` on the old copy | Owlory's synced copy was from `751c851` (2026-09-28) and has no `--single-slice`. The skill read `--help`, said the copy was too old, and stopped. It ran no slice and wrote no handoff. |
+| `repo-automation-sync` | From a clean `v0.2.0` checkout, `--check` passed every provenance gate: pin, origin, clean source and quality gate. It reported 33 differences (19 changed, 14 missing). `--sync` applied them. The lock pin was updated, and Owlory's own `make repo-automation-check` reported `target is current`. Delivered as raelldottin/owlory#4 (34 files), which the owner merged as `ae1c4bd`. Owlory's `main` now pins `d516e8d`. |
+| `repo-automation-run-next` on the synced copy | The skill confirmed `--single-slice` in `--help`, then ran exactly `python3 automation/supervisor/run_next.py --single-slice`. Exit 0, `stop: no eligible queued slice found.` No slice was selected, the queue was unchanged and no handoff was written. |
+
+**Findings.**
+
+- **The sync skill doesn't mention the consumer's lock.** The sync script refuses to write `automation/repo-automation.lock`, because it is a forbidden destination. Owlory's own rule is to commit the new pin together with the imported files, and its pre-push gate reads the pin from that file. During the trial, the lock's `commit` and `imported_at` were updated by hand. The skill should say so, for consumers that keep a lock. That is a follow-up plugin change.
+- **Compound pre-checks need extra approval.** Headless sessions sometimes chained the skill's checks (`test … && python3 … --help | grep …`). With a narrow tool allowlist, that combined command was refused, and the agent fell back to the single commands. The outcome was right either way. The skills could name each check as its own command.
+- **Owlory has no pull-request CI.** The import PR's evidence was the local `repo-automation-check`.
 
 ## Performance
 
