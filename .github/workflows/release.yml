@@ -17,9 +17,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Cheap and first, so a malformed tag is refused before the gate matrix spends a run on it.
+  # Cheap and first, so a malformed tag, or one the plugin manifests disagree with, is refused
+  # before the gate matrix spends a run on it.
   semver:
-    name: Refuse a malformed tag
+    name: Refuse a malformed or mismatched tag
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -31,6 +32,15 @@ jobs:
             echo "::error::tag $TAG is not semver (vMAJOR.MINOR.PATCH[-prerelease])"
             exit 1
           fi
+
+      - name: Checkout tag
+        uses: actions/checkout@v7
+
+      # SPEC-002: every plugin manifest must exist and declare this tag's version.
+      - name: Require the plugin manifests to match the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 Tools/check_plugin_version.py "$TAG"
 
   gate:
     name: make reusable-check

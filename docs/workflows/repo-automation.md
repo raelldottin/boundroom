@@ -99,7 +99,7 @@ git tag -a v0.1.0 origin/main -m "v0.1.0"
 git push origin v0.1.0
 ```
 
-The workflow refuses a tag that is not semver or whose commit is not reachable from `origin/main`. It reruns `make reusable-check` on Python 3.11 and 3.12 exactly as `lint.yml` does, and then stages the archive by running this sync tool's own `--sync` with every protection on (`--pin` set to the tagged commit, `--expect-remote`, a clean source, the quality gate and the runtime check) into an empty directory. The archive is therefore the manifest's distributed tree, byte for byte what a consumer's `--sync` at that commit writes into an empty target. Nothing is listed twice.
+The workflow refuses a tag that is not semver, a tag that any plugin manifest under `plugins/repo-automation/` does not declare (`Tools/check_plugin_version.py`: a tag `v0.2.0` needs `"version": "0.2.0"` in all three; see [SPEC-002](../architecture/agent-plugin.md#versions-and-releases)), and a tag whose commit is not reachable from `origin/main`. It reruns `make reusable-check` on Python 3.11 and 3.12 exactly as `lint.yml` does, and then stages the archive by running this sync tool's own `--sync` with every protection on (`--pin` set to the tagged commit, `--expect-remote`, a clean source, the quality gate and the runtime check) into an empty directory. The archive is therefore the manifest's distributed tree, byte for byte what a consumer's `--sync` at that commit writes into an empty target. Nothing is listed twice.
 
 What the version means to a consumer:
 
