@@ -54,7 +54,7 @@ Agents MUST NOT commit or push to a consumer repository on this repository's beh
 
 ### Agent-Harness Plugin
 
-[SPEC-002](docs/architecture/agent-plugin.md) specifies one optional plugin for Claude Code, Codex and Hermes. It lives in `plugins/repo-automation/`, with its catalogs at `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. It is **implemented on `main` and not released**. Until a release tag carries it, do not describe it as released or available to install from a release.
+[SPEC-002](docs/architecture/agent-plugin.md) specifies one optional plugin for Claude Code, Codex and Hermes. It lives in `plugins/repo-automation/`, with its catalogs at `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. It is **released**, first in `v0.2.0`. Install it from a release tag, not from an untagged commit on `main`.
 
 The plugin is a front end, not another supervisor or authority. It is skills and manifests only. Its skills drive the supervisor copy that `Tools/repo-automation-sync.sh` placed in the repository being worked on. That synced copy, its queue and the supervisor's gates remain the authority. A repository without a synced copy has nothing for the plugin to run.
 
