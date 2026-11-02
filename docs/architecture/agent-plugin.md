@@ -1,6 +1,6 @@
 # SPEC-002: One plugin for Claude Code, Codex and Hermes
 
-Status: **accepted design; the plugin, its skills and `run_next.py --single-slice` are implemented but not released. The release version gate is not implemented.**  
+Status: **accepted design; the plugin, its skills and `run_next.py --single-slice` are implemented but not released. The release version gate is implemented.**  
 Owner decisions recorded here (2026-11-01): build the plugin; the single portable-plugin architecture is approved in principle; license the repository `GPL-2.0-only` (see [License](#license)). Implementation waits for this spec to be accepted.  
 Authority: until the rollout below lands, the only way repo-automation reaches a consumer repository is `Tools/repo-automation-sync.sh`, as `AGENTS.md` says.
 
@@ -69,7 +69,7 @@ Each skill first finds the synced copy at `<repository>/automation/`. If there i
 
 A release is still a `vX.Y.Z` tag on a commit already on `main`, built by `release.yml`. The manifests carry the same number without the `v`: tag `v0.2.0` means `"version": "0.2.0"` in every manifest. All marketplaces install from the GitHub repository at a ref, so no new publishing workflow is needed and nothing is uploaded anywhere else. A unit test checks that every manifest has the same `name` and a `version` in `X.Y.Z[-prerelease]` form.
 
-**The release gate doesn't exist yet.** Today `release.yml` checks the tag's syntax and that its commit is on `main`. It does not compare the tag with any manifest. Before the first plugin release, a separate change must add that comparison, as a small checked-in script that `release.yml` calls. That keeps the check testable outside a release run. The script reads the required manifests (`plugin.json`, `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` under `plugins/repo-automation/`) and refuses if any is missing, so an empty or partial set can't pass. It requires that they all declare the same `version`, and that this version equals the tag without its `v`. Otherwise it refuses, naming each file and its version. The existing tag-syntax and ancestry guards stay as they are. Its negative tests:
+**The release gate.** `release.yml` checks the tag's syntax and that its commit is on `main`. Its first job also runs `Tools/check_plugin_version.py <tag>`, before the gate matrix spends a run, so the comparison is testable outside a release run (`automation/tests/test_check_plugin_version.py`). The script reads the required manifests (`plugin.json`, `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` under `plugins/repo-automation/`) and refuses if any is missing, so an empty or partial set can't pass. It requires that they all declare the same `version`, and that this version equals the tag without its `v`. Otherwise it refuses, naming each file and its version. The existing tag-syntax and ancestry guards stay as they are. Its tests cover these refusals, plus an unreadable manifest and the real manifests passing for their own version:
 - a `v0.2.0` tag over manifests that declare `0.1.0` is refused;
 - two manifests that disagree are refused, whatever the tag;
 - a missing required manifest is refused, even when the ones present match the tag;
