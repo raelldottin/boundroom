@@ -22,6 +22,7 @@ from automation.supervisor import kanban_projection, kanban_writer, policy
 
 # Time a Kanban claim outlives the agent's handoff timeout, for the validation replay and the record.
 CLAIM_MARGIN_SECONDS = 30 * 60
+EX_USAGE = 64  # sysexits.h; the runner wrapper uses the same code for a bad runner value
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,6 +31,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--handoff-dir", default="automation/handoffs", help="Directory where handoff artifacts are expected.")
     parser.add_argument("--agent-cmd", help="Shell command template for the fresh agent run.")
     parser.add_argument("--autonomous-limit", type=int, help="Override the queue policy limit for consecutive autonomous slices.")
+    parser.add_argument(
+        "--single-slice",
+        action="store_true",
+        help="Run at most one slice. Refuses --autonomous-limit in any form, so a caller can't raise it (SPEC-002).",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -94,6 +100,10 @@ class KanbanQueue:
 
 def main() -> int:
     args = parse_args()
+    if args.single_slice and args.autonomous_limit is not None:
+        # argparse keeps only the last of repeated flags, so any value at all is refused, 1 included.
+        print("stop: --single-slice runs one slice and refuses --autonomous-limit.", file=sys.stderr)
+        return EX_USAGE
     repo_root = REPO_ROOT
     handoff_dir = repo_root / args.handoff_dir
     handoff_dir.mkdir(parents=True, exist_ok=True)
@@ -121,7 +131,7 @@ def main() -> int:
         )
         return 2
 
-    autonomous_limit = args.autonomous_limit or queue_data["policy"]["consecutive_autonomous_limit"]
+    autonomous_limit = 1 if args.single_slice else args.autonomous_limit or queue_data["policy"]["consecutive_autonomous_limit"]
     completed_runs = 0
 
     while True:

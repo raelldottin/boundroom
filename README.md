@@ -106,6 +106,25 @@ live end-to-end:
    **GitHub Actions**. The publish-docs workflow will then deploy the
    MkDocs site on the next push.
 
+## Agent Plugin
+
+`plugins/repo-automation/` is one plugin for Claude Code, Codex and Hermes, specified in [SPEC-002](docs/architecture/agent-plugin.md). It is not released yet. It holds four skills and no supervisor code: status, run-next, evaluate-handoff and sync. Each skill drives the repo-automation copy already synced into the repository you work in, and stops if there isn't one. The run-next skill runs `run_next.py --single-slice`, which runs at most one slice.
+
+```bash
+claude plugin marketplace add raelldottin/repo-automation
+claude plugin install repo-automation@repo-automation
+```
+
+```bash
+codex plugin marketplace add raelldottin/repo-automation
+codex plugin add repo-automation@repo-automation
+```
+
+```bash
+hermes plugins install raelldottin/repo-automation#plugins/repo-automation --ref <commit-sha>
+hermes plugins enable repo-automation
+```
+
 ## Status
 
 This repository is the canonical reusable automation distribution extracted from Owlory. Its existing supervisor harness is present. The P0 Kanban / external-memory / wiki integration is specified but not yet implemented; consumer smoke proof and other supervisor roadmap work follow the P0 acceptance gate. Benchmark/effectiveness work is exempt from that ordering and continues in parallel under explicit owner authorization. Treat project-specific examples as templates, not production configuration.

@@ -1,6 +1,6 @@
 # SPEC-002: One plugin for Claude Code, Codex and Hermes
 
-Status: **proposed design; nothing here is implemented**  
+Status: **accepted design; the plugin, its skills and `run_next.py --single-slice` are implemented but not released. The release version gate is not implemented.**  
 Owner decisions recorded here (2026-11-01): build the plugin; the single portable-plugin architecture is approved in principle; license the repository `GPL-2.0-only` (see [License](#license)). Implementation waits for this spec to be accepted.  
 Authority: until the rollout below lands, the only way repo-automation reaches a consumer repository is `Tools/repo-automation-sync.sh`, as `AGENTS.md` says.
 
@@ -18,15 +18,23 @@ All three harnesses read the same `skills/<name>/SKILL.md` layout. Each wants it
 
 | Harness | Manifest | Install |
 | --- | --- | --- |
-| Claude Code | `.claude-plugin/plugin.json`, plus `.claude-plugin/marketplace.json` listing the plugin | `claude plugin marketplace add raelldottin/repo-automation`, then `claude plugin install` |
-| Codex 0.166 | The root `plugin.json` below. Per the owner's review of OpenAI's documentation, Codex reads a portable Agent Plugins manifest at the package root, with `.codex-plugin/plugin.json` (`"skills": "./skills/"`) as a compatibility fallback. Its repository marketplace lives at `.agents/plugins/marketplace.json`. | `codex plugin marketplace add raelldottin/repo-automation@<tag>`, then `codex plugin add` |
-| Hermes (`~/.hermes/hermes-agent` at `31bde0d`) | `plugin.json` at the root in the portable **Agent Plugins v1** format (`$schema` `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`) | `hermes plugins install raelldottin/repo-automation`, then `hermes plugins enable`; Hermes installs portable packages disabled |
+| Claude Code | `plugins/repo-automation/.claude-plugin/plugin.json`, listed by `.claude-plugin/marketplace.json` at the repository root | `claude plugin marketplace add raelldottin/repo-automation`, then `claude plugin install repo-automation@repo-automation` |
+| Codex 0.166 | `plugins/repo-automation/.codex-plugin/plugin.json` (`"skills": "./skills/"`) beside the portable `plugin.json`, listed by `.agents/plugins/marketplace.json` at the repository root with a `local` source | `codex plugin marketplace add raelldottin/repo-automation@<tag>`, then `codex plugin add repo-automation@repo-automation` |
+| Hermes (`~/.hermes/hermes-agent` at `31bde0d`) | `plugins/repo-automation/plugin.json` in the portable **Agent Plugins v1** format (`$schema` `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`) | `hermes plugins install raelldottin/repo-automation#plugins/repo-automation --ref <sha>`, then `hermes plugins enable repo-automation`; Hermes installs portable packages disabled |
 
 Hermes's native `plugin.yaml` and `register(ctx)` format is not needed. Agent Plugins v1 discovers `skills/` with no Python, and Hermes already ignores `.claude-plugin/` and `.codex-plugin/` during discovery. Superpowers ships the same Claude and Codex manifests side by side in one repository.
 
-The plugin root is the repository root, because `hermes plugins install <owner/repo>` reads `plugin.json` there. The repository gains `plugin.json`, `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/marketplace.json` and `skills/` at the top level. Nothing in `automation/` moves. Installing from a subdirectory is an optional later optimization, not a prerequisite.
+The plugin lives in `plugins/repo-automation/`, not at the repository root. This spec first chose the root and called a subdirectory an optional later optimization. The implementation found that the root cannot install in Hermes. `hermes plugins install` security-scans every file in the plugin directory and always blocks a `dangerous` verdict. At the root, that scan covers the whole repository and flags two files the plugin doesn't use: a benchmark fixture's `rm -rf /workspace/*` (a cleanup inside the benchmark's container) and a CI workflow's authenticated `curl` to the model provider. Editing those files to satisfy a scanner would change pinned benchmark settings, and would be the wrong reason to touch them. Hermes installs a subdirectory with a sparse checkout (`owner/repo#path`), and its install name is the last path component, so `plugins/repo-automation` installs as `repo-automation`. Nothing in `automation/` moves.
 
-**Marketplaces.** `.agents/plugins/marketplace.json` is the canonical repository marketplace for Codex. Codex also recognizes `.claude-plugin/marketplace.json` as a legacy location, so one catalog may serve both hosts. The plugin pull request installs from each host and records which catalog each one resolved. It doesn't assume they resolve the same way.
+**What the plugin pull request verified (2026-11-02).** Each tool installed from the pull request's branch into a throwaway home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HERMES_HOME`), so the operator's real configuration was untouched.
+
+| Tool | Validation | Install |
+| --- | --- | --- |
+| Claude Code | `claude plugin validate` passes for the plugin and the root marketplace | installed and enabled at `0.2.0` with all four skills |
+| Codex 0.166 | no validate command | `codex plugin marketplace add <checkout>` resolved `.agents/plugins/marketplace.json`; installed and enabled at `0.2.0` with all four skills |
+| Hermes | `hermes plugins validate` passes for `plugins/repo-automation` (and fails the security scan for the repository root) | installed from `file://<checkout>#plugins/repo-automation` at a pinned commit, then enabled, with all four skills |
+
+**Marketplaces.** `.agents/plugins/marketplace.json` is the canonical repository marketplace for Codex, and Codex resolved it when both catalogs existed. A Codex `url` source is cloned with git, which works only for a repository root. So the Codex catalog uses a `local` source with a path, the form Codex's own curated catalog uses for subdirectories. Claude Code reads `.claude-plugin/marketplace.json`, whose `source` is the relative path.
 
 ## Skills
 
@@ -61,7 +69,7 @@ Each skill first finds the synced copy at `<repository>/automation/`. If there i
 
 A release is still a `vX.Y.Z` tag on a commit already on `main`, built by `release.yml`. The manifests carry the same number without the `v`: tag `v0.2.0` means `"version": "0.2.0"` in every manifest. All marketplaces install from the GitHub repository at a ref, so no new publishing workflow is needed and nothing is uploaded anywhere else. A unit test checks that every manifest has the same `name` and a `version` in `X.Y.Z[-prerelease]` form.
 
-**The release gate doesn't exist yet.** Today `release.yml` checks the tag's syntax and that its commit is on `main`. It does not compare the tag with any manifest. Before the first plugin release, a separate change must add that comparison, as a small checked-in script that `release.yml` calls. That keeps the check testable outside a release run. The script reads the required manifests (`plugin.json`, `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) and refuses if any is missing, so an empty or partial set can't pass. It requires that they all declare the same `version`, and that this version equals the tag without its `v`. Otherwise it refuses, naming each file and its version. The existing tag-syntax and ancestry guards stay as they are. Its negative tests:
+**The release gate doesn't exist yet.** Today `release.yml` checks the tag's syntax and that its commit is on `main`. It does not compare the tag with any manifest. Before the first plugin release, a separate change must add that comparison, as a small checked-in script that `release.yml` calls. That keeps the check testable outside a release run. The script reads the required manifests (`plugin.json`, `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` under `plugins/repo-automation/`) and refuses if any is missing, so an empty or partial set can't pass. It requires that they all declare the same `version`, and that this version equals the tag without its `v`. Otherwise it refuses, naming each file and its version. The existing tag-syntax and ancestry guards stay as they are. Its negative tests:
 - a `v0.2.0` tag over manifests that declare `0.1.0` is refused;
 - two manifests that disagree are refused, whatever the tag;
 - a missing required manifest is refused, even when the ones present match the tag;
@@ -110,7 +118,7 @@ Each step is its own pull request through the required checks.
 
 The plugin adds Markdown and JSON only. It adds no file, network or subprocess work to the supervisor, policy, validation or context paths, and does not make their cost grow with any workload. Under the performance rule in `AGENTS.md`, it needs no measurement. The skills call the same code a manual `run_next` run does.
 
-## Open questions for implementation
+## Settled during implementation
 
-- Whether Claude Code's skill frontmatter, Codex's and Agent Plugins v1's agree on required fields. The `SKILL.md` test should enforce whatever set satisfies all three.
-- Which marketplace catalog each host resolves when both `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json` exist. Record it from a real install.
+- **Skill frontmatter.** `name` (matching the directory, lowercase words joined by hyphens, at most 64 characters) and `description` (1 to 1024 characters), plus an optional `license`, satisfy all three tools. `automation/tests/test_plugin_manifests.py` enforces that set.
+- **Catalog resolution.** See Marketplaces above.

@@ -1,0 +1,20 @@
+{
+  "name": "repo-automation",
+  "interface": {
+    "displayName": "repo-automation"
+  },
+  "plugins": [
+    {
+      "name": "repo-automation",
+      "source": {
+        "source": "local",
+        "path": "./plugins/repo-automation"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Coding"
+    }
+  ]
+}
