@@ -128,7 +128,7 @@ The owner approved the trial. It ran against **Owlory**, which has no eligible s
 
 **Findings.**
 
-- **The sync skill doesn't mention the consumer's lock.** The sync script refuses to write `automation/repo-automation.lock`, because it is a forbidden destination. Owlory's own rule is to commit the new pin together with the imported files, and its pre-push gate reads the pin from that file. During the trial, the lock's `commit` and `imported_at` were updated by hand. The skill should say so, for consumers that keep a lock. The sync skill now does, for the next release: with the user's yes, it sets the lock's `commit` and `imported_at` only.
+- **The sync skill doesn't mention the consumer's lock.** The sync script refuses to write `automation/repo-automation.lock`, because it is a forbidden destination. Owlory's own rule is to commit the new pin together with the imported files, and its pre-push gate reads the pin from that file. During the trial, the lock's `commit` and `imported_at` were updated by hand. The skill should say so, for consumers that keep a lock. The sync skill now does, for the next release: it gives the new pin and leaves the lock edit to the consumer owner, because `AGENTS.md` forbids an agent committing anything beyond the sync result.
 - **Compound pre-checks need extra approval.** Headless sessions sometimes chained the skill's checks (`test … && python3 … --help | grep …`). With a narrow tool allowlist, that combined command was refused, and the agent fell back to the single commands. The outcome was right either way. The skills now name each check as its own command, for the next release.
 - **Owlory has no pull-request CI.** The import PR's evidence was the local `repo-automation-check`.
 
