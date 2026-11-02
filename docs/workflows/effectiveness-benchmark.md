@@ -1,7 +1,7 @@
 # Effectiveness Benchmark
 
 The effectiveness benchmark measures how good the harness is at producing *working*
-code — not how fast its functions run (that is the CodSpeed micro-benchmark). It uses
+code — not how fast its functions run. It uses
 [ProgramBench](https://github.com/facebookresearch/ProgramBench): the harness rebuilds
 real programs from scratch and is scored by ProgramBench's black-box test suites.
 
