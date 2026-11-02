@@ -18,6 +18,10 @@ Policy in one sentence:
 
 - A run may recommend the next slice, but only the supervisor may continue, and only into a pre-classified adjacent slice that passes scope, validation, and diff-budget gates.
 
+## License
+
+These files are part of repo-automation, which is under the GNU General Public License, version 2 only (`GPL-2.0-only`), Copyright (C) 2026 Raell Dottin, with ABSOLUTELY NO WARRANTY. The full text is `automation/COPYING` in a consumer repository and `COPYING` at the root of repo-automation. The license covers exactly the files listed in `automation/reusable-manifest.json`, including `Tools/repo-automation-sync.sh` and `docs/workflows/`. It does not cover the consumer's own files, such as its queue, handoffs and proofs. Third-party attributions are in `THIRD-PARTY-NOTICES.md`.
+
 ## Ownership
 
 - `automation/queue/slices.json` is the source of truth for queued work and slice status.

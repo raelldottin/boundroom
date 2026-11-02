@@ -172,6 +172,14 @@
       "preserve_executable": false,
       "delete_stale": false,
       "template": false
+    },
+    {
+      "source": "COPYING",
+      "destination": "automation/COPYING",
+      "kind": "file",
+      "preserve_executable": false,
+      "delete_stale": false,
+      "template": false
     }
   ]
 }
