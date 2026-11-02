@@ -2,7 +2,7 @@
 
 Reusable supervised automation for bounded agent work.
 
-**Architecture direction (proposed):** The proposed top layer is a canonical **Hermes Kanban board**, **self-hosted Hindsight external project memory**, and a generated **Swarm Wiki** powered by [hermes-swarm-protocol](https://github.com/raelldottin/hermes-swarm-protocol). The existing supervisor stays beneath this layer and retains sole authority over slice execution and continuation. See [SPEC-001](docs/architecture/control-plane.md) and the [sequenced roadmap](docs/roadmap.md). These are target contracts, not yet implemented integrations. The existing Swarm Wiki requires an upstream source-adapter migration before it can read Hindsight data. The fully open-source, local-inference profile additionally requires owner-approved licenses for both project repositories and audited model/dependency licenses.
+**Architecture direction (proposed):** The proposed top layer is a canonical **Hermes Kanban board**, **self-hosted Hindsight external project memory**, and a generated **Swarm Wiki** powered by [hermes-swarm-protocol](https://github.com/raelldottin/hermes-swarm-protocol). The existing supervisor stays beneath this layer and retains sole authority over slice execution and continuation. See [SPEC-001](docs/architecture/control-plane.md) and the [sequenced roadmap](docs/roadmap.md). These are target contracts, not yet implemented integrations. The existing Swarm Wiki requires an upstream source-adapter migration before it can read Hindsight data. The fully open-source, local-inference profile additionally requires an owner-approved license for `hermes-swarm-protocol` (this repository's is below) and audited model/dependency licenses.
 
 `repo-automation` packages a slice-based supervisor harness: queue records, context building, prompt fragments, validation ownership, handoff schemas, and stop rules for keeping AI-assisted repository work scoped and reviewable.
 
@@ -109,3 +109,13 @@ live end-to-end:
 ## Status
 
 This repository is the canonical reusable automation distribution extracted from Owlory. Its existing supervisor harness is present. The P0 Kanban / external-memory / wiki integration is specified but not yet implemented; consumer smoke proof and other supervisor roadmap work follow the P0 acceptance gate. Benchmark/effectiveness work is exempt from that ordering and continues in parallel under explicit owner authorization. Treat project-specific examples as templates, not production configuration.
+
+## License
+
+repo-automation is free software under the GNU General Public License, version 2 only (`GPL-2.0-only`). The full text is in [`COPYING`](COPYING). It comes with ABSOLUTELY NO WARRANTY, as `COPYING` explains.
+
+Copyright (C) 2026 Raell Dottin.
+
+The license covers the original code and documentation in this repository. That includes every file `automation/reusable-manifest.json` distributes to consumer repositories, among them `Tools/repo-automation-sync.sh` and `docs/workflows/`. A sync places the license text beside them as `automation/COPYING`, and the release archive carries it too. Synced files keep this license inside a consumer repository. The license of the consumer's own code is the consumer's decision.
+
+Material adapted from third parties keeps its original license and attribution; see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

@@ -787,6 +787,29 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
             declared,
         )
 
+    def test_10_a_consumer_export_carries_the_license(self) -> None:
+        """GPL-2.0 has to travel with every distributed copy, beside the code rather than at the consumer's root."""
+        result = subprocess.run(
+            [
+                str(SYNC_TOOL),
+                "--sync",
+                "--allow-unverified-source",
+                "--source",
+                str(REPO_ROOT),
+                "--manifest",
+                str(REPO_ROOT / "automation/reusable-manifest.json"),
+                "--target",
+                str(self.target),
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        self.assertEqual((REPO_ROOT / "COPYING").read_bytes(), (self.target / "automation/COPYING").read_bytes())
+        self.assertFalse((self.target / "COPYING").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
