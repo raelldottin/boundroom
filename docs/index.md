@@ -2,7 +2,7 @@
 
 Reusable supervised-slice automation distribution. This repository is the
 publication target for the manifest-owned slice harness in
-[raelldottin/owlory](https://github.com/raelldottin/owlory); changes flow one
+[owlory/owlory](https://github.com/owlory/owlory); changes flow one
 way from Owlory into this repo via `Tools/repo-automation-sync.sh`.
 
 ## Architecture and roadmap
