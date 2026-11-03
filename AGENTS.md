@@ -54,9 +54,17 @@ An agent MAY deliver a sync to a consumer, but only as a reviewable pull request
 
 Agents MUST NOT:
 
-- merge that pull request, which is the consumer owner's decision;
+- merge that pull request without the consumer owner's approval as described below;
 - push to, force-push or delete a consumer's default branch;
 - commit anything to a consumer branch beyond the sync result and that lock pin, or use `--allow-unverified-source`.
+
+**Merging a sync pull request.** Merging stays the consumer owner's decision. An agent MAY carry out that decision only when all of these hold:
+
+- the owner explicitly approved merging that pull request, named by number, after the agent reported its current head commit and the state of its checks. Approval of the sync, of an earlier head, or of a different pull request does not carry over;
+- the consumer's required checks have passed, or it has none. A failing check that is not required was reported to the owner before the approval;
+- the merge is pinned to the approved head (for example `gh pr merge --match-head-commit <sha>`) and uses a merge method the consumer allows, without an admin override or any other bypass of the consumer's branch protection.
+
+If the head changes after the approval, the agent asks again.
 
 **The consumer's lock.** The sync script refuses to write `automation/repo-automation.lock`, because the consumer's `make` runs what its pin names. A consumer that keeps a lock checks its vendored files against that pin before a push: Owlory's pre-push hook runs `make repo-automation-check`, so a sync committed under the old pin cannot be pushed. In the same commit as the sync result, an agent MAY set the lock's `commit` to the full SHA it passed as `--pin`, and `imported_at` to the import time, after showing the user those values and getting a yes. It MUST NOT change any other field of the lock, including `remote` and `repository`, and MUST NOT skip the consumer's hooks to push.
 
