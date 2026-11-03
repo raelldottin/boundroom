@@ -299,7 +299,7 @@ def shadow_diff(projection: Projection, overlay: KanbanOverlay, queue: dict[str,
 
     def comparable(record: dict[str, Any], translate: bool) -> dict[str, Any]:
         fields = {name: record.get(name) for name in SHADOW_FIELDS}
-        deps = [to_queue.get(dep, dep) for dep in record["depends_on"]] if translate else record["depends_on"]
+        deps = [to_queue[dep] if dep in to_queue else dep for dep in record["depends_on"]] if translate else record["depends_on"]
         return {**fields, "allowed_paths": sorted(record["allowed_paths"]), "depends_on": sorted(deps)}
 
     mismatches = []
