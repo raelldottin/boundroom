@@ -38,6 +38,8 @@ If the lock exists, show the user the change: `commit` becomes the full SHA you 
 
 ## 4. Land it through a pull request
 
-In the consumer, commit exactly the synced files, and the lock if you updated it, in one commit on the new branch and open a pull request against its default branch. Name the repo-automation tag or commit in the description. Don't merge it; that is the consumer owner's decision. Don't push to the consumer's default branch.
+In the consumer, commit exactly the synced files, and the lock if you updated it, in one commit on the new branch and open a pull request against its default branch. Name the repo-automation tag or commit in the description. Don't push to the consumer's default branch.
+
+Merging is the consumer owner's decision. Report the pull request's number, its head commit and its checks, and say which failing checks are not required. Merge it only if the owner then approves merging that pull request by number, and only once its required checks have passed. Pin the merge to the approved head with `gh pr merge <number> --match-head-commit <sha>`, use a merge method the consumer allows, and never use an admin override. If the head changes after the approval, ask again.
 
 Synced files include `automation/COPYING`, the GPL-2.0 text that covers them. Leave it in place.
