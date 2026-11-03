@@ -303,6 +303,19 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
         manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
         self.assertNotIn("default_target", manifest)
 
+    def test_1g_synced_tests_that_run_the_wrapper_bring_their_own_ps_double(self) -> None:
+        """Consumers run synced tests with unittest, which never loads conftest.py. A synced test
+        that runs run_agent.sh without importing fake_ps sees the consumer's enclosing harness."""
+        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+        synced = {entry["destination"] for entry in manifest["entries"]}
+        self.assertIn("automation/tests/fake_ps.py", synced)
+        for destination in sorted(synced):
+            if destination.startswith("automation/tests/test_") and destination.endswith(".py"):
+                text = (REPO_ROOT / destination).read_text(encoding="utf-8")
+                if "run_agent.sh" in text:
+                    with self.subTest(destination=destination):
+                        self.assertIn("import automation.tests.fake_ps", text)
+
     # --- protection 2 ----------------------------------------------------
 
     def test_2_unpinned_import_is_an_error(self) -> None:

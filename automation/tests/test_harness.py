@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+import automation.tests.fake_ps  # noqa: F401  (isolates run_agent.sh from the enclosing harness)
 from automation.context.build_context import build_context_bundle
 from automation.schemas import models
 from automation.supervisor import policy
@@ -947,7 +948,10 @@ exit 7
         """Hermes keys its timeouts by provider id, so a cap on any other id is silently
         unused: the session would fall back to the 90s/180s stale detectors the operator's
         LiteLLM deployment never applies. The id has to be the workflow's own."""
-        workflow = (self.repo_root / ".github/workflows/effectiveness-benchmark.yml").read_text(encoding="utf-8")
+        workflow_path = self.repo_root / ".github/workflows/effectiveness-benchmark.yml"
+        if not workflow_path.exists():
+            self.skipTest("the benchmark workflow is not synced to consumers")
+        workflow = workflow_path.read_text(encoding="utf-8")
         provider = next(
             line.split(":", 1)[1].strip()
             for line in workflow.splitlines()

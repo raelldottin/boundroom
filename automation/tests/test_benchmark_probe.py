@@ -23,6 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
 
+import automation.tests.fake_ps  # noqa: F401  (isolates run_agent.sh from the enclosing harness)
 from automation.benchmark.adapter import AGENT_SESSIONS_DIR, _default_command_template, _subprocess_runner
 from automation.benchmark.instances import TaskSpec, task_spec
 from automation.tests.test_benchmark_effectiveness import StubWitness, _fake_prepare
