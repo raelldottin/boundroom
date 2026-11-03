@@ -40,7 +40,8 @@ nav:
   - Memory Interface Contract: architecture/memory-interface.md
   - Swarm Wiki Compiler Pin: architecture/swarm-wiki-compiler.md
   - Agent Plugin Specification: architecture/agent-plugin.md
-  - Roadmap: roadmap.md
+  - Product Roadmap: product-roadmap.md
+  - Technical Roadmap (October 2026): roadmap.md
   - CodSpeed Removal Roadmap: codspeed-removal.md
   - Workflow: workflows/repo-automation.md
   - Effectiveness Benchmark: workflows/effectiveness-benchmark.md
