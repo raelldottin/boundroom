@@ -11,7 +11,7 @@ way from Owlory into this repo via `Tools/repo-automation-sync.sh`.
 - [Product roadmap](product-roadmap.md) — current product vision, shipped-state audit, milestone horizons, priorities, success metrics and acceptance gates.
 - [Technical roadmap (October 2026)](roadmap.md) — the original RA-CP implementation sequence and its historical acceptance contracts; benchmark/effectiveness work continues in parallel under explicit owner authorization.
 
-The current JSON queue and supervisor behavior remain operational until an explicitly reviewed Kanban cutover. The Swarm Wiki also needs an upstream Hindsight adapter; see the [open-source and compatibility gates](architecture/control-plane.md). The repo ships no live fleet board, Hindsight tree or wiki datastore.
+The current JSON queue and supervisor behavior remain operational until an explicitly reviewed Kanban cutover. The Swarm Wiki compiler now supports Hindsight snapshots in pinned, synthetic tests, but live end-to-end publication and local-inference acceptance remain outstanding; see the [control-plane gates](architecture/control-plane.md). The repo ships no live fleet board, Hindsight datastore or wiki datastore.
 
 ## What lives here
 
