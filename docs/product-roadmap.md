@@ -2,7 +2,7 @@
 
 **Snapshot:** 2026-11-03 | **Planning status:** proposed product priorities; not an execution authorization | **Current published release:** [v0.2.3](https://github.com/raelldottin/repo-automation/releases/tag/v0.2.3)
 
-**Product owner:** repository maintainer. **Delivery model:** reviewed pull requests, exact pinned releases, explicit consumer adoption. **Primary technical contract:** [SPEC-001](architecture/control-plane.md), [SPEC-002](architecture/agent-plugin.md), and [repository policy](../AGENTS.md).
+**Product owner:** repository maintainer. **Delivery model:** reviewed pull requests, exact pinned releases, explicit consumer adoption. **Primary technical contract:** [SPEC-001](architecture/control-plane.md), [SPEC-002](architecture/agent-plugin.md), and [repository policy](https://github.com/raelldottin/repo-automation/blob/main/AGENTS.md).
 
 This is the **product roadmap and source of truth for priorities, outcomes, sequencing and readiness**. The [earlier technical roadmap](roadmap.md) preserves RA-CP-001 through RA-CP-005 implementation history and their detailed acceptance contracts. A green test, prototype or synthetic canary is not, by itself, proof that an end-to-end system is operating on a production project.
 
