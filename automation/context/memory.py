@@ -35,7 +35,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -264,7 +264,10 @@ def _reason(reason: object) -> str:
     return f"network error: {reason}"
 
 
-def _parse(model: type[_Response], data: Any) -> Any:
+_ResponseT = TypeVar("_ResponseT", bound=_Response)
+
+
+def _parse(model: type[_ResponseT], data: Any) -> _ResponseT:
     try:
         return model.model_validate(data)
     except ValidationError:
