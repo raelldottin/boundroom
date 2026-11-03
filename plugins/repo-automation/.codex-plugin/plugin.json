@@ -1,6 +1,6 @@
 {
   "name": "repo-automation",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Drive a repository's synced repo-automation supervisor: see what is next, run exactly one slice, evaluate a handoff, and sync a consumer through a pull request.",
   "author": {
     "name": "Raell Dottin",

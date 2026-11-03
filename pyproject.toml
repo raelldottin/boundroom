@@ -1,6 +1,6 @@
 [project]
 name = "repo-automation"
-version = "0.2.2"
+version = "0.2.3"
 description = "Reusable supervised automation for bounded agent work."
 license = "GPL-2.0-only"
 requires-python = ">=3.11"
