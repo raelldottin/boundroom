@@ -1,6 +1,6 @@
 # repo-automation roadmap
 
-> **Historical technical sequencing (2026-10-11).** The current cross-functional product strategy, shipped-state audit, priorities, release horizons and readiness gates live in the [full product roadmap](product-roadmap.md). Keep this document for its original RA-CP slice contracts and decisions; its older point-in-time status statements and CodSpeed requirements are not current implementation claims. The current repository [AGENTS.md](../AGENTS.md) governs release and CI policy.
+> **Historical technical sequencing (2026-10-11).** The current cross-functional product strategy, shipped-state audit, priorities, release horizons and readiness gates live in the [full product roadmap](product-roadmap.md). Keep this document for its original RA-CP slice contracts and decisions; its older point-in-time status statements and CodSpeed requirements are not current implementation claims. The current repository [AGENTS.md](https://github.com/raelldottin/repo-automation/blob/main/AGENTS.md) governs release and CI policy.
 
 Status: **proposed reprioritization** (2026-10-11). This roadmap sequences new work; it does not claim the top layer is installed or authorize any autonomous dispatch.  
 Governing architecture: [SPEC-001: Kanban, external memory and Swarm Wiki](architecture/control-plane.md).
