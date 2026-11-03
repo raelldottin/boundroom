@@ -6,6 +6,8 @@ Reusable supervised automation for bounded agent work.
 
 `repo-automation` packages a slice-based supervisor harness: queue records, context building, prompt fragments, validation ownership, handoff schemas, and stop rules for keeping AI-assisted repository work scoped and reviewable.
 
+**Current product roadmap:** [Product Roadmap (2026-11-03)](docs/product-roadmap.md) covers shipped capabilities, next release horizons, Kanban/Hindsight/Swarm Wiki acceptance gates, product metrics, release dependencies and scoped delivery slices. The older [technical roadmap](docs/roadmap.md) remains as an implementation-history reference.
+
 ## What It Provides
 
 - A machine-readable queue model for pre-classified implementation slices.
