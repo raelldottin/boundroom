@@ -11,6 +11,7 @@ import unittest.mock
 from pathlib import Path
 from typing import Mapping
 
+import automation.tests.fake_ps  # noqa: F401  (isolates run_agent.sh from the enclosing harness)
 from automation.benchmark import adapter as benchmark_adapter
 from automation.benchmark import cleanroom
 from automation.benchmark import run as benchmark_run
