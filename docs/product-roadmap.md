@@ -276,6 +276,8 @@ Metrics must be generated from independently inspectable receipts. The targets b
 
 ## 10. Decisions and source ledger
 
+**Delegated (2026-11-10):** the owner delegated every operator decision in this roadmap to the agent, under the safeguards in [AGENTS.md](https://github.com/raelldottin/repo-automation/blob/main/AGENTS.md) (Delegated Operator Authority): required checks before any merge or release, separate approving and working agents, every decision recorded, reversible steps first. The "still requiring a maintainer decision" list below is now the agent's to decide and record, except steps that need an account, credentials, a payment or an install on the owner's machine, and license choices.
+
 **Already decided:** Discord replaces Slack as the planned knowledge-loop Q&A interface; the knowledge service is separate from supervisor authority and requires permission-checked publishing; supervised per-repo authority; plugin as thin common skills; released v0.2.x; GPL-2.0-only original code; five required CI checks; 88% coverage floor; manual consumer sync and merge; separate benchmark authorization; P0 before control-plane-driven fleet dispatch.
 
 **Still requiring a maintainer decision:** which Discord guilds/channels and source categories to opt in, allowed response/publishing destinations, retention/deletion policy, bot credentials and deployment boundary, nightly/weekly activation and first live canary; local model and weight set, Hindsight inference/reflect route and hosting, byte-for-byte/semantic memory migration policy, claim renewal or TTL policy, whether Wiki CI becomes required, first real consumer for H3, initial fleet set, 1.0 support commitments, exact release tags and any change to benchmark budgets.
