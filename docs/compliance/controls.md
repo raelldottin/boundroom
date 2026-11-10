@@ -13,9 +13,9 @@
 | Every change to `main` goes through a pull request | Enforced: `main` ruleset | Pull request history |
 | Five required checks must pass: lint and types on 3.11 and 3.12, tests with an 88% coverage floor, no agent attribution trailers, dependency review | Enforced: `main` ruleset | Check runs on each pull request |
 | Linear history; no force-push or deletion of `main` | Enforced: `main` ruleset | Ruleset configuration |
-| **An approving review from a person other than the author** | **Process only.** The ruleset requires 0 approvals. | Review records, once enforced |
-| Code-owner review (`.github/CODEOWNERS`) | **Gap.** The file exists, but the ruleset doesn't require it. | Review records |
-| Stale approvals dismissed on push; the last push approved | **Gap.** Both are off. | Ruleset configuration |
+| An approving review from a person other than the author | Enforced since 2026-11-10: `main` ruleset, one approving review. GitHub doesn't count an author's own review. | Review records |
+| Code-owner review (`.github/CODEOWNERS`) | Enforced since 2026-11-10: `main` ruleset | Review records |
+| Stale approvals dismissed on push; the last push approved | Enforced since 2026-11-10: `main` ruleset | Ruleset configuration |
 | Releases only from a tag on `main`, built by `release.yml`, which reruns the gate and publishes the archive and `.sha256` | Enforced: release-tag ruleset and workflow | Release assets and workflow runs |
 | A person creates or approves each release tag | Process | Tag creator, release record |
 | Tags can't be updated or deleted | Enforced: release-tag ruleset, but the admin role can bypass it | Ruleset configuration |
@@ -24,7 +24,7 @@
 
 | Control | Status | Evidence |
 | --- | --- | --- |
-| The author is never the approver | Process | Pull request author versus reviewer |
+| The author is never the approver | Enforced: GitHub doesn't count an author's review, and the last push must be approved by someone other than its pusher | Pull request author versus reviewer |
 | The agent acts under its own identity | **In place, by process.** Since 2026-11-10 the agent writes as `repo-automation-agent[bot]`, a GitHub App installed only on this repository. It has write access to contents, pull requests, workflows and issues, read access to checks, statuses and actions, and no administration permission, so it can't change rulesets or use the release-tag bypass. Each command uses an installation token that expires after one hour, and the private key stays in the owner's keychain. Nothing technically stops the agent from using the owner's own `gh` login on the same machine, so using the bot is a process rule. #180–#189 were merged under the owner's token on 2026-11-10, before these controls. | Actor on each event: `repo-automation-agent[bot]` |
 | The agent's identity can't bypass `main` | Enforced: `main` ruleset, whose only bypass actor is the admin role | `current_user_can_bypass: never` for the app's token |
 | Multi-factor authentication on accounts with write access | Unverified: an account setting this repository can't see | GitHub account security log |
@@ -55,7 +55,7 @@
 These are repository and account security settings. The agent doesn't change them.
 
 1. **Give the agent its own identity.** Done on 2026-11-10: the GitHub App `repo-automation-agent`, installed only on this repository, without the administration permission. Keep one active private key, delete any key without a known copy, and add a repository to the installation only when the agent should open pull requests there. Without this identity, required approvals would block every pull request, because GitHub doesn't let an author approve their own pull request.
-2. **Require review on `main`.** Set the `main` ruleset's pull request rule to one approving review, code-owner review, dismissal of stale approvals on push, and approval of the last push:
+2. **Require review on `main`.** Done on 2026-11-10. The `main` ruleset's pull request rule requires one approving review, code-owner review, dismissal of stale approvals on push, and approval of the last push. This is the command that set it:
 
    ```bash
    gh api repos/raelldottin/repo-automation/rulesets/25254426 | jq '{name, target, enforcement, conditions, bypass_actors, rules: [.rules[] | if .type == "pull_request" then .parameters |= (.required_approving_review_count = 1 | .require_code_owner_review = true | .dismiss_stale_reviews_on_push = true | .require_last_push_approval = true) else . end]}' | gh api -X PUT repos/raelldottin/repo-automation/rulesets/25254426 --input -
