@@ -80,10 +80,12 @@ The GitHub Actions configuration in `.github/` includes:
   `ruff format --check`, and `ty check` across `automation/` and `Tools/` on
   Python 3.11 and 3.12. Ruff and ty configuration lives in `pyproject.toml`;
   the toolchain is pinned in `uv.lock`.
-- **Coverage** (`.github/workflows/coverage.yml`) — runs `test_harness.py`
-  under `pytest --cov`, deselects two Owlory-specific tests that depend on
-  live queue state, and comments the report on pull requests via
-  `MishaKav/pytest-coverage-comment`.
+- **Coverage** (`.github/workflows/coverage.yml`) — runs the full
+  `automation/tests` suite under `pytest --cov` on Python 3.12, fails below
+  the 88% floor set by `fail_under` in `pyproject.toml`, and comments the
+  report on pull requests via `MishaKav/pytest-coverage-comment`. Tests that
+  need a consumer's live queue, the Hermes CLI or the Swarm Wiki compiler
+  skip when those are absent.
 - **Dependency Check** (`.github/workflows/dependency-check.yml`) —
   `pip-audit` against the full package set exported from `uv.lock` on push,
   PR, and a weekly schedule. Fails when a known CVE matches a locked runtime or

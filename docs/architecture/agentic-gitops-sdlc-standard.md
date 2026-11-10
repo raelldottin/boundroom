@@ -1,6 +1,6 @@
 # Agentic SDLC and GitOps: portable governance standard (draft v0)
 
-Status: proposed, documentation-only. Owner approval and evidence required before adopting any deployment adapter. See tracking issue #170. This document complements, and does not override, each consumer repository's AGENTS.md, branch rules, license, infrastructure ownership or release contract.
+Status: proposed, documentation-only. Owner approval and evidence required before adopting any deployment adapter. See tracking issue [#170](https://github.com/raelldottin/repo-automation/issues/170). This document complements, and does not override, each consumer repository's AGENTS.md, branch rules, license, infrastructure ownership or release contract.
 
 ## Scope and terms
 

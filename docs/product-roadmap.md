@@ -1,6 +1,6 @@
 # Product roadmap: repo-automation
 
-**Snapshot:** 2026-11-09 (original capability audit: 2026-11-03) | **Planning status:** proposed product priorities; not an execution authorization | **Current published release:** [v0.2.3](https://github.com/raelldottin/repo-automation/releases/tag/v0.2.3)
+**Snapshot:** 2026-11-10 (original capability audit: 2026-11-03) | **Planning status:** proposed product priorities; not an execution authorization | **Current published release:** [v0.2.4](https://github.com/raelldottin/repo-automation/releases/tag/v0.2.4)
 
 **Product owner:** repository maintainer. **Delivery model:** reviewed pull requests, exact pinned releases, explicit consumer adoption. **Primary technical contract:** [SPEC-001](architecture/control-plane.md), [SPEC-002](architecture/agent-plugin.md), and [repository policy](https://github.com/raelldottin/repo-automation/blob/main/AGENTS.md).
 
@@ -43,7 +43,7 @@ Use three statuses consistently: **SHIPPED** means code or a release exists; **P
 | --- | --- | --- |
 | Deterministic slice supervisor | `automation/supervisor/`, Pydantic/JSON schemas, replayed validations, bounded diffs, handoffs, runner selection and `run_next.py --single-slice` tests | **SHIPPED**. `--single-slice` limits an invocation only when supplied; the queue's ordinary autonomous limit remains caller-overridable. |
 | Versioned consumer distribution | `Tools/repo-automation-sync.sh`, reusable manifest, GPL `automation/COPYING` export, provenance/pin checks and release archive | **SHIPPED**. Consumer changes still require an explicit PR and owner-controlled merge; no automatic updates. |
-| Portable agent plugin | [SPEC-002](architecture/agent-plugin.md), `plugins/repo-automation/`, four shared skills, three-harness manifest/install tests; [v0.2.0](https://github.com/raelldottin/repo-automation/releases/tag/v0.2.0) through v0.2.3 | **SHIPPED**, including a limited [Owlory trial](architecture/agent-plugin.md#rollout-trial-step-6-2026-11-02). The run-next trial stopped cleanly with no eligible slice; it did not prove a full live production slice. |
+| Portable agent plugin | [SPEC-002](architecture/agent-plugin.md), `plugins/repo-automation/`, four shared skills, three-harness manifest/install tests; [v0.2.0](https://github.com/raelldottin/repo-automation/releases/tag/v0.2.0) through v0.2.4 | **SHIPPED**, including a limited [Owlory trial](architecture/agent-plugin.md#rollout-trial-step-6-2026-11-02). The run-next trial stopped cleanly with no eligible slice; it did not prove a full live production slice. |
 | GitOps, quality and security gates | `AGENTS.md`; five required checks; Python 3.11/3.12; full-suite coverage with an **88% floor**; dependency review/audit; release tag/manifest guards | **SHIPPED**. The 90.04% full-suite coverage figure was measured in the [#139 validation](https://github.com/raelldottin/repo-automation/pull/139), not promised as a future constant. |
 | Read-only Kanban projection | [RA-CP-002](architecture/kanban-projection.md); deterministic overlay, shadow comparison and stale/foreign/unapproved-task refusals | **SHIPPED as opt-in adapter / PROVEN IN TESTS**. JSON queue is still the default. |
 | Kanban claim and status write-back | [RA-CP-005](architecture/kanban-cutover.md); real Hermes CLI test and dedicated two-task scripted canary (2026-10-29) | **PROVEN IN A BOUNDED TEST**. Not a fleet cutover; no claimed race proof with the gateway or real-model full-control-plane canary. |
@@ -68,7 +68,7 @@ Use three statuses consistently: **SHIPPED** means code or a release exists; **P
 
 ## 4. Release horizons and milestone map
 
-Horizon names are **planning increments**, not committed dates or promises of a particular semantic version. Version numbers after v0.2.3 are illustrative until the maintainer approves a release tag. P0 control-plane acceptance takes priority over optional supervisor expansion. Authorized effectiveness research is exempt and can run in parallel.
+Horizon names are **planning increments**, not committed dates or promises of a particular semantic version. Version numbers after v0.2.4 are illustrative until the maintainer approves a release tag. P0 control-plane acceptance takes priority over optional supervisor expansion. Authorized effectiveness research is exempt and can run in parallel.
 
 | Horizon | Indicative window | Product result | Dependency / exit decision |
 | --- | --- | --- | --- |
@@ -85,7 +85,7 @@ Horizon names are **planning increments**, not committed dates or promises of a 
 
 **Outcome:** people can trust the existing release, understand precisely what is and is not implemented, and upgrade without accidental privilege expansion.
 
-- **H0.1 Security maintenance.** Triage [pydantic update #145](https://github.com/raelldottin/repo-automation/pull/145) promptly: its PR cites security advisories affecting the pinned 2.14.1 baseline. Review the patch, lockfile, audit results, compatibility and risk; do **not** assume a bot bump is safe or already merged. Review other open dependency bumps separately.
+- **H0.1 Security maintenance.** The [pydantic update #145](https://github.com/raelldottin/repo-automation/pull/145), which cited security advisories affecting the 2.14.1 baseline, merged on 2026-11-10; `uv.lock` now pins pydantic 2.14.2 on `main`. It is not yet in a release: v0.2.4 still ships the 2.14.1 lock. Keep triaging each later dependency bump on its own patch, lockfile, audit results and compatibility; do **not** assume a bot bump is safe.
 - **H0.2 Accuracy pass.** Correct stale README and documentation claims when touching their files (e.g. an old description of the subset-based coverage job, stale owner/repository URLs). See [consumer-link correction #167](https://github.com/raelldottin/repo-automation/pull/167); preserve exact remote identifiers required by locks and plugin install commands.
 - **H0.3 Release and plugin contract.** Audit version parity across plugin manifests, catalog resolution and release tag; test SHA-based Hermes installs, partial-copy rejection, supported Python and fail-closed old-copy detection.
 - **H0.4 Maintenance gate.** Keep the five protected checks, strict documentation build, coverage floor and supply-chain review. Treat a coverage number as a measured statistic, never a substitute for failure-path tests.
@@ -200,7 +200,7 @@ These are *proposed work packages*, not created issues or an authorization to ru
 
 | ID | Priority | Deliverable | Acceptance check | Horizon |
 | --- | --- | --- | --- | --- |
-| RA-PROD-001 | P0 | Dependency/security triage, especially pending pydantic #145 | Audit results, lock validation, compatibility tests, documented disposition | H0 |
+| RA-PROD-001 | P0 | Dependency/security triage (pydantic #145 merged 2026-11-10, not yet released) | Audit results, lock validation, compatibility tests, documented disposition | H0 |
 | RA-PROD-002 | P0 | Documentation truth + install matrix | Correct release and coverage claims; fresh installs and exact command transcripts | H0–H1 |
 | RA-PROD-003 | P0 | One-slice success and refused-invocation canary | Exactly one agent run, second slice queued; invalid limits refused before mutation | H1 |
 | RA-PROD-004 | P0 | Consumer sync/pin/rollback usability | Check, locked import, PR evidence, old-pin restore and clean stop | H1 |
@@ -278,7 +278,7 @@ Metrics must be generated from independently inspectable receipts. The targets b
 
 **Still requiring a maintainer decision:** which Discord guilds/channels and source categories to opt in, allowed response/publishing destinations, retention/deletion policy, bot credentials and deployment boundary, nightly/weekly activation and first live canary; local model and weight set, Hindsight inference/reflect route and hosting, byte-for-byte/semantic memory migration policy, claim renewal or TTL policy, whether Wiki CI becomes required, first real consumer for H3, initial fleet set, 1.0 support commitments, exact release tags and any change to benchmark budgets.
 
-**Evidence references, not substitutes for live acceptance:** [technical roadmap](roadmap.md), [SPEC-001](architecture/control-plane.md), [RA-CP-001 inventory](architecture/control-plane-inventory.md), [Kanban projection](architecture/kanban-projection.md), [Kanban write-back and canary](architecture/kanban-cutover.md), [Hindsight live proof](architecture/memory-interface.md), [Swarm Wiki compiler pin](architecture/swarm-wiki-compiler.md), [SPEC-002 plugin trial](architecture/agent-plugin.md), [consumer distribution workflow](workflows/repo-automation.md), [effectiveness benchmark](workflows/effectiveness-benchmark.md), [CodSpeed removal history](codspeed-removal.md) and [release history](https://github.com/raelldottin/repo-automation/releases), [SPEC-003 Discord knowledge loop](architecture/discord-knowledge-loop.md) and [RA-KNOW-000 epic](https://github.com/raelldottin/repo-automation/issues/173).
+**Evidence references, not substitutes for live acceptance:** [technical roadmap](roadmap.md), [SPEC-001](architecture/control-plane.md), [RA-CP-001 inventory](architecture/control-plane-inventory.md), [Kanban projection](architecture/kanban-projection.md), [Kanban write-back and canary](architecture/kanban-cutover.md), [Hindsight live proof](architecture/memory-interface.md), [Swarm Wiki compiler pin](architecture/swarm-wiki-compiler.md), [SPEC-002 plugin trial](architecture/agent-plugin.md), [consumer distribution workflow](workflows/repo-automation.md), [effectiveness benchmark](workflows/effectiveness-benchmark.md), [CodSpeed removal history](codspeed-removal.md) and [release history](https://github.com/raelldottin/repo-automation/releases), [SPEC-003 Discord knowledge loop](architecture/discord-knowledge-loop.md), [RA-KNOW-000 epic](https://github.com/raelldottin/repo-automation/issues/173), and the draft [agentic SDLC and GitOps standard](architecture/agentic-gitops-sdlc-standard.md) for consumer rollout ([#170](https://github.com/raelldottin/repo-automation/issues/170)).
 
 ---
 
