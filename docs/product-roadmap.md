@@ -205,7 +205,7 @@ These are *proposed work packages*, not created issues or an authorization to ru
 | RA-PROD-002 | P0 | Documentation truth + install matrix | Correct release and coverage claims; fresh installs and exact command transcripts | H0–H1 |
 | RA-PROD-003 | P0 | One-slice success and refused-invocation canary | Exactly one agent run, second slice queued; invalid limits refused before mutation | H1 |
 | RA-PROD-004 | P0 | Consumer sync/pin/rollback usability | Check, locked import, PR evidence, old-pin restore and clean stop | H1 |
-| RA-BD-001–005 | P0 (proposed) | Agent-agnostic board per [SPEC-004](architecture/agent-agnostic-board.md): interface, local backend, `run_next` wiring, Claude-parent canary, Wiki input | Contract suite on every backend; full Kanban flow with no `hermes` on `PATH`; owner-authorized canary | H2 |
+| RA-BD-001–005 | P0 (proposed) | Agent-agnostic board per [SPEC-004](architecture/agent-agnostic-board.md): interface, local backend, `run_next` wiring, Claude Code and Codex parent canaries, Wiki input | Contract suite on every backend; full Kanban flow with no `hermes` on `PATH`; owner-authorized canary | H2 |
 | RA-CP-002R | P0 | Kanban race/revision and goal-mode hardening | Real CLI/gateway negative tests; no duplicated canonical writer | H2 |
 | RA-CP-003R | P0 | Licensed local Hindsight route and reflect | Local retain/recall/reflect; denied egress, bank isolation, restore witness | H2 |
 | RA-CP-004R | P0 | Real-bank Wiki build/check proof | Source hashes, snapshot completeness, deterministic rebuild, visible contradictions | H2 |

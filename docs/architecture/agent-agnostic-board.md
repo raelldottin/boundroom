@@ -1,7 +1,8 @@
 # SPEC-004: A Kanban board that works with any parent agent
 
 Status: **proposed design; nothing here is implemented.** It amends [SPEC-001](control-plane.md) contract A once accepted.
-Owner decision recorded here (2026-11-10): the Kanban board must work with any parent agent process, such as Claude Code, Codex, Hermes or a plain shell, **with no Hermes dependency**. This spec proposes how to meet that requirement. Implementation waits for it to be accepted.
+Owner decision recorded here (2026-11-10): the Kanban board must work with any parent agent process, such as Claude Code, Codex, Hermes or a plain shell, **with no Hermes dependency**. This spec proposes how to meet that requirement. Implementation waits for it to be accepted.  
+Second owner decision (2026-11-10): **keep Hermes as an optional backend.** The local backend is the default, Hermes Kanban stays available to consumers that choose it, and no Hermes board has to be migrated. This settles open decisions 1 and 4.
 Authority: until the cutover described below lands, the JSON queue (`automation/queue/slices.json`) stays the operational authority, and the Hermes adapters stay as they are.
 
 ## Problem
@@ -85,7 +86,7 @@ Every event records an `actor`, taken from `--actor` or the OS user.
 
 | Parent | Path |
 | --- | --- |
-| Claude Code, Codex, Hermes | The plugin's `repo-automation-run-next` skill passes `--board-backend local --board <dir> --kanban-overlay <file>` to `run_next.py --single-slice`. `run_agent.sh` picks the runner from the originating harness, as today. The skills change only in prose, with no code (SPEC-002). |
+| Claude Code, Codex, Hermes | The same four plugin skills in every harness. `repo-automation-status` reads the board and names the next eligible slice. The `repo-automation-run-next` skill passes `--board-backend local --board <dir> --kanban-overlay <file>` to `run_next.py --single-slice`. `run_agent.sh` picks the runner from the originating harness, as today. The skills change only in prose, with no code (SPEC-002). |
 | Plain shell or CI | The same `run_next.py` flags. Headless runs name a runner explicitly (SPEC-001 D). |
 | A person | `python -m automation.board` for edits and approvals |
 
@@ -107,7 +108,7 @@ Each slice is a separate pull request with its own allowed paths, validations an
 | RA-BD-001 | Extract `BoardBackend`; move `read_board` and `kanban_writer` behind it as the Hermes backend | No behavior change. Every existing Kanban test passes unchanged. |
 | RA-BD-002 | Local backend store, schema and CLI | The contract suite passes on both backends. Includes stale-revision, two-process claim race, expired claim, superseded run, unknown schema version and foreign-board refusals. |
 | RA-BD-003 | `run_next --board-backend`, the overlay `backend` field, and plugin skill prose | The end-to-end `run_next` tests run against the local backend with no `hermes` on `PATH`. A board path inside the worktree is refused. |
-| RA-BD-004 | Claude Code parent canary on a disposable local board | One real slice with Claude Code as parent and runner ends in `review`, a person approves it, and the second slice stays queued. **Needs owner authorization for the model run.** |
+| RA-BD-004 | Claude Code and Codex parent canaries on a disposable local board | For each of Claude Code and Codex, as both parent and runner: one real slice ends in `review`, a person approves it, and the second slice stays queued. The runner in each handoff is the parent's harness. **Each model run needs owner authorization.** |
 | RA-BD-005 | Wiki input from `snapshot --json` (upstream) and a pin bump here | A deterministic build and `--check` from a local board snapshot |
 
 The performance rule in AGENTS.md applies. RA-BD-002 and RA-BD-003 add file I/O to the supervisor path, which grows with board size, and their PR descriptions must say so.
@@ -124,8 +125,8 @@ The performance rule in AGENTS.md applies. RA-BD-002 and RA-BD-003 add file I/O 
 
 ## Open decisions for the owner
 
-1. Is the local backend the SPEC-001 target, with Hermes optional, as proposed? Or are the two equal options, with each consumer choosing?
+1. ~~Is the local backend the SPEC-001 target, with Hermes optional?~~ **Decided 2026-11-10:** yes. The local backend is the default and Hermes is optional.
 2. Where do boards live by convention? An explicit path is always required, but should the docs suggest `~/.local/state/repo-automation/boards/<slug>/`?
 3. Is auditable approval enough for now, or should RA-BD-002 include OS-level separation so the runner can't approve?
-4. Should existing Hermes boards be migrated to a local board with a one-way, provenance-preserving import? Or should Hermes users stay on the Hermes backend?
+4. ~~Should existing Hermes boards be migrated?~~ **Decided 2026-11-10:** no migration is required. Hermes boards stay on the Hermes backend. A one-way import can be proposed later if a consumer wants one.
 5. Approval of the upstream hermes-swarm-protocol change in RA-BD-005.
