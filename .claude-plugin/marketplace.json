@@ -8,7 +8,7 @@
     {
       "name": "repo-automation",
       "description": "Drive a repository's synced repo-automation supervisor: see what is next, run exactly one slice, evaluate a handoff, and sync a consumer through a pull request.",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "source": "./plugins/repo-automation",
       "author": {
         "name": "Raell Dottin",
