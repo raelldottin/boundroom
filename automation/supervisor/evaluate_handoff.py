@@ -129,8 +129,13 @@ def replay_validations_in_worktree(
     head_sha: str,
     required_validations: list[str],
     validations_passed: list[str],
+    base_sha: str = "",
 ) -> list[policy.ValidationReplayResult]:
-    """Replay supervisor-owned validations at *head_sha* using a temp worktree."""
+    """Replay supervisor-owned validations at *head_sha* using a temp worktree.
+
+    The worktree is a clean checkout of *head_sha*, so ``git diff --check`` only sees the slice's
+    changes when it is compared with *base_sha* (``policy.replay_argv``).
+    """
     replayable = policy.supervisor_replayable_validations(required_validations)
     passed_set = set(validations_passed)
     commands_to_replay = [cmd for cmd in replayable if cmd in passed_set]
@@ -158,6 +163,7 @@ def replay_validations_in_worktree(
             required_validations=required_validations,
             validations_passed=validations_passed,
             runner=worktree_runner,
+            base_sha=base_sha,
         )
     finally:
         subprocess.run(
@@ -356,6 +362,7 @@ def evaluate(
         head_sha=head_sha,
         required_validations=slice_record["required_validations"],
         validations_passed=handoff["validations_passed"],
+        base_sha=base_sha,
     )
 
     replay_failures = policy.validation_replay_failures(replays)

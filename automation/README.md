@@ -258,6 +258,14 @@ Replay is intentionally narrow:
 - only commands the handoff reported as passed are replayed
 - anything outside this allowlist remains handoff-reported only for now
 
+**Measured from the slice's base commit.** The runner commits its work before it hands off, so the working tree alone hides what a slice changed. `run_next` records HEAD before the agent starts, then:
+
+- replays `git diff --check` against that base commit (`git diff --check <base>`), which checks what the slice committed and what it left uncommitted;
+- adds the paths the slice's commits changed (`git diff --name-only <base> HEAD`, both sides of a rename) to the scope check and to the `max_files_changed` count, whether or not the handoff reported them;
+- fails the slice if HEAD no longer descends from the base commit, because a reset or rewrite hides which changes were the slice's.
+
+`evaluate_handoff.py` replays `git diff --check` against `--base-sha` in its worktree at `--head-sha` for the same reason. Untracked files are still outside `git diff --check`, as before.
+
 ## Validation Ownership Tiers
 
 Each required validation now has a small ownership tier so slice authors and reviewers can tell, at a glance, what the supervisor is expected to do with it.
