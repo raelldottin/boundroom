@@ -1,6 +1,6 @@
 # SPEC-004: A Kanban board that works with any parent agent
 
-Status: **accepted (raelldottin/repo-automation#181).** It amends [SPEC-001](control-plane.md) contract A. RA-BD-001 (the interface), RA-BD-002 (the local board, `automation/supervisor/local_board.py`) and RA-BD-003 (`run_next` and the plugin on a local board) are implemented. RA-BD-004 (the Claude Code and Codex canaries) and RA-BD-005 (the Wiki) remain.
+Status: **accepted (raelldottin/repo-automation#181).** It amends [SPEC-001](control-plane.md) contract A. RA-BD-001 (the interface), RA-BD-002 (the local board, `automation/supervisor/local_board.py`) and RA-BD-003 (`run_next` and the plugin on a local board) are implemented. The RA-BD-004 Claude Code canary passed on 2026-11-10 ([record](#ra-bd-004-claude-code-canary-2026-11-10)). The Codex canary and RA-BD-005 (the Wiki) remain.
 Owner decision recorded here (2026-11-10): the Kanban board must work with any parent agent process, such as Claude Code, Codex, Hermes or a plain shell, **with no Hermes dependency**. This spec proposes how to meet that requirement. Implementation waits for it to be accepted.  
 Second owner decision (2026-11-10): **keep Hermes as an optional backend.** The local backend is the default, Hermes Kanban stays available to consumers that choose it, and no Hermes board has to be migrated. This settles open decisions 1 and 4. Third owner decision (2026-11-10): **an auditable approval is enough for now**, which settles decision 3.
 Authority: until the cutover described below lands, the JSON queue (`automation/queue/slices.json`) stays the operational authority, and the Hermes adapters stay as they are.
@@ -114,6 +114,45 @@ Each slice is a separate pull request with its own allowed paths, validations an
 | RA-BD-005 | Wiki input from `snapshot --json` (upstream) and a pin bump here | A deterministic build and `--check` from a local board snapshot |
 
 The performance rule in AGENTS.md applies. RA-BD-002 and RA-BD-003 add file I/O to the supervisor path, which grows with board size, and their PR descriptions must say so.
+
+## RA-BD-004: Claude Code canary (2026-11-10)
+
+**Result: passed.** A real slice ran on a disposable local board, with no Hermes installed, and Claude Code as both parent and runner. The owner authorized the run. The Codex canary is still to do: Codex isn't installed on the owner's machine.
+
+**Setup.**
+
+| | |
+| --- | --- |
+| Source | repo-automation `aff3070`, synced into a throwaway consumer with `Tools/repo-automation-sync.sh --sync --pin`, which ran the source's quality gate. Python 3.13.18, pydantic 2.14.2. |
+| Consumer | A fresh git repository with a local bare repository as `origin`, so the runner's push had an upstream. |
+| Board | Local board `ra-bd-004-claude`, outside the consumer. T1 `t_4e656615` "Create hello.txt containing the single line hello", `ready`. T2 `t_cddc492c` "Create bye.txt …", a child of T1, `todo`. |
+| Overlay | `backend: local`. Each task: one allowed path, `max_files_changed: 1`, validations `git diff --check` (supervisor-replayed) and `grep -qx hello hello.txt` (run-reported). |
+| Harness | Claude Code 2.1.311. Parent: `claude -p --permission-mode default --settings <allow only run_next.py> --max-budget-usd 1`. Runner: `run_agent.sh` in `auto` mode, `REPO_AUTOMATION_CLAUDE_PERMISSION_MODE=acceptEdits`, and `REPO_AUTOMATION_CLAUDE_BIN` pointing at a wrapper that logged each launch, then ran Claude Code with `--settings <allow only the slice's git and validation commands> --max-budget-usd 2`. `REPO_AUTOMATION_AGENT_RUNNER` was unset. |
+
+**What happened.**
+
+- **One slice.** The parent ran `run_next.py --single-slice --board … --kanban-overlay …` once. It exited 0 with `stop_for_review`: `queue_status: done`, one changed file, no validation failures and no out-of-scope paths. The parent took 63 s and cost $0.16. The runner's cost isn't reported; it was capped at $2.
+- **The runner was the parent's harness.** The wrapper logged exactly one launch: `runner=claude`, with `--print --input-format text --no-session-persistence --permission-mode acceptEdits`. `run_agent.sh` chose Claude from the process tree.
+- **The work.** `hello.txt` contains exactly `hello\n` at HEAD and on `origin`, in one commit. The consumer was clean and even with its upstream afterwards.
+- **The board.** T1 went to `review` and T2 stayed `todo`. The events were `created` (raelldottin), `claimed` and `review_requested` (`repo-automation-supervisor`), and no `approved`. The run recorded the slice id `board.ra-bd-004-claude.t_4e656615` and a handoff SHA-256 that matches the handoff file.
+- **Refusals with no model, each leaving the board's bytes unchanged.**
+  - `--single-slice --autonomous-limit 2` exited 64.
+  - `--board-backend hermes` exited 2.
+  - A dry run while T1 waited for review found no eligible slice and named both blockers.
+- **A person's approval.** The owner ran `local_board … --actor raelldottin approve t_4e656615`, which printed `ready: t_cddc492c`. T1 became `done` with `approved` by raelldottin, and T2 became `ready` with `promoted`. A dry run then selected T2 without running it, and the runner log still held one launch.
+
+**Attempts that ran no slice.** None of these touched the board:
+
+1. The parent's prompt was swallowed by `--allowedTools`, which takes several values. `claude -p` exited with no input.
+2. A stray `--` in the prompt reached `run_next`, and argparse refused it. That session cost $0.38.
+3. Claude Code ignores an untrusted project's `.claude/settings.json`. Both sessions therefore take their permissions from explicit `--settings` files. The ignored file stayed in the consumer.
+
+**Findings.**
+
+1. **The supervisor's replay proved nothing here.** The runner committed before handing off, so the supervisor's `git diff --check` examined an empty diff. The runner said so in its own report. A replay should check the slice's changes from the base commit to the head commit, not only what is uncommitted.
+2. **A handoff doesn't name its runner.** Only the canary's wrapper showed it was Claude Code. The handoff's `verified_commit_sha` was empty, which `run_next` accepted, though `evaluate_handoff` would refuse it.
+3. **Both sessions loaded the owner's user-level Claude Code configuration**, including plugins and hooks. `run_agent.sh` has no way to isolate a run from it.
+4. **Approval isn't enforced, as decision 3 accepted.** The supervisor never approved anything. The approval came from a command a person ran.
 
 ## Alternatives considered
 
