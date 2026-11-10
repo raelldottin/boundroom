@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from automation.context import memory
 from automation.context.build_context import build_context_bundle
-from automation.supervisor import kanban_projection, kanban_writer, policy
+from automation.supervisor import board_backend, kanban_projection, kanban_writer, policy
 
 # Time a Kanban claim outlives the agent's handoff timeout, for the validation replay and the record.
 CLAIM_MARGIN_SECONDS = 30 * 60
@@ -71,18 +71,18 @@ class KanbanQueue:
     """One Kanban board projected through its approval overlay (RA-CP-005).
 
     The board is the queue: nothing is written to a JSON queue. ``in_progress`` claims the task
-    and every later status is recorded on that claim, all through ``kanban_writer``.
+    and every later status is recorded on that claim, all through the board's backend, which is
+    the only way this class reaches the board (SPEC-004).
     """
 
-    def __init__(self, board_dir: Path, overlay_path: Path, hermes: list[str]) -> None:
-        self.board_dir = board_dir
+    def __init__(self, backend: board_backend.BoardBackend, overlay_path: Path) -> None:
+        self.backend = backend
         self.overlay = kanban_projection.load_overlay(overlay_path)
-        self.hermes = hermes
         self.revision = ""
-        self.claims: dict[str, kanban_writer.Claim] = {}
+        self.claims: dict[str, board_backend.Claim] = {}
 
     def load(self) -> dict:
-        projection = kanban_projection.project(kanban_projection.read_board(self.board_dir), self.overlay)
+        projection = kanban_projection.project(self.backend.snapshot(), self.overlay)
         self.revision = projection.revision
         return projection.queue
 
@@ -93,9 +93,9 @@ class KanbanQueue:
             assert parsed is not None, slice_id  # the projection only emits kanban slice ids
             # The claim can't be renewed, so it must outlast the agent and the validation replay.
             ttl = self.overlay.policy.handoff_timeout_seconds + CLAIM_MARGIN_SECONDS
-            self.claims[slice_id] = kanban_writer.claim(self.board_dir, parsed[1], self.revision, self.hermes, ttl)
+            self.claims[slice_id] = self.backend.claim(parsed[1], self.revision, ttl)
             return
-        kanban_writer.record(self.board_dir, self.claims[slice_id], status, reason or status, handoff_path, self.hermes)
+        self.backend.record(self.claims[slice_id], status, reason or status, handoff_path)
 
 
 def main() -> int:
@@ -114,7 +114,8 @@ def main() -> int:
     memory_config = memory.load_config(repo_root / args.memory_config) if args.memory_config else None
     store: JsonQueue | KanbanQueue
     if args.kanban_board:
-        store = KanbanQueue(Path(args.kanban_board), Path(args.kanban_overlay), shlex.split(args.hermes))
+        backend = kanban_writer.HermesBackend(Path(args.kanban_board), shlex.split(args.hermes))
+        store = KanbanQueue(backend, Path(args.kanban_overlay))
     else:
         store = JsonQueue(repo_root / args.queue)
 
