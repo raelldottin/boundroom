@@ -2,7 +2,8 @@
 
 Status: **proposed architecture; not a claim of runtime implementation**  
 Priority: **P0 for the control-plane and supervisor roadmap.** Benchmark/effectiveness work is exempt from this ordering and continues in parallel under explicit owner authorization; see the [roadmap](../roadmap.md#ordering-decision).  
-Authority: This document defines the target deployment architecture. Existing supervisor queue behavior remains operative until a reviewed, tested cutover.
+Authority: This document defines the target deployment architecture. Existing supervisor queue behavior remains operative until a reviewed, tested cutover.  
+Proposed amendment (2026-11-10): [SPEC-004](agent-agnostic-board.md) would make the board work with any parent agent and remove the Hermes dependency, with a local board backend as the default and Hermes Kanban as an option. Until SPEC-004 is accepted, the text below is unchanged.
 
 ## Decision
 

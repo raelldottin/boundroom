@@ -111,6 +111,7 @@ Horizon names are **planning increments**, not committed dates or promises of a 
 **Outcome:** each integration is independently trustworthy before any canonical authority changes.
 
 **Kanban (RA-CP-002/005):**
+- **Proposed (2026-11-10):** [SPEC-004](architecture/agent-agnostic-board.md) puts the board behind one backend interface, with a local, Hermes-free backend as the default, so Kanban works with any parent agent. If it is accepted, the Hermes-only items below apply only to consumers that choose the Hermes backend.
 - Revalidate the read-only revision snapshot and task-to-slice approval overlay against a pinned Hermes revision. Preserve board IDs, task IDs, explicit dependencies, priority mapping and foreign-board refusals.
 - Exercise a gateway claim race and goal-mode task refusal in a dedicated, backed-up canary; verify that no stale or superseded run can record success.
 - Design claim renewal or a bounded TTL policy only if measured real work exceeds current claims; do not couple to undocumented Hermes internals merely for convenience.
@@ -204,6 +205,7 @@ These are *proposed work packages*, not created issues or an authorization to ru
 | RA-PROD-002 | P0 | Documentation truth + install matrix | Correct release and coverage claims; fresh installs and exact command transcripts | H0–H1 |
 | RA-PROD-003 | P0 | One-slice success and refused-invocation canary | Exactly one agent run, second slice queued; invalid limits refused before mutation | H1 |
 | RA-PROD-004 | P0 | Consumer sync/pin/rollback usability | Check, locked import, PR evidence, old-pin restore and clean stop | H1 |
+| RA-BD-001–005 | P0 (proposed) | Agent-agnostic board per [SPEC-004](architecture/agent-agnostic-board.md): interface, local backend, `run_next` wiring, Claude-parent canary, Wiki input | Contract suite on every backend; full Kanban flow with no `hermes` on `PATH`; owner-authorized canary | H2 |
 | RA-CP-002R | P0 | Kanban race/revision and goal-mode hardening | Real CLI/gateway negative tests; no duplicated canonical writer | H2 |
 | RA-CP-003R | P0 | Licensed local Hindsight route and reflect | Local retain/recall/reflect; denied egress, bank isolation, restore witness | H2 |
 | RA-CP-004R | P0 | Real-bank Wiki build/check proof | Source hashes, snapshot completeness, deterministic rebuild, visible contradictions | H2 |
