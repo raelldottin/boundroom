@@ -2,7 +2,7 @@
 
 Status: **proposed design; nothing here is implemented.** It amends [SPEC-001](control-plane.md) contract A once accepted.
 Owner decision recorded here (2026-11-10): the Kanban board must work with any parent agent process, such as Claude Code, Codex, Hermes or a plain shell, **with no Hermes dependency**. This spec proposes how to meet that requirement. Implementation waits for it to be accepted.  
-Second owner decision (2026-11-10): **keep Hermes as an optional backend.** The local backend is the default, Hermes Kanban stays available to consumers that choose it, and no Hermes board has to be migrated. This settles open decisions 1 and 4.
+Second owner decision (2026-11-10): **keep Hermes as an optional backend.** The local backend is the default, Hermes Kanban stays available to consumers that choose it, and no Hermes board has to be migrated. This settles open decisions 1 and 4. Third owner decision (2026-11-10): **an auditable approval is enough for now**, which settles decision 3.
 Authority: until the cutover described below lands, the JSON queue (`automation/queue/slices.json`) stays the operational authority, and the Hermes adapters stay as they are.
 
 ## Problem
@@ -78,7 +78,7 @@ Statuses and transitions are the subset of Hermes's that the projection already 
 
 Every event records an `actor`, taken from `--actor` or the OS user.
 
-**What this does not enforce.** Any process that can write the file can run `approve`, so a worker could in principle approve its own task. Hermes has the same property today: a worker can run `hermes kanban` too. This spec makes it auditable, because every event has an actor, and testable, because a test asserts that the supervisor and the runner environment never call `approve`. Real separation needs OS permissions, such as a board file the runner's user can't write, and is listed under open decisions. Don't describe it as enforced.
+**What this does not enforce.** Any process that can write the file can run `approve`, so a worker could in principle approve its own task. Hermes has the same property today: a worker can run `hermes kanban` too. This spec makes it auditable, because every event has an actor, and testable, because a test asserts that the supervisor and the runner environment never call `approve`. Real separation needs OS permissions, such as a board file the runner's user can't write. The owner decided an auditable approval is enough for now (decision 3), so RA-BD-002 doesn't add that separation. Don't describe approval as enforced.
 
 **Limits.** One host only. SQLite on a network filesystem is not supported. No UI beyond the CLI: a board view is the Wiki's or a later tool's job, read-only.
 
@@ -127,6 +127,6 @@ The performance rule in AGENTS.md applies. RA-BD-002 and RA-BD-003 add file I/O 
 
 1. ~~Is the local backend the SPEC-001 target, with Hermes optional?~~ **Decided 2026-11-10:** yes. The local backend is the default and Hermes is optional.
 2. Where do boards live by convention? An explicit path is always required, but should the docs suggest `~/.local/state/repo-automation/boards/<slug>/`?
-3. Is auditable approval enough for now, or should RA-BD-002 include OS-level separation so the runner can't approve?
+3. ~~Is auditable approval enough for now?~~ **Decided 2026-11-10:** yes. Every approval records its actor, and a test checks that the supervisor and the runner environment never call `approve`. OS-level separation can be proposed later as its own change.
 4. ~~Should existing Hermes boards be migrated?~~ **Decided 2026-11-10:** no migration is required. Hermes boards stay on the Hermes backend. A one-way import can be proposed later if a consumer wants one.
 5. Approval of the upstream hermes-swarm-protocol change in RA-BD-005.
