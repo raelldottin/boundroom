@@ -21,7 +21,9 @@ Run each check as its own command. Don't join them with `&&`, `;` or a pipe: a h
 python3 automation/supervisor/run_next.py --single-slice
 ```
 
-You may append these flags when the user asks for them: `--dry-run`, `--include-blocked`, `--queue <path>`, `--handoff-dir <path>`, `--kanban-board <dir> --kanban-overlay <file>`, `--memory-config <file> --memory-project <name>`.
+You may append these flags when the user asks for them: `--dry-run`, `--include-blocked`, `--queue <path>`, `--handoff-dir <path>`, `--board <dir> --kanban-overlay <file>` (also spelled `--kanban-board`), `--board-backend local` or `--board-backend hermes`, `--memory-config <file> --memory-project <name>`.
+
+A Kanban board can be a local board, which needs no Hermes, or a Hermes board. The overlay's `backend` says which, and the supervisor refuses a `--board-backend` that disagrees. Report that refusal; don't change the flag to get past it.
 
 Never add `--autonomous-limit`, in any form. With `--single-slice`, the supervisor refuses it with exit 64 and runs nothing. Don't work around that refusal; report it.
 

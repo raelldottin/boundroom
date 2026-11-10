@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from automation.context import memory
 from automation.context.build_context import build_context_bundle
-from automation.supervisor import board_backend, kanban_projection, kanban_writer, policy
+from automation.supervisor import board_backend, kanban_projection, kanban_writer, local_board, policy
 
 # Time a Kanban claim outlives the agent's handoff timeout, for the validation replay and the record.
 CLAIM_MARGIN_SECONDS = 30 * 60
@@ -46,9 +46,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="When no queued slice is eligible, report blocked/deferred slices and their recommended unblockers.",
     )
-    parser.add_argument("--kanban-board", help="Take slices from this Kanban board directory instead of --queue.")
+    parser.add_argument(
+        "--kanban-board", "--board", dest="kanban_board", help="Take slices from this Kanban board directory instead of --queue."
+    )
     parser.add_argument("--kanban-overlay", help="The approval overlay for --kanban-board.")
-    parser.add_argument("--hermes", default="hermes", help="Command that runs the Hermes CLI, for Kanban writes.")
+    parser.add_argument(
+        "--board-backend",
+        choices=sorted(kanban_projection.SLICE_ID_PREFIXES),
+        help="The board's kind: local (no Hermes needed) or hermes. Defaults to the overlay's backend, and must match it.",
+    )
+    parser.add_argument("--hermes", default="hermes", help="Command that runs the Hermes CLI, for writes to a Hermes board.")
     parser.add_argument("--memory-config", help="Operator-reviewed Hindsight project-to-bank map (JSON) to recall from.")
     parser.add_argument("--memory-project", help="Project whose granted bank each context bundle recalls from.")
     return parser.parse_args()
@@ -78,6 +85,8 @@ class KanbanQueue:
     def __init__(self, backend: board_backend.BoardBackend, overlay_path: Path) -> None:
         self.backend = backend
         self.overlay = kanban_projection.load_overlay(overlay_path)
+        if self.overlay.backend != backend.kind:
+            raise kanban_projection.ProjectionError(f"overlay is for a {self.overlay.backend} board, not a {backend.kind} board")
         self.revision = ""
         self.claims: dict[str, board_backend.Claim] = {}
 
@@ -98,6 +107,21 @@ class KanbanQueue:
         self.backend.record(self.claims[slice_id], status, reason or status, handoff_path)
 
 
+def board_for(args: argparse.Namespace, repo_root: Path) -> board_backend.BoardBackend:
+    """The board ``--kanban-board`` names, as the backend ``--board-backend`` or the overlay picks."""
+    board_dir = Path(args.kanban_board)
+    resolved, root = board_dir.resolve(), repo_root.resolve()
+    if resolved == root or root in resolved.parents:
+        # A board write would leave the worktree dirty, and the supervisor's clean stop would fail.
+        raise policy.ConfigError(f"the board {board_dir} is inside the repository; keep boards outside {root}")
+    kind = kanban_projection.load_overlay(Path(args.kanban_overlay)).backend
+    if args.board_backend and args.board_backend != kind:
+        raise policy.ConfigError(f"--board-backend {args.board_backend} but the overlay is for a {kind} board")
+    if kind == "local":
+        return local_board.LocalBoard(board_dir)
+    return kanban_writer.HermesBackend(board_dir, shlex.split(args.hermes))
+
+
 def main() -> int:
     args = parse_args()
     if args.single_slice and args.autonomous_limit is not None:
@@ -114,8 +138,7 @@ def main() -> int:
     memory_config = memory.load_config(repo_root / args.memory_config) if args.memory_config else None
     store: JsonQueue | KanbanQueue
     if args.kanban_board:
-        backend = kanban_writer.HermesBackend(Path(args.kanban_board), shlex.split(args.hermes))
-        store = KanbanQueue(backend, Path(args.kanban_overlay))
+        store = KanbanQueue(board_for(args, repo_root), Path(args.kanban_overlay))
     else:
         store = JsonQueue(repo_root / args.queue)
 

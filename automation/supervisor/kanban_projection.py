@@ -42,7 +42,10 @@ from automation.supervisor import policy
 # Hermes's own formats: ``_BOARD_SLUG_RE`` and ``_new_task_id`` in ``hermes_cli/kanban_db.py``.
 BOARD_SLUG_PATTERN = r"^[a-z0-9][a-z0-9\-_]{0,63}$"
 TASK_ID_PATTERN = r"^t_[0-9a-f]{8}$"
-SLICE_ID_PREFIX = "kanban"
+# Which board a slice came from shows in its id: ``kanban.`` for Hermes, ``board.`` for the local board
+# (SPEC-004). Hermes keeps ``kanban.``, so handoffs written before the local board still parse.
+SLICE_ID_PREFIXES: dict[str, str] = {"hermes": "kanban", "local": "board"}
+SLICE_ID_PREFIX = SLICE_ID_PREFIXES["hermes"]
 
 # Columns the projection reads. Kanban's schema is unversioned (``user_version`` 0), so a
 # missing column is refused instead of guessed at.
@@ -97,6 +100,9 @@ class KanbanSlicePolicy(Contract):
 
 class KanbanOverlay(Contract):
     version: Literal[1]
+    # Which kind of board this overlay approves tasks on. Overlays written before the local board
+    # have no field and were all for Hermes boards, so absent means Hermes.
+    backend: Literal["hermes", "local"] = "hermes"
     board: Annotated[str, Field(pattern=BOARD_SLUG_PATTERN)]
     policy: QueuePolicy
     approved: dict[Annotated[str, Field(pattern=TASK_ID_PATTERN)], KanbanSlicePolicy]
@@ -120,14 +126,14 @@ class Projection:
     event_watermark: int
 
 
-def slice_id_for(board: str, task_id: str) -> str:
-    return f"{SLICE_ID_PREFIX}.{board}.{task_id}"
+def slice_id_for(board: str, task_id: str, prefix: str = SLICE_ID_PREFIX) -> str:
+    return f"{prefix}.{board}.{task_id}"
 
 
 def parse_slice_id(slice_id: str) -> Optional[tuple[str, str]]:
     """Trace a projected slice id (and so a handoff's ``slice_id``) back to its board and task."""
     parts = slice_id.split(".")
-    if len(parts) != 3 or parts[0] != SLICE_ID_PREFIX:
+    if len(parts) != 3 or parts[0] not in SLICE_ID_PREFIXES.values():
         return None
     _, board, task_id = parts
     if not re.match(BOARD_SLUG_PATTERN, board) or not re.match(TASK_ID_PATTERN, task_id):
@@ -188,6 +194,15 @@ def build_snapshot(
     return BoardSnapshot(board, tasks, links, creators, watermark, revision)
 
 
+def read_snapshot(board_dir: Path, backend: str) -> BoardSnapshot:
+    """Snapshot a board of either kind, read-only, as the overlay's ``backend`` names it."""
+    if backend == "local":
+        from automation.supervisor.local_board import LocalBoard  # local_board imports this module
+
+        return LocalBoard(board_dir).snapshot()
+    return read_board(board_dir)
+
+
 def board_slug(board_dir: Path) -> str:
     board = board_dir.name
     if not re.match(BOARD_SLUG_PATTERN, board):
@@ -243,8 +258,10 @@ def project(snapshot: BoardSnapshot, overlay: KanbanOverlay) -> Projection:
     for parent_id, child_id in snapshot.links:
         parents_of.setdefault(child_id, []).append(parent_id)
 
+    prefix = SLICE_ID_PREFIXES[overlay.backend]
     slices = [
-        _slice_record(snapshot, task, overlay.approved[task["id"]], top, parents_of, by_id, projected_ids) for task in projected
+        _slice_record(snapshot, task, overlay.approved[task["id"]], top, parents_of, by_id, projected_ids, prefix)
+        for task in projected
     ]
     queue = {"version": 1, "policy": overlay.policy.model_dump(), "slices": slices}
     validation = policy.validate_document(queue, SliceQueue)
@@ -253,7 +270,8 @@ def project(snapshot: BoardSnapshot, overlay: KanbanOverlay) -> Projection:
         raise ProjectionError("Projected queue is invalid:\n- " + "\n- ".join(errors))
 
     provenance = {
-        slice_id_for(snapshot.board, task["id"]): {
+        slice_id_for(snapshot.board, task["id"], prefix): {
+            "backend": overlay.backend,
             "board": snapshot.board,
             "task_id": task["id"],
             "kanban_status": task["status"],
@@ -273,13 +291,14 @@ def _slice_record(
     parents_of: dict[str, list[str]],
     by_id: dict[str, dict[str, Any]],
     projected_ids: set[str],
+    prefix: str,
 ) -> dict[str, Any]:
     status, entry_condition = STATUS_MAP[task["status"]]
     depends_on: list[str] = []
     for parent_id in sorted(parents_of.get(task["id"], [])):
         parent_status = by_id.get(parent_id, {}).get("status", "")
         if parent_id in projected_ids:
-            depends_on.append(slice_id_for(snapshot.board, parent_id))
+            depends_on.append(slice_id_for(snapshot.board, parent_id, prefix))
         elif parent_status not in TERMINAL_STATUSES and status == "queued":
             # An open parent nobody approved: the queue cannot see it, so hold the child.
             status = "blocked"
@@ -287,7 +306,7 @@ def _slice_record(
 
     record = approval.model_dump(exclude_none=True, exclude={"queue_slice_id"})
     record.update(
-        slice_id=slice_id_for(snapshot.board, task["id"]),
+        slice_id=slice_id_for(snapshot.board, task["id"], prefix),
         title=task["title"],
         status=status,
         priority=top - task["priority"],
@@ -310,7 +329,7 @@ def shadow_diff(projection: Projection, overlay: KanbanOverlay, queue: dict[str,
             continue
         if approval.queue_slice_id in to_queue.values():
             raise ProjectionError(f"overlay maps more than one task to queue slice {approval.queue_slice_id!r}")
-        to_queue[slice_id_for(overlay.board, task_id)] = approval.queue_slice_id
+        to_queue[slice_id_for(overlay.board, task_id, SLICE_ID_PREFIXES[overlay.backend])] = approval.queue_slice_id
     queue_slices = {record["slice_id"]: record for record in queue["slices"]}
 
     def comparable(record: dict[str, Any], translate: bool) -> dict[str, Any]:
@@ -367,13 +386,15 @@ def _digest(value: Any) -> str:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Print a read-only Kanban board projection. Writes nothing.")
-    parser.add_argument("--board-dir", type=Path, required=True, help="~/.hermes/kanban/boards/<slug>")
+    parser.add_argument(
+        "--board-dir", type=Path, required=True, help="The board directory: ~/.hermes/kanban/boards/<slug>, or a local board's"
+    )
     parser.add_argument("--overlay", type=Path, required=True, help="repo-automation approval overlay JSON")
     parser.add_argument("--shadow-queue", type=Path, help="JSON queue to compare the projection with (read only)")
     args = parser.parse_args(argv)
     try:
         overlay = load_overlay(args.overlay)
-        result = project(read_board(args.board_dir), overlay)
+        result = project(read_snapshot(args.board_dir, overlay.backend), overlay)
         shadow = shadow_diff(result, overlay, policy.load_queue(args.shadow_queue)) if args.shadow_queue else None
     except (ValueError, policy.ConfigError) as error:  # load_queue reports an invalid queue as ValueError
         print(f"error: {error}", file=sys.stderr)

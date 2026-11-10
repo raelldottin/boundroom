@@ -12,6 +12,15 @@ python automation/supervisor/run_next.py --kanban-board ~/.hermes/kanban/boards/
   [--memory-config <map.json> --memory-project <project>]
 ```
 
+A local board ([SPEC-004](agent-agnostic-board.md)) needs no Hermes. Its overlay says `"backend": "local"`, and `--board` is another name for `--kanban-board`:
+
+```bash
+python automation/supervisor/run_next.py --single-slice --board <board-dir> --kanban-overlay <overlay.json> [--board-backend local]
+```
+
+- **One kind of board per overlay.** The overlay's `backend` (`hermes` when absent) picks the backend. `--board-backend` must agree with it, or the run stops before anything is read.
+- **Boards stay outside the repository.** A board directory inside the consumer's worktree is refused, because a board write would leave the worktree dirty.
+
 - **The board is the queue.** `--queue` is ignored and no JSON queue is read or written, so nothing is dual-written. Each loop reads a fresh projection.
 - **Claim before the agent.** Setting a slice `in_progress` claims its task at the revision just projected. A refused claim stops the run (`stop: …`, exit 2) before the agent starts.
 - **Record after the decision.** Every later status, including each failure path, is recorded on that claim. A failure before the agent wrote a handoff is recorded with `handoff sha256 none`; a `done` verdict always has its handoff.

@@ -8,6 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import pytest
+
 from automation.supervisor import kanban_projection as kp
 from automation.supervisor import kanban_writer as kw
 from automation.supervisor import run_next
@@ -24,6 +26,8 @@ OVERLAY = Path(__file__).resolve().parents[2] / "automation/examples/kanban-over
 
 class RecordingBackend:
     """A board backend with no Hermes behind it: a fixed snapshot, and claims and records kept in lists."""
+
+    kind = "hermes"  # the example overlay is a Hermes overlay
 
     def __init__(self, snapshot: kp.BoardSnapshot) -> None:
         self._snapshot = snapshot
@@ -83,3 +87,11 @@ def test_the_kanban_queue_reaches_the_board_only_through_its_backend(board, hand
     assert backend.claims == [(READY, backend.snapshot().revision, ttl)]
     assert backend.records == [(Claim(BOARD, READY, 1), "done", "ok", handoff)]
     assert calls(tmp_path) == []  # the stand-in hermes was never run
+
+
+def test_the_kanban_queue_refuses_an_overlay_for_another_kind_of_board(board):
+    backend = RecordingBackend(kp.read_board(board))
+    backend.kind = "local"  # the example overlay has no backend field, so it is a Hermes overlay
+
+    with pytest.raises(kp.ProjectionError, match="overlay is for a hermes board, not a local board"):
+        run_next.KanbanQueue(backend, OVERLAY)

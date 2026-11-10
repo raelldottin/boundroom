@@ -49,6 +49,8 @@ class KanbanWriteError(kp.ProjectionError):
 class HermesBackend:
     """One Hermes Kanban board: read from its SQLite file, written through ``hermes kanban``."""
 
+    kind = "hermes"
+
     def __init__(self, board_dir: Path, hermes: Sequence[str] = ("hermes",)) -> None:
         self.board_dir = board_dir
         self.hermes = tuple(hermes)
