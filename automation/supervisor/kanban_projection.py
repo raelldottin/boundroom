@@ -23,7 +23,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Generator, Literal, Optional
+from typing import Annotated, Any, Generator, Literal, Optional, Sequence
 
 from pydantic import Field
 
@@ -162,14 +162,30 @@ def read_board(board_dir: Path) -> BoardSnapshot:
             watermark = conn.execute("SELECT COALESCE(MAX(id), 0) FROM task_events").fetchone()[0]
         finally:
             conn.rollback()
+    return build_snapshot(board, tasks, links, created, int(watermark))
 
+
+def build_snapshot(
+    board: str,
+    tasks: tuple[dict[str, Any], ...],
+    links: tuple[tuple[str, str], ...],
+    created: Sequence[tuple[str, Optional[str]]],
+    watermark: int,
+) -> BoardSnapshot:
+    """Assemble a snapshot and its revision from rows any board backend read in one transaction.
+
+    ``tasks`` are ``id, title, status, priority, created_at`` dicts ordered by id, ``links`` are
+    ``(parent_id, child_id)`` pairs in order, and ``created`` are the ``(task_id, payload)`` rows of
+    each task's ``created`` event. Every backend builds its snapshot here, so equal boards get equal
+    revisions whichever backend read them.
+    """
     creators: dict[str, str] = {}
     for task_id, payload in created:
         creator = _json_object(payload).get("creator_task_id")
         if isinstance(creator, str) and creator:
             creators[task_id] = creator
     revision = _digest({"board": board, "tasks": tasks, "links": links, "creators": creators})
-    return BoardSnapshot(board, tasks, links, creators, int(watermark), revision)
+    return BoardSnapshot(board, tasks, links, creators, watermark, revision)
 
 
 def board_slug(board_dir: Path) -> str:

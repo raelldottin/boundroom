@@ -63,6 +63,10 @@ class HermesBackend:
     def claim(self, task_id: str, expected_revision: str, ttl_seconds: int) -> Claim:
         return claim(self.board_dir, task_id, expected_revision, self.hermes, ttl_seconds)
 
+    def renew(self, held: Claim, ttl_seconds: int) -> Claim:
+        # A CLI claim is locked to the CLI process that made it, which has already exited.
+        raise KanbanWriteError(f"a Hermes CLI claim can't be renewed; run {held.run_id} keeps its original TTL")
+
     def record(self, held: Claim, verdict: str, reason: str, handoff_path: Optional[Path]) -> bool:
         return record(self.board_dir, held, verdict, reason, handoff_path, self.hermes)
 
