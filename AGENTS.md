@@ -24,7 +24,7 @@ The owner requires this project to meet CIS and SOC 2 change-management expectat
 - **cutovers, deployments and schedules**;
 - **choosing or changing a license.**
 
-**Identity and audit.** Every action names its actor. The agent must not present its own actions as a person's. When it works under a person's credentials, the pull request, commit or event says so: for example `--actor "claude-code (for raelldottin)"`, or "Opened by Claude Code" in a pull request. **Known gap:** until the agent has its own GitHub identity, its pull requests appear to be authored by the owner, and GitHub does not let an author approve their own pull request. Closing this gap needs a separate identity, such as a GitHub App or a machine user, which the owner creates. See the control map.
+**Identity and audit.** Every action names its actor. The agent must not present its own actions as a person's. On GitHub the agent acts as `repo-automation-agent[bot]`, a GitHub App the owner created on 2026-11-10 and installed only on this repository, with no administration permission. Its commits, pushes, pull requests, comments and approved merges use that identity, so the owner can review and approve them as a different person. The agent never uses a person's GitHub credentials to write. Outside GitHub, such as on a board, the actor names the agent: for example `--actor "claude-code (for raelldottin)"`. See the control map.
 
 The agent never weakens, bypasses or disables a control to make progress. When a step needs a person, the agent asks for that one approval and carries on with other work.
 
