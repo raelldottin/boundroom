@@ -180,6 +180,23 @@ Propose a stable 1.0 only when the maintainer accepts: product boundaries and su
 
 **Exit evidence:** end-to-end synthetic pipeline produces cited answers and correct refusals; source edits/deletions are reflected; before/after retrieval results show correct and denied cases; no code path can dispatch a slice or modify a board. A later real-guild canary, schedule activation, external API access or model spend needs its own scoped approval. No Discord connection is made merely by accepting this roadmap.
 
+## 4a. Where the work can run (2026-11-10)
+
+The agent works on the owner's machine, which is a company computer. **Of the agent harnesses and services this roadmap uses, only Claude Code is approved there.** Codex is explicitly not allowed. Under the delegated authority in AGENTS.md, the agent records the work that needs something else as **deferred to an approved machine**, rather than stalling on it.
+
+| Work | Needs | On the owner's machine |
+| --- | --- | --- |
+| H0, H1, RA-BD-001 to 003, RA-BD-005's in-repo side, release work | Claude Code and the existing developer tools (git, gh, Python, uv) | **Proceeds** |
+| RA-BD-004 Claude Code canary | Claude Code | **Done** (2026-11-10) |
+| RA-BD-004 Codex canary | Codex | Deferred |
+| H2 Hindsight: local inference, reflect, a real project bank, egress denial | a Hindsight server, PostgreSQL, local model weights | Deferred |
+| H2 Kanban: Hermes gateway races and goal mode | Hermes | Deferred. The local board doesn't need Hermes. |
+| H3 to H5 | H2's evidence | Deferred behind H2 |
+| K: live capture, Discord answers, schedules | a Discord bot, its credentials, Hindsight | Deferred. Contracts and hermetic fixtures proceed. |
+| R: ProgramBench runs | Hermes and a hosted model provider | Deferred |
+
+When an approved machine or hosted environment exists, record it here and run the deferred work unchanged. Nothing deferred here counts as accepted.
+
 ## 5. Dependency graph and critical path
 
 | Workstream | Depends on | Blocks |
