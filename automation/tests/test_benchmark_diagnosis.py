@@ -81,7 +81,7 @@ class Session:
         """``messages`` are (role, seconds after launch, carries tool_calls); ``activity`` is
         (seconds after launch, the persisted activity description)."""
         at, description = activity or (3, None)
-        with sqlite3.connect(self.home / "state.db") as conn:
+        with contextlib.closing(sqlite3.connect(self.home / "state.db")) as conn, conn:
             conn.executescript(_SCHEMA)
             if row:
                 conn.execute(
@@ -378,7 +378,7 @@ class ActivityDescriptionTests(unittest.TestCase):
     def test_a_store_without_the_column_is_named_missing_not_a_crash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
-            with sqlite3.connect(session.home / "state.db") as conn:
+            with contextlib.closing(sqlite3.connect(session.home / "state.db")) as conn, conn:
                 conn.execute(
                     "CREATE TABLE sessions (id TEXT, started_at REAL, ended_at REAL, end_reason TEXT,"
                     " api_call_count INTEGER, message_count INTEGER, tool_call_count INTEGER, last_activity_at REAL)"
@@ -454,7 +454,7 @@ class ActivitySnapshotTests(unittest.TestCase):
             home = Path(tmp) / "home"
             home.mkdir()
             database = home / "state.db"
-            with sqlite3.connect(database) as conn:
+            with contextlib.closing(sqlite3.connect(database)) as conn, conn:
                 conn.executescript(_SCHEMA)
                 conn.execute(
                     "INSERT INTO sessions (id, source, started_at, last_activity_at, last_activity_description)"
@@ -627,7 +627,7 @@ class ReadOnlyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
             session.ledger(calls=1)
-            with sqlite3.connect(session.home / "state.db") as conn:
+            with contextlib.closing(sqlite3.connect(session.home / "state.db")) as conn, conn:
                 conn.execute(
                     "INSERT INTO messages (session_id, role, content, timestamp) VALUES ('s1', 'assistant', 'SECRET-PROSE', ?)",
                     (LAUNCH + 9,),

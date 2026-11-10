@@ -6,6 +6,7 @@ consumer repository is a temporary git checkout, and the agent is a short Python
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shlex
 import shutil
@@ -121,7 +122,7 @@ def test_an_unblock_in_kanban_is_the_retry(consumer, board, hermes, agent, monke
 
     assert supervise(monkeypatch, board, hermes, agent) == 0
 
-    with sqlite3.connect(board / "kanban.db") as conn:
+    with contextlib.closing(sqlite3.connect(board / "kanban.db")) as conn, conn:
         runs = conn.execute("SELECT id, outcome FROM task_runs WHERE task_id = ? ORDER BY id", (READY,)).fetchall()
     assert runs == [(1, "blocked"), (2, "review_requested")]
     assert row(board, "SELECT status FROM tasks WHERE id = ?", READY) == ("review",)

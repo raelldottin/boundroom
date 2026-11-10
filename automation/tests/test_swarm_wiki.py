@@ -8,6 +8,7 @@ into pytest's temporary directories.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -149,7 +150,7 @@ def board(tmp_path):
     (hermes / "hermes_cli/__init__.py").write_text("", encoding="utf-8")
     (hermes / "hermes_cli/kanban_db.py").write_text(f"VALID_STATUSES = {STATUSES!r}\n", encoding="utf-8")
     db = tmp_path / "kanban.db"
-    with sqlite3.connect(db) as conn:
+    with contextlib.closing(sqlite3.connect(db)) as conn, conn:
         conn.executescript(
             """
             CREATE TABLE tasks(id TEXT PRIMARY KEY, title TEXT, body TEXT, status TEXT, created_by TEXT,
