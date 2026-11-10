@@ -121,6 +121,8 @@ def init_board(board_dir: Path, actor: str, clock: Callable[[], float] = time.ti
 class LocalBoard:
     """One local board. ``actor`` names whoever this instance writes as; the supervisor keeps the default."""
 
+    kind = "local"
+
     def __init__(self, board_dir: Path, clock: Callable[[], float] = time.time, actor: str = SUPERVISOR_ACTOR) -> None:
         self.board_dir = board_dir
         self.clock = clock
@@ -187,7 +189,8 @@ class LocalBoard:
             digest = _handoff_digest(handoff_path)
             if verdict == "done" and digest == "none":
                 raise LocalBoardError(f"a done verdict for {held.task_id} needs its handoff")
-            metadata = {"slice_id": kp.slice_id_for(held.board, held.task_id), "handoff_sha256": digest, "reason": reason}
+            slice_id = kp.slice_id_for(held.board, held.task_id, kp.SLICE_ID_PREFIXES[self.kind])
+            metadata = {"slice_id": slice_id, "handoff_sha256": digest, "reason": reason}
             if block_kind:
                 metadata["block_kind"] = block_kind
             conn.execute(

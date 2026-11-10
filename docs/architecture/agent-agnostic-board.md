@@ -1,6 +1,6 @@
 # SPEC-004: A Kanban board that works with any parent agent
 
-Status: **accepted (raelldottin/repo-automation#181).** It amends [SPEC-001](control-plane.md) contract A. RA-BD-001 (the interface) and RA-BD-002 (the local board, `automation/supervisor/local_board.py`) are implemented. `run_next` can't select the local board until RA-BD-003.
+Status: **accepted (raelldottin/repo-automation#181).** It amends [SPEC-001](control-plane.md) contract A. RA-BD-001 (the interface), RA-BD-002 (the local board, `automation/supervisor/local_board.py`) and RA-BD-003 (`run_next` and the plugin on a local board) are implemented. RA-BD-004 (the Claude Code and Codex canaries) and RA-BD-005 (the Wiki) remain.
 Owner decision recorded here (2026-11-10): the Kanban board must work with any parent agent process, such as Claude Code, Codex, Hermes or a plain shell, **with no Hermes dependency**. This spec proposes how to meet that requirement. Implementation waits for it to be accepted.  
 Second owner decision (2026-11-10): **keep Hermes as an optional backend.** The local backend is the default, Hermes Kanban stays available to consumers that choose it, and no Hermes board has to be migrated. This settles open decisions 1 and 4. Third owner decision (2026-11-10): **an auditable approval is enough for now**, which settles decision 3.
 Authority: until the cutover described below lands, the JSON queue (`automation/queue/slices.json`) stays the operational authority, and the Hermes adapters stay as they are.
@@ -43,7 +43,7 @@ class BoardBackend(Protocol):
 - **Hermes can't renew.** `HermesBackend.renew` always refuses, because a Hermes CLI claim is locked to a process that has already exited.
 - **Every write is conditional.** `claim` refuses a stale revision, a task that isn't `ready` or one with an assignee. `record` and `renew` refuse a run that is no longer the task's current run. A refusal raises, and nothing is retried or guessed. These are the semantics [the write-back contract](kanban-cutover.md) already defines.
 - **The supervisor never writes `done`.** A `done` verdict becomes `review`. Only a person's approval moves a task to `done`.
-- **Slice ids say which backend they came from:** `kanban.<slug>.<task>` stays for Hermes, so existing handoffs still parse, and the local backend uses `board.<slug>.<task>`. The overlay gains a `backend` field, and a mismatch is refused.
+- **Slice ids say which backend they came from:** `kanban.<slug>.<task>` stays for Hermes, so existing handoffs still parse, and the local backend uses `board.<slug>.<task>`. The overlay gains a `backend` field (`local` or `hermes`), and every backend has a `kind`. `run_next` takes the backend from the overlay, `--board-backend` must agree with it, and `KanbanQueue` refuses an overlay for another kind of board. An overlay without the field means `hermes`, because every overlay written before the local board was for a Hermes board; an overlay for a local board must say `"backend": "local"`.
 - **Contract tests run against every backend.** One parameterized suite runs against the local backend and the Hermes stand-in, so the two can't drift apart.
 
 ## The local backend

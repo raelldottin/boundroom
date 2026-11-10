@@ -22,7 +22,7 @@ python3 automation/supervisor/run_next.py --dry-run --include-blocked
 
 ## Board against queue (only if the user names a board)
 
-If the user gives a Hermes Kanban board directory and an approval overlay, compare them with the JSON queue:
+If the user gives a Kanban board directory and an approval overlay, compare them with the JSON queue. The board can be a local board or a Hermes board; the overlay's `backend` says which, and the command reads either:
 
 ```bash
 python3 -m automation.supervisor.kanban_projection --board-dir <board-dir> --overlay <overlay.json> --shadow-queue automation/queue/slices.json

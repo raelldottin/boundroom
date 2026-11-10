@@ -39,6 +39,10 @@ class Claim:
 
 @runtime_checkable
 class BoardBackend(Protocol):
+    # ``"hermes"`` or ``"local"``: the overlay's ``backend`` must name it, and it picks the slice-id prefix.
+    @property
+    def kind(self) -> str: ...
+
     @property
     def slug(self) -> str: ...
 

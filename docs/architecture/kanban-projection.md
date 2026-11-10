@@ -33,7 +33,7 @@ An approved task may also name `queue_slice_id`, the JSON-queue slice it stands 
 
 | Slice field | Source | Rule |
 | --- | --- | --- |
-| `slice_id` | board slug + `tasks.id` | `kanban.<slug>.<task_id>`. Task ids are only unique within a board, and slugs (`^[a-z0-9][a-z0-9\-_]{0,63}$`) contain no dots, so `parse_slice_id` gets the board and task back from a slice id or a handoff's `slice_id`. The id has no `/`, so handoff file names stay valid. |
+| `slice_id` | board slug + `tasks.id` | `kanban.<slug>.<task_id>` on a Hermes board, `board.<slug>.<task_id>` on a local board (the overlay's `backend`). Task ids are only unique within a board, and slugs (`^[a-z0-9][a-z0-9\-_]{0,63}$`) contain no dots, so `parse_slice_id` gets the board and task back from a slice id or a handoff's `slice_id`. The id has no `/`, so handoff file names stay valid. |
 | `title` | `tasks.title` | Stays in the projection. Never committed. |
 | `status` | `tasks.status` | See the status table below. |
 | `priority` | `tasks.priority` | Inverted to `max(priority) - priority` across projected tasks. Slices are emitted in Kanban dispatch order (`priority DESC, created_at ASC`, then id), so `select_next_slice` (lowest priority, then earliest index) picks the task Kanban would dispatch first. |

@@ -183,6 +183,7 @@ def test_a_snapshot_projects_through_an_approval_overlay(contract):
     example = json.loads(OVERLAY.read_text(encoding="utf-8"))
     document = {
         "version": 1,
+        "backend": contract.backend.kind,
         "board": contract.backend.slug,
         "policy": example["policy"],
         "approved": {contract.ready: example["approved"]["t_000000a3"]},
@@ -192,7 +193,9 @@ def test_a_snapshot_projects_through_an_approval_overlay(contract):
     projection = kp.project(contract.backend.snapshot(), overlay)
 
     [only] = projection.queue["slices"]
-    assert (only["slice_id"], only["status"]) == (kp.slice_id_for(contract.backend.slug, contract.ready), "queued")
+    prefix = {"local": "board", "hermes": "kanban"}[contract.backend.kind]
+    assert (only["slice_id"], only["status"]) == (f"{prefix}.{contract.backend.slug}.{contract.ready}", "queued")
+    assert kp.parse_slice_id(only["slice_id"]) == (contract.backend.slug, contract.ready)
     assert projection.revision == contract.backend.snapshot().revision
 
 
