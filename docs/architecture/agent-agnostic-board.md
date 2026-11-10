@@ -31,7 +31,8 @@ The local board is a **store, not a scheduler**. It has no dispatcher, no worker
 ```python
 class BoardBackend(Protocol):
     slug: str
-    def snapshot(self) -> BoardSnapshot: ...            # tasks, links, creators, revision; read-only
+
+    def snapshot(self) -> BoardSnapshot: ...  # tasks, links, creators, revision; read-only
     def claim(self, task_id: str, expected_revision: str, ttl_seconds: int) -> Claim: ...
     def renew(self, claim: Claim, ttl_seconds: int) -> Claim: ...
     def record(self, claim: Claim, verdict: Verdict, reason: str, handoff_sha256: str | None) -> bool: ...
