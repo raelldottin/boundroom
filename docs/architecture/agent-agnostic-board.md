@@ -1,6 +1,6 @@
 # SPEC-004: A Kanban board that works with any parent agent
 
-Status: **accepted (raelldottin/repo-automation#181).** It amends [SPEC-001](control-plane.md) contract A. RA-BD-001 (the interface), RA-BD-002 (the local board, `automation/supervisor/local_board.py`) and RA-BD-003 (`run_next` and the plugin on a local board) are implemented. The RA-BD-004 Claude Code canary passed on 2026-11-10 ([record](#ra-bd-004-claude-code-canary-2026-11-10)). The Codex canary and RA-BD-005 (the Wiki) remain.
+Status: **accepted (raelldottin/repo-automation#181).** It amends [SPEC-001](control-plane.md) contract A. RA-BD-001 (the interface), RA-BD-002 (the local board, `automation/supervisor/local_board.py`) and RA-BD-003 (`run_next` and the plugin on a local board) are implemented. The RA-BD-004 Claude Code canary passed on 2026-11-10 ([record](#ra-bd-004-claude-code-canary-2026-11-10)). RA-BD-004 is accepted on that canary. The Codex canary is deferred: Codex is not approved on the only machine available (see the record). RA-BD-005 (the Wiki) remains.
 Owner decision recorded here (2026-11-10): the Kanban board must work with any parent agent process, such as Claude Code, Codex, Hermes or a plain shell, **with no Hermes dependency**. This spec proposes how to meet that requirement. Implementation waits for it to be accepted.  
 Second owner decision (2026-11-10): **keep Hermes as an optional backend.** The local backend is the default, Hermes Kanban stays available to consumers that choose it, and no Hermes board has to be migrated. This settles open decisions 1 and 4. Third owner decision (2026-11-10): **an auditable approval is enough for now**, which settles decision 3.
 Authority: until the cutover described below lands, the JSON queue (`automation/queue/slices.json`) stays the operational authority, and the Hermes adapters stay as they are.
@@ -110,14 +110,14 @@ Each slice is a separate pull request with its own allowed paths, validations an
 | RA-BD-001 | Extract `BoardBackend`; move `read_board` and `kanban_writer` behind it as the Hermes backend | No behavior change. Every existing Kanban test passes unchanged. |
 | RA-BD-002 | Local backend store, schema and CLI | The contract suite passes on both backends. Includes stale-revision, two-process claim race, expired claim, superseded run, unknown schema version and foreign-board refusals. |
 | RA-BD-003 | `run_next --board-backend`, the overlay `backend` field, and plugin skill prose | The end-to-end `run_next` tests run against the local backend with no `hermes` on `PATH`. A board path inside the worktree is refused. |
-| RA-BD-004 | Claude Code and Codex parent canaries on a disposable local board | For each of Claude Code and Codex, as both parent and runner: one real slice ends in `review`, a person approves it, and the second slice stays queued. The runner in each handoff is the parent's harness. **Each model run needs owner authorization.** |
+| RA-BD-004 | Claude Code and Codex parent canaries on a disposable local board | For each of Claude Code and Codex, as both parent and runner: one real slice ends in `review`, a person approves it, and the second slice stays queued. The runner in each handoff is the parent's harness. **Each model run needs owner authorization.** Claude Code: passed 2026-11-10. Codex: deferred until a machine where Codex is approved. |
 | RA-BD-005 | Wiki input from `snapshot --json` (upstream) and a pin bump here | A deterministic build and `--check` from a local board snapshot |
 
 The performance rule in AGENTS.md applies. RA-BD-002 and RA-BD-003 add file I/O to the supervisor path, which grows with board size, and their PR descriptions must say so.
 
 ## RA-BD-004: Claude Code canary (2026-11-10)
 
-**Result: passed.** A real slice ran on a disposable local board, with no Hermes installed, and Claude Code as both parent and runner. The owner authorized the run. The Codex canary is still to do: Codex isn't installed on the owner's machine.
+**Result: passed.** A real slice ran on a disposable local board, with no Hermes installed, and Claude Code as both parent and runner. The owner authorized the run. **The Codex canary is deferred (decided 2026-11-10).** The owner's machine is a company computer, and Codex is not allowed or approved on it. Codex as parent and runner therefore stays unproven with a real model. The harness-neutral path is covered without a model: `run_agent.sh` picks Codex from the process tree in `automation/tests/test_runner_selection.py`, and the board, `run_next` and the plugin contain no harness-specific code. Run the Codex canary, unchanged, on a machine where Codex is approved.
 
 **Setup.**
 
