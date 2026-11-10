@@ -108,8 +108,7 @@ jobs:
       HERMES_REVISION: b6a87db515e493faba25e4a09d9e15dac6ddab37
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Require NVIDIA_API_KEY
         run: |
           if [ -z "${NVIDIA_API_KEY}" ]; then
@@ -118,12 +117,12 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           enable-cache: true
 
@@ -570,7 +569,7 @@ jobs:
 
       - name: Upload effectiveness report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: effectiveness-report
           path: |

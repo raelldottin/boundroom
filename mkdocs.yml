@@ -44,6 +44,7 @@ nav:
   - Discord Knowledge Loop Specification: architecture/discord-knowledge-loop.md
   - Agentic SDLC and GitOps Standard (draft): architecture/agentic-gitops-sdlc-standard.md
   - Product Roadmap: product-roadmap.md
+  - CIS and SOC 2 Control Map: compliance/controls.md
   - Technical Roadmap (October 2026): roadmap.md
   - CodSpeed Removal Roadmap: codspeed-removal.md
   - Workflow: workflows/repo-automation.md
