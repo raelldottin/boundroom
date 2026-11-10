@@ -12,6 +12,8 @@ afterwards that it did.
   (``blocked``, ``failed``). It is conditional on the supervisor's own run: Hermes refuses the
   write if that run is no longer current, so a reclaimed or edited task fails closed.
 - A supervisor ``done`` becomes Kanban ``review``, never ``done``. A person approves it in Kanban.
+
+``HermesBackend`` presents one Hermes board through ``board_backend.BoardBackend`` (SPEC-004).
 """
 
 from __future__ import annotations
@@ -20,11 +22,11 @@ import hashlib
 import json
 import os
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from automation.supervisor import kanban_projection as kp
+from automation.supervisor.board_backend import Claim
 
 # ponytail: a CLI claim is locked to the short-lived CLI process (host:pid), so nothing can renew
 # it. The TTL must cover the whole slice; after it, Hermes reclaims and ``record`` fails closed.
@@ -44,11 +46,25 @@ class KanbanWriteError(kp.ProjectionError):
     """The write was refused before Hermes was asked, or Hermes refused or did not apply it."""
 
 
-@dataclass(frozen=True)
-class Claim:
-    board: str
-    task_id: str
-    run_id: int
+class HermesBackend:
+    """One Hermes Kanban board: read from its SQLite file, written through ``hermes kanban``."""
+
+    def __init__(self, board_dir: Path, hermes: Sequence[str] = ("hermes",)) -> None:
+        self.board_dir = board_dir
+        self.hermes = tuple(hermes)
+
+    @property
+    def slug(self) -> str:
+        return kp.board_slug(self.board_dir)
+
+    def snapshot(self) -> kp.BoardSnapshot:
+        return kp.read_board(self.board_dir)
+
+    def claim(self, task_id: str, expected_revision: str, ttl_seconds: int) -> Claim:
+        return claim(self.board_dir, task_id, expected_revision, self.hermes, ttl_seconds)
+
+    def record(self, held: Claim, verdict: str, reason: str, handoff_path: Optional[Path]) -> bool:
+        return record(self.board_dir, held, verdict, reason, handoff_path, self.hermes)
 
 
 def claim(

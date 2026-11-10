@@ -2,7 +2,7 @@
 
 Status: **wired into `run_next` behind explicit flags, and run once against a dedicated canary board with the real `hermes` CLI ([canary](#canary-2026-10-29)).** The JSON queue stays the default and the operational authority. No board other than the two canary boards was written.
 
-Code: `automation/supervisor/kanban_writer.py`, and `KanbanQueue` in `automation/supervisor/run_next.py`. Tests: `automation/tests/test_kanban_writer.py`, `automation/tests/test_run_next_kanban.py`. Read side: [the Kanban projection](kanban-projection.md).
+Code: `automation/supervisor/kanban_writer.py` (`HermesBackend`), and `KanbanQueue` in `automation/supervisor/run_next.py`, which reaches the board only through the `BoardBackend` interface in `automation/supervisor/board_backend.py` (SPEC-004, RA-BD-001). Tests: `automation/tests/test_kanban_writer.py`, `automation/tests/test_run_next_kanban.py`, `automation/tests/test_board_backend.py`. Read side: [the Kanban projection](kanban-projection.md).
 
 ## Running the supervisor on a board
 
