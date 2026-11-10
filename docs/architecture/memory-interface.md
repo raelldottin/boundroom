@@ -1,6 +1,6 @@
 # Memory interface contract (RA-CP-003, RA-CP-004)
 
-Status: **client adapter only. No Hindsight is installed, configured or started by this change.** No `bank_id` exists yet ([inventory](control-plane-inventory.md)). Memory is optional: without a memory map, `build_context_bundle` returns exactly the bundle it returned before this change.
+Status: **client adapter, proven once against a local Hindsight server with a synthetic bank ([live proof](#live-proof-on-a-local-server-p02-2026-11-01), 2026-11-01).** No real project `bank_id` exists yet ([inventory](control-plane-inventory.md)); local inference, an egress-denied run and reflect remain open. Memory is optional: without a memory map, `build_context_bundle` returns exactly the bundle it returned before this change.
 
 Code: `automation/context/memory.py`. Tests: `automation/tests/test_memory.py` and `automation/tests/test_memory_snapshot.py`. Fixtures: `automation/examples/memory-config.json` and `automation/examples/memory-recall-response.json` (synthetic). Specification: [SPEC-001, section B](control-plane.md).
 
@@ -20,7 +20,7 @@ Sources at that revision:
 - `hindsight-docs/static/openapi.json`: the routes and the schemas above, including `RecallResult.metadata` (`dict[str, str]`), `MemoryItem.metadata` / `document_id`, and the list route's `limit` / `offset` paging.
 - `hindsight-api-slim/hindsight_api/api/http.py`: the route handlers, and `get_request_context`, which reads `Authorization: Bearer <api_key>` (or a bare key).
 
-The adapter talks REST with the standard library. It doesn't use the generated Python client, so it adds no dependency. Nothing here has been run against a live server. Whether recall returns the `metadata` a retain stored is taken from the schema. A live canary has to confirm it before anything relies on memory (RA-CP-005).
+The adapter talks REST with the standard library. It doesn't use the generated Python client, so it adds no dependency. This section was written from the schema before any live run; the [live proof](#live-proof-on-a-local-server-p02-2026-11-01) later exercised it against a local server with a synthetic bank. A canary on a real project bank still has to confirm it before anything relies on memory (RA-CP-005).
 
 ## The project-to-bank map
 
