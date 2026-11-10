@@ -34,8 +34,7 @@ jobs:
           fi
 
       - name: Checkout tag
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # SPEC-002: every plugin manifest must exist and declare this tag's version.
       - name: Require the plugin manifests to match the tag
         env:
@@ -54,10 +53,9 @@ jobs:
           - "3.12"
     steps:
       - name: Checkout tag
-        uses: actions/checkout@v7
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           enable-cache: true
 
@@ -83,7 +81,7 @@ jobs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
       - name: Checkout tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -104,7 +102,7 @@ jobs:
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           enable-cache: true
 
@@ -148,7 +146,7 @@ jobs:
           cat "dist/$name.tar.gz.sha256"
 
       - name: Upload release files
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release
           path: dist/
@@ -163,7 +161,7 @@ jobs:
       contents: write
     steps:
       - name: Download release files
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release
           path: dist
