@@ -41,6 +41,9 @@ class RecordingBackend:
         self.claims.append((task_id, expected_revision, ttl_seconds))
         return Claim(self.slug, task_id, len(self.claims))
 
+    def renew(self, held: Claim, ttl_seconds: int) -> Claim:
+        return held
+
     def record(self, held: Claim, verdict: str, reason: str, handoff_path: Optional[Path]) -> bool:
         self.records.append((held, verdict, reason, handoff_path))
         return True

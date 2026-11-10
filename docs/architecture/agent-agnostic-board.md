@@ -1,6 +1,6 @@
 # SPEC-004: A Kanban board that works with any parent agent
 
-Status: **proposed design; nothing here is implemented.** It amends [SPEC-001](control-plane.md) contract A once accepted.
+Status: **accepted (raelldottin/repo-automation#181).** It amends [SPEC-001](control-plane.md) contract A. RA-BD-001 (the interface) and RA-BD-002 (the local board, `automation/supervisor/local_board.py`) are implemented. `run_next` can't select the local board until RA-BD-003.
 Owner decision recorded here (2026-11-10): the Kanban board must work with any parent agent process, such as Claude Code, Codex, Hermes or a plain shell, **with no Hermes dependency**. This spec proposes how to meet that requirement. Implementation waits for it to be accepted.  
 Second owner decision (2026-11-10): **keep Hermes as an optional backend.** The local backend is the default, Hermes Kanban stays available to consumers that choose it, and no Hermes board has to be migrated. This settles open decisions 1 and 4. Third owner decision (2026-11-10): **an auditable approval is enough for now**, which settles decision 3.
 Authority: until the cutover described below lands, the JSON queue (`automation/queue/slices.json`) stays the operational authority, and the Hermes adapters stay as they are.
@@ -35,11 +35,12 @@ class BoardBackend(Protocol):
 
     def snapshot(self) -> BoardSnapshot: ...  # tasks, links, creators, revision; read-only
     def claim(self, task_id: str, expected_revision: str, ttl_seconds: int) -> Claim: ...
-    def renew(self, claim: Claim, ttl_seconds: int) -> Claim: ...
-    def record(self, claim: Claim, verdict: Verdict, reason: str, handoff_sha256: str | None) -> bool: ...
+    def renew(self, held: Claim, ttl_seconds: int) -> Claim: ...
+    def record(self, held: Claim, verdict: str, reason: str, handoff_path: Path | None) -> bool: ...
 ```
 
-- `BoardSnapshot` and the revision keep their current meaning: the SHA-256 of what the projection reads. `kanban_projection.project` and `load_overlay` take a snapshot from any backend.
+- `BoardSnapshot` and the revision keep their current meaning: the SHA-256 of what the projection reads. Every backend builds its snapshot with `kanban_projection.build_snapshot`, so `project` and `load_overlay` take a snapshot from any backend.
+- **Hermes can't renew.** `HermesBackend.renew` always refuses, because a Hermes CLI claim is locked to a process that has already exited.
 - **Every write is conditional.** `claim` refuses a stale revision, a task that isn't `ready` or one with an assignee. `record` and `renew` refuse a run that is no longer the task's current run. A refusal raises, and nothing is retried or guessed. These are the semantics [the write-back contract](kanban-cutover.md) already defines.
 - **The supervisor never writes `done`.** A `done` verdict becomes `review`. Only a person's approval moves a task to `done`.
 - **Slice ids say which backend they came from:** `kanban.<slug>.<task>` stays for Hermes, so existing handoffs still parse, and the local backend uses `board.<slug>.<task>`. The overlay gains a `backend` field, and a mismatch is refused.
@@ -56,24 +57,25 @@ class BoardBackend(Protocol):
 | `meta` | Schema version and board slug |
 | `tasks` | `id`, `title`, `status`, `priority`, `created_at`, `assignee`, `current_run_id` |
 | `task_links` | `parent_id`, `child_id`: hard dependencies, as in Hermes |
-| `task_runs` | `id`, `task_id`, `status`, `outcome`, `claimed_by`, `claim_expires_at`, `metadata` (slice id, handoff digest) |
-| `events` | Append-only: `task_id`, `run_id`, `kind`, `actor`, `at`, `payload`, including `created` with `creator_task_id` for provenance |
+| `task_runs` | `id`, `task_id`, `status`, `outcome`, `claimed_by`, `claimed_at`, `claim_expires_at`, `ended_at`, `metadata` (slice id, handoff digest, reason, block kind) |
+| `task_events` | Append-only: `task_id`, `run_id`, `kind`, `actor`, `at`, `payload`. A task's `created` event can carry `creator_task_id` for provenance, as in Hermes. |
 
-Statuses and transitions are the subset of Hermes's that the projection already maps: `triage`, `todo`, `ready`, `running`, `review`, `blocked`, `done` and `archived`. Run outcomes are `review_requested`, `blocked`, `reclaimed` and `expired`. Any status the projection doesn't map is refused.
+Task statuses are a subset of the ones the projection already maps: `todo`, `ready`, `running`, `review`, `blocked`, `done` and `archived`. A new task is `ready`, or `todo` while a parent is open. Run outcomes are `review_requested`, `blocked` and `expired`. Table and column names match Hermes's where they mean the same thing, but the file is `board.db`, not `kanban.db`, and it is not a Hermes board.
 
-**Atomic check-and-write.** Every write opens `BEGIN IMMEDIATE`, recomputes the revision **inside the transaction**, compares it, writes and commits. That closes the gap the projection contract notes, where the snapshot check and the write aren't atomic across processes. Run in WAL mode with a busy timeout.
+**Atomic check-and-write.** Every write opens `BEGIN IMMEDIATE`. A supervisor claim, and any person's write given `--expect-revision`, recomputes the revision **inside that transaction**, compares it, writes and commits. That closes the gap the projection contract notes, where the snapshot check and the write aren't atomic across processes. Run in WAL mode with a busy timeout.
 
-**Claim renewal.** A claim belongs to its run id, not to a process, so `renew` can extend a long slice. That removes the Hermes backend's two-hour TTL limit. An expired claim is reclaimed lazily, by the next write that sees it, and the run's outcome becomes `expired`. A late `record` for that run is then refused.
+**Claim renewal.** A claim belongs to its run id, not to a process, so `renew` can extend a long slice. That removes the Hermes backend's two-hour TTL limit. Every write first releases expired claims in a transaction of its own: the run ends `expired` and the task goes back to `ready`, or `todo` while a parent is open. `expire` does only that. A late `record` or `renew` for an expired run is refused. A snapshot never writes, so an expired claim shows as running until the next write.
 
-**Command-line tool.** `python -m automation.board --board <dir> <command>`:
+**Command-line tool.** `python -m automation.supervisor.local_board --board <dir> [--actor <name>] [--expect-revision <rev>] <command>`:
 
 | Command | Who uses it | Effect |
 | --- | --- | --- |
-| `init --slug` | Person | Creates the board |
-| `add`, `link`, `priority`, `archive` | Person | Edits tasks. Each write is checked against the revision. |
-| `list`, `show`, `snapshot --json` | Anyone | Read-only. `snapshot --json` is the input for the wiki and for the shadow diff. |
+| `init` | Person | Creates the board. The slug is the directory's name. |
+| `add`, `link`, `priority`, `archive` | Person | Edits tasks. `link` refuses a cycle and moves a ready child behind an open parent to `todo`. `archive` refuses a running task. |
+| `list`, `show`, `snapshot` | Anyone | Read-only. `snapshot` prints the board as JSON with its revision: the input for the wiki and for the shadow diff. |
+| `expire` | Anyone | Releases expired claims now |
 | `approve <task>` | Person | Moves `review` to `done` and promotes children whose parents are all `done` or `archived` from `todo` to `ready` |
-| `unblock <task>` | Person | Moves `blocked` to `ready` |
+| `unblock <task>` | Person | Moves `blocked` to `ready`, or `todo` while a parent is open |
 | `claim`, `record`, `renew` | **Not exposed** | Library calls only, used by the supervisor |
 
 Every event records an `actor`, taken from `--actor` or the OS user.
@@ -88,7 +90,7 @@ Every event records an `actor`, taken from `--actor` or the OS user.
 | --- | --- |
 | Claude Code, Codex, Hermes | The same four plugin skills in every harness. `repo-automation-status` reads the board and names the next eligible slice. The `repo-automation-run-next` skill passes `--board-backend local --board <dir> --kanban-overlay <file>` to `run_next.py --single-slice`. `run_agent.sh` picks the runner from the originating harness, as today. The skills change only in prose, with no code (SPEC-002). |
 | Plain shell or CI | The same `run_next.py` flags. Headless runs name a runner explicitly (SPEC-001 D). |
-| A person | `python -m automation.board` for edits and approvals |
+| A person | `python -m automation.supervisor.local_board` for edits and approvals |
 
 No backend imports, calls or assumes a particular agent harness. A test runs the whole Kanban flow with `hermes` absent from `PATH` and with no Hermes environment variables set.
 
