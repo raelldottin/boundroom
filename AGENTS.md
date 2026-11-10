@@ -18,6 +18,12 @@ Before architecture or new feature work, read [SPEC-001](docs/architecture/contr
 - **Open-source production profile (owner gate).** A fully open-source production profile is a target the owner decides, not an instruction for agents to act on. Agents MUST NOT choose, add or change a license. Record license gaps and dependency or model license risks for the owner instead. Proprietary development assistants and the existing hosted benchmark sit outside that production profile.
 - Keep benchmarks and pinned experiment settings isolated from live control-plane integrations.
 
+## Discord Knowledge Loop (SPEC-003: planned)
+
+[The Discord Knowledge Loop](docs/architecture/discord-knowledge-loop.md) is an **opt-in, separately deployed knowledge service**, not a runner, queue, controller, worker, or additional supervisor. It is not currently implemented. It may capture only explicitly approved sources, organize evidence with Hindsight and Swarm Wiki, retrieve authorized knowledge and publish only to permitted Discord audiences. Scheduled knowledge processing requires explicit deployment authorization.
+
+Agents MUST NOT give the knowledge service execution credentials or code paths to `run_next`, shell/agent execution, supervisor policy/queue/schema updates, Kanban task writes, GitHub repository write/merge APIs, or consumer synchronization. No Discord request, knowledge summary, scheduled ingestion or wiki page may dispatch/approve a slice or bypass the supervisor's gates. This is a required **process, permission, API and negative-test boundary**, not just a prompt rule. Do not treat capture or publishing consent as implied by channel visibility.
+
 ## GitOps: Changes, Deployment, and Releases
 
 `main` is the only source of deployed or released state. Git history on `main` is the record of what was shipped and why.
