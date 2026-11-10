@@ -9,6 +9,7 @@ writer reads. ``hermes`` is a stand-in that applies Hermes's own guards (``claim
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import json
 import os
 import re
@@ -74,7 +75,7 @@ conn.commit()
 def board(tmp_path, monkeypatch):
     board_dir = tmp_path / "boards" / BOARD
     board_dir.mkdir(parents=True)
-    with sqlite3.connect(board_dir / "kanban.db") as conn:
+    with contextlib.closing(sqlite3.connect(board_dir / "kanban.db")) as conn, conn:
         conn.executescript(BOARD_SQL.read_text(encoding="utf-8") + RUN_COLUMNS)
     monkeypatch.setenv("FAKE_KANBAN_ROOT", str(board_dir.parent))
     monkeypatch.setenv("FAKE_HERMES_LOG", str(tmp_path / "hermes.log"))
@@ -102,12 +103,12 @@ def calls(tmp_path: Path) -> list[dict]:
 
 
 def row(board_dir: Path, sql: str, *params: object) -> tuple:
-    with sqlite3.connect(board_dir / "kanban.db") as conn:
+    with contextlib.closing(sqlite3.connect(board_dir / "kanban.db")) as conn, conn:
         return conn.execute(sql, params).fetchone()
 
 
 def execute(board_dir: Path, sql: str) -> None:
-    with sqlite3.connect(board_dir / "kanban.db") as conn:
+    with contextlib.closing(sqlite3.connect(board_dir / "kanban.db")) as conn, conn:
         conn.executescript(sql)
 
 

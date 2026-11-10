@@ -7,6 +7,7 @@ tests never touch ``~/.hermes`` or a real board.
 from __future__ import annotations
 
 import copy
+import contextlib
 import json
 import os
 import sqlite3
@@ -31,13 +32,13 @@ def sid(task_id: str) -> str:
 def make_board(root: Path, extra_sql: str = "", board: str = BOARD) -> Path:
     board_dir = root / board
     board_dir.mkdir(parents=True)
-    with sqlite3.connect(board_dir / "kanban.db") as conn:
+    with contextlib.closing(sqlite3.connect(board_dir / "kanban.db")) as conn, conn:
         conn.executescript(BOARD_SQL.read_text(encoding="utf-8") + extra_sql)
     return board_dir
 
 
 def execute(board_dir: Path, sql: str) -> None:
-    with sqlite3.connect(board_dir / "kanban.db") as conn:
+    with contextlib.closing(sqlite3.connect(board_dir / "kanban.db")) as conn, conn:
         conn.executescript(sql)
 
 
