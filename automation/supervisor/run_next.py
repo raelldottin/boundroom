@@ -221,6 +221,9 @@ def main() -> int:
             print(json.dumps(report, indent=2))
             return 0
 
+        # The commit the slice starts from, read before anything is claimed: its own commits are
+        # measured from here, for the scope check and the git diff --check replay.
+        base_commit_sha = policy.git_head(repo_root)
         store.set_status(next_slice, "in_progress")
         queue_data = policy.set_slice_status(queue_data, next_slice["slice_id"], "in_progress")
 
@@ -261,6 +264,10 @@ def main() -> int:
             return fail("Handoff slice_id does not match the in-progress slice.")
 
         dirty_paths_after_run = policy.git_dirty_paths(repo_root)
+        try:
+            committed_paths = policy.git_committed_paths(repo_root, base_commit_sha)
+        except policy.ConfigError as error:
+            return fail(str(error))
 
         post_run_commit_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True, cwd=repo_root
@@ -272,6 +279,7 @@ def main() -> int:
                 repo_root=repo_root,
                 required_validations=next_slice["required_validations"],
                 validations_passed=handoff["validations_passed"],
+                base_sha=base_commit_sha,
             )
         completed_runs += 1
         decision = policy.evaluate_completion(
@@ -284,6 +292,7 @@ def main() -> int:
             run_limit=autonomous_limit,
             validation_replays=validation_replays,
             post_run_commit_sha=post_run_commit_sha,
+            committed_paths=committed_paths,
         )
 
         store.set_status(next_slice, decision.queue_status, decision.stop_reason or decision.decision, handoff_path)

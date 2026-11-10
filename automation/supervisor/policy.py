@@ -384,6 +384,46 @@ def git_dirty_paths(repo_root: Path) -> list[str]:
     return sorted(set(dirty_paths))
 
 
+def git_head(repo_root: Path) -> str:
+    """The commit HEAD is at: the base a slice's own commits are measured from."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"], cwd=repo_root, check=True, capture_output=True, text=True
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        stderr_text = (getattr(error, "stderr", "") or "").strip() or str(error)
+        raise ConfigError(
+            f"cannot read HEAD in {repo_root}: {stderr_text}\nhint: a slice needs a repository with at least one commit."
+        ) from error
+    return result.stdout.strip()
+
+
+def git_committed_paths(repo_root: Path, base_sha: str) -> list[str]:
+    """Paths the commits made since *base_sha* changed: what a slice committed, not only what it left dirty.
+
+    The runner prompt asks the runner to commit, so the working tree alone hides a slice's changes. Both
+    sides of a rename are listed. Refuses when HEAD no longer descends from *base_sha* (a reset or a
+    rewrite), because the supervisor can then no longer tell which changes are the slice's.
+    """
+    ancestry = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base_sha, "HEAD"], cwd=repo_root, capture_output=True, text=True
+    )
+    if ancestry.returncode != 0:
+        detail = ancestry.stderr.strip() or "it is not an ancestor"
+        raise ConfigError(f"HEAD no longer descends from the commit the slice started at ({base_sha}): {detail}")
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--relative", "--no-renames", base_sha, "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as error:
+        raise ConfigError(f"cannot list the slice's commits since {base_sha}: {(error.stderr or '').strip()}") from error
+    return sorted({normalize_repo_path(line) for line in result.stdout.splitlines() if line.strip()})
+
+
 def normalize_repo_path(path: str) -> str:
     return PurePosixPath(path.strip()).as_posix()
 
@@ -486,6 +526,19 @@ def supervisor_replayable_validations(required_validations: list[str]) -> list[s
     return replayable
 
 
+def replay_argv(command: str, base_sha: str = "") -> list[str]:
+    """The argv the supervisor runs for an allowlisted validation.
+
+    With *base_sha*, ``git diff --check`` compares that commit with the working tree, so it checks
+    what the slice committed as well as what it left uncommitted. Without it, it checks only the
+    unstaged diff, which is empty once the runner has committed.
+    """
+    argv = list(SUPERVISOR_VALIDATION_REPLAY_COMMANDS[command])
+    if command == "git diff --check" and base_sha:
+        argv.append(base_sha)
+    return argv
+
+
 def default_validation_replay_runner(repo_root: Path, argv: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(argv, cwd=repo_root, check=False, capture_output=True, text=True)
 
@@ -495,6 +548,7 @@ def replay_validation_commands(
     required_validations: list[str],
     validations_passed: list[str],
     runner: Optional[Callable[[Path, list[str]], subprocess.CompletedProcess[str]]] = None,
+    base_sha: str = "",
 ) -> list[ValidationReplayResult]:
     execute = runner or default_validation_replay_runner
     passed = set(validations_passed)
@@ -503,7 +557,7 @@ def replay_validation_commands(
     for command in supervisor_replayable_validations(required_validations):
         if command not in passed:
             continue
-        argv = SUPERVISOR_VALIDATION_REPLAY_COMMANDS[command]
+        argv = replay_argv(command, base_sha)
         try:
             result = execute(repo_root, argv)
         except OSError as error:
@@ -769,10 +823,15 @@ def evaluate_completion(
     run_limit: int,
     validation_replays: list[ValidationReplayResult] = [],
     post_run_commit_sha: str = "",
+    committed_paths: Optional[list[str]] = None,
 ) -> CompletionDecision:
     validation_replays = validation_replays or []
     supervisor_owned_paths = queue_data["policy"]["supervisor_owned_paths"]
-    introduced_dirty_paths = introduced_paths(dirty_paths_before_run, dirty_paths_after_run)
+    # What the run changed, as the supervisor sees it: paths it left dirty, plus paths its commits
+    # changed (``git_committed_paths``), which the working tree no longer shows.
+    introduced_dirty_paths = sorted(
+        set(introduced_paths(dirty_paths_before_run, dirty_paths_after_run)) | set(normalize_paths(committed_paths or []))
+    )
     validation_failures = sorted(
         set(
             required_validation_failures(
