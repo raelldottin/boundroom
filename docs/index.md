@@ -1,9 +1,9 @@
-# repo-automation
+# Boundroom
 
 Reusable supervised-slice automation distribution. This repository is the
 publication target for the manifest-owned slice harness in
 [owlory/owlory](https://github.com/owlory/owlory); changes flow one
-way from Owlory into this repo via `Tools/repo-automation-sync.sh`.
+way from Owlory into this repo via `Tools/boundroom-sync.sh`.
 
 ## Architecture and roadmap
 
@@ -26,14 +26,14 @@ The current JSON queue and supervisor behavior remain operational until an expli
   repositories.
 - `automation/tests/test_harness.py` — core supervisor and context-builder
   regression coverage.
-- `Tools/repo-automation-sync.sh` — manifest-owned sync between Owlory and
+- `Tools/boundroom-sync.sh` — manifest-owned sync between Owlory and
   this distribution target.
-- `docs/workflows/repo-automation.md` — full workflow contract including
+- `docs/workflows/boundroom.md` — full workflow contract including
   consumer adoption bootstrap.
 
 ## Consumer adoption
 
-See [Workflow — Repo Automation](workflows/repo-automation.md) for the full
+See [Workflow — Boundroom](workflows/boundroom.md) for the full
 adoption sequence, known failure modes, and manual steps that remain for a
 real consumer.
 

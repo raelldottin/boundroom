@@ -1,10 +1,10 @@
-# repo-automation
+# Boundroom
 
 Reusable supervised automation for bounded agent work.
 
 **Architecture direction (proposed):** The proposed top layer is a canonical **Hermes Kanban board**, **self-hosted Hindsight external project memory**, and a generated **Swarm Wiki** powered by [hermes-swarm-protocol](https://github.com/raelldottin/hermes-swarm-protocol). The existing supervisor stays beneath this layer and retains sole authority over slice execution and continuation. See [SPEC-001](docs/architecture/control-plane.md) and the [sequenced roadmap](docs/roadmap.md). These are target contracts, not yet implemented integrations. The existing Swarm Wiki requires an upstream source-adapter migration before it can read Hindsight data. Both project repositories are now `GPL-2.0-only` (this repository's license is below). The fully open-source, local-inference profile still requires audited model/dependency licenses.
 
-`repo-automation` packages a slice-based supervisor harness: queue records, context building, prompt fragments, validation ownership, handoff schemas, and stop rules for keeping AI-assisted repository work scoped and reviewable.
+`boundroom` packages a slice-based supervisor harness: queue records, context building, prompt fragments, validation ownership, handoff schemas, and stop rules for keeping AI-assisted repository work scoped and reviewable.
 
 **Current product roadmap:** [Product Roadmap](docs/product-roadmap.md) covers shipped capabilities, next release horizons, Kanban/Hindsight/Swarm Wiki acceptance gates, product metrics, release dependencies and scoped delivery slices. A new [Discord Knowledge Loop (SPEC-003)](docs/architecture/discord-knowledge-loop.md) is **planned, not implemented**: opt-in capture, knowledge organization, permission-aware Discord answers, reviewed sharing, and retrieval evaluations, with no supervisor execution authority. The older [technical roadmap](docs/roadmap.md) remains as an implementation-history reference.
 
@@ -35,8 +35,8 @@ Each consuming repository owns its queue, validation commands, domain docs, hand
 - `automation/schemas/` - Pydantic contract models for queues and handoffs, plus the JSON Schemas generated from them.
 - `automation/supervisor/` - queue selection, stop policy, validation replay, and agent launch orchestration.
 - `automation/tests/` - harness regression tests.
-- `docs/workflows/repo-automation.md` - extraction, sync, and consumer-adoption contract.
-- `Tools/repo-automation-sync.sh` - manifest-owned sync/check/update tool.
+- `docs/workflows/boundroom.md` - extraction, sync, and consumer-adoption contract.
+- `Tools/boundroom-sync.sh` - manifest-owned sync/check/update tool.
 
 ## Quick Start
 
@@ -112,18 +112,18 @@ live end-to-end:
 
 ## Agent Plugin
 
-`plugins/repo-automation/` is one plugin for Claude Code, Codex and Hermes, specified in [SPEC-002](docs/architecture/agent-plugin.md). It was first released in `v0.2.0`. It holds four skills and no supervisor code: status, run-next, evaluate-handoff and sync. Each skill drives the repo-automation copy already synced into the repository you work in, and stops if there isn't one. The run-next skill runs `run_next.py --single-slice`, which runs at most one slice.
+`plugins/boundroom/` is one plugin for Claude Code, Codex and Hermes, specified in [SPEC-002](docs/architecture/agent-plugin.md). It was first released in `v0.2.0`, as `repo-automation@repo-automation`; from `v0.3.0` it is `boundroom@boundroom`, and [SPEC-005](docs/architecture/boundroom-rename.md#moving-an-installed-plugin) says how to move an install. It holds four skills and no supervisor code: status, run-next, evaluate-handoff and sync. Each skill drives the Boundroom copy already synced into the repository you work in, and stops if there isn't one. The run-next skill runs `run_next.py --single-slice`, which runs at most one slice.
 
-Install from a release tag, such as `v0.2.5`, not from `main`:
+Install from a release tag, such as `v0.3.0`, not from `main`:
 
 ```bash
 claude plugin marketplace add raelldottin/boundroom@<tag>
-claude plugin install repo-automation@repo-automation
+claude plugin install boundroom@boundroom
 ```
 
 ```bash
 codex plugin marketplace add raelldottin/boundroom@<tag>
-codex plugin add repo-automation@repo-automation
+codex plugin add boundroom@boundroom
 ```
 
 Hermes takes only a full commit SHA, so look up the commit the tag points to first:
@@ -133,8 +133,8 @@ git ls-remote https://github.com/raelldottin/boundroom.git 'refs/tags/<tag>^{}'
 ```
 
 ```bash
-hermes plugins install raelldottin/boundroom#plugins/repo-automation --ref <commit-sha>
-hermes plugins enable repo-automation
+hermes plugins install raelldottin/boundroom#plugins/boundroom --ref <commit-sha>
+hermes plugins enable boundroom
 ```
 
 ## Status
@@ -143,10 +143,10 @@ This repository is the canonical reusable automation distribution extracted from
 
 ## License
 
-repo-automation is free software under the GNU General Public License, version 2 only (`GPL-2.0-only`). The full text is in [`COPYING`](COPYING). It comes with ABSOLUTELY NO WARRANTY, as `COPYING` explains.
+Boundroom is free software under the GNU General Public License, version 2 only (`GPL-2.0-only`). The full text is in [`COPYING`](COPYING). It comes with ABSOLUTELY NO WARRANTY, as `COPYING` explains.
 
 Copyright (C) 2026 Raell Dottin.
 
-The license covers the original code and documentation in this repository. That includes every file `automation/reusable-manifest.json` distributes to consumer repositories, among them `Tools/repo-automation-sync.sh` and `docs/workflows/`. A sync places the license text beside them as `automation/COPYING`, and the release archive carries it too. Synced files keep this license inside a consumer repository. The license of the consumer's own code is the consumer's decision.
+The license covers the original code and documentation in this repository. That includes every file `automation/reusable-manifest.json` distributes to consumer repositories, among them `Tools/boundroom-sync.sh` and `docs/workflows/`. A sync places the license text beside them as `automation/COPYING`, and the release archive carries it too. Synced files keep this license inside a consumer repository. The license of the consumer's own code is the consumer's decision.
 
 Material adapted from third parties keeps its original license and attribution; see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

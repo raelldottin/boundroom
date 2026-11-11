@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# SPEC-005: the BOUNDROOM_* names replaced REPO_AUTOMATION_* in 0.3.0. A legacy name is still
+# honoured when its new name is unset, so an operator's existing settings keep working; when both
+# are set, the new name wins. Removing the legacy names is a later, separate decision.
+for legacy_suffix in AGENT_RUNNER CODEX_BIN CLAUDE_BIN CLAUDE_PERMISSION_MODE HERMES_BIN HERMES_USAGE_DIR \
+  HERMES_TRANSPORT HERMES_MAX_TURNS HERMES_SANDBOX_IMAGE HERMES_PYTHON SANDBOX_PROBE_COMMAND; do
+  new_name="BOUNDROOM_$legacy_suffix"
+  legacy_name="REPO_AUTOMATION_$legacy_suffix"
+  if [[ -z "${!new_name+x}" && -n "${!legacy_name+x}" ]]; then
+    export "$new_name=${!legacy_name}"
+  fi
+done
+unset legacy_suffix new_name legacy_name
+
 usage() {
   cat >&2 <<'USAGE'
 Usage: automation/supervisor/run_agent.sh \
@@ -20,20 +33,22 @@ Runner selection:
   The runner is the agent harness this invocation runs inside, one to one: from
   Codex it is Codex, from Claude Code Claude Code, from Hermes Hermes - the
   nearest enclosing one when they nest.
-  REPO_AUTOMATION_AGENT_RUNNER=auto|codex|claude|hermes (default: auto)
+  BOUNDROOM_AGENT_RUNNER=auto|codex|claude|hermes (default: auto)
     auto      the enclosing harness; with none (CI, cron, a shell) this is an
               error, because there is no original agent to preserve.
     explicit  honoured when no harness encloses the invocation, or when it
               names the one that does; refused if it names a different one.
-  REPO_AUTOMATION_CODEX_BIN overrides the Codex executable.
-  REPO_AUTOMATION_CLAUDE_BIN overrides the Claude Code executable.
-  REPO_AUTOMATION_CLAUDE_PERMISSION_MODE overrides the Claude permission mode.
-  REPO_AUTOMATION_HERMES_BIN overrides the Hermes executable.
-  REPO_AUTOMATION_HERMES_USAGE_DIR collects a per-session usage and controls report.
+  BOUNDROOM_CODEX_BIN overrides the Codex executable.
+  BOUNDROOM_CLAUDE_BIN overrides the Claude Code executable.
+  BOUNDROOM_CLAUDE_PERMISSION_MODE overrides the Claude permission mode.
+  BOUNDROOM_HERMES_BIN overrides the Hermes executable.
+  BOUNDROOM_HERMES_USAGE_DIR collects a per-session usage and controls report.
   HERMES_REVISION is recorded in that report; set it to the pinned Hermes commit.
   HERMES_INFERENCE_PROVIDER and HERMES_INFERENCE_MODEL choose what Hermes talks to.
 
 Legacy OWLORY_CODEX_BIN remains supported for Codex executable overrides.
+Each REPO_AUTOMATION_* name from before 0.3.0 is honoured when its BOUNDROOM_*
+name is unset, and the supervisor still exports REPO_AUTOMATION_SUPERVISOR_*.
 USAGE
 }
 
@@ -112,7 +127,7 @@ select_agent_runner() {
   case "$requested_runner" in
     auto | codex | claude | hermes) ;;
     *)
-      echo "Unsupported REPO_AUTOMATION_AGENT_RUNNER: $requested_runner" >&2
+      echo "Unsupported BOUNDROOM_AGENT_RUNNER: $requested_runner" >&2
       echo "Expected one of: auto, codex, claude, hermes." >&2
       return 64
       ;;
@@ -120,8 +135,8 @@ select_agent_runner() {
 
   if [[ -n "$harness" ]]; then
     if [[ "$requested_runner" != "auto" && "$requested_runner" != "$harness" ]]; then
-      echo "Refusing REPO_AUTOMATION_AGENT_RUNNER=$requested_runner inside $harness: a run started from $harness is run by $harness." >&2
-      echo "Unset REPO_AUTOMATION_AGENT_RUNNER, or invoke this outside any agent harness." >&2
+      echo "Refusing BOUNDROOM_AGENT_RUNNER=$requested_runner inside $harness: a run started from $harness is run by $harness." >&2
+      echo "Unset BOUNDROOM_AGENT_RUNNER, or invoke this outside any agent harness." >&2
       return 78
     fi
     printf '%s\n' "$harness"
@@ -133,7 +148,7 @@ select_agent_runner() {
   # launch Codex.
   if [[ "$requested_runner" == "auto" ]]; then
     echo "No enclosing agent harness (Codex, Claude Code or Hermes) to inherit the runner from." >&2
-    echo "Set REPO_AUTOMATION_AGENT_RUNNER=codex|claude|hermes to choose one explicitly." >&2
+    echo "Set BOUNDROOM_AGENT_RUNNER=codex|claude|hermes to choose one explicitly." >&2
     return 78
   fi
   printf '%s\n' "$requested_runner"
@@ -220,11 +235,14 @@ if [[ "$sandbox_probe" == "0" ]] && [[ -e "$handoff_file" ]]; then
   exit 73
 fi
 
-codex_bin="${REPO_AUTOMATION_CODEX_BIN:-${OWLORY_CODEX_BIN:-codex}}"
-claude_bin="${REPO_AUTOMATION_CLAUDE_BIN:-claude}"
-hermes_bin="${REPO_AUTOMATION_HERMES_BIN:-hermes}"
-agent_runner="${agent_runner_override:-$(select_agent_runner "${REPO_AUTOMATION_AGENT_RUNNER:-auto}" "$(originating_harness)")}"
+codex_bin="${BOUNDROOM_CODEX_BIN:-${OWLORY_CODEX_BIN:-codex}}"
+claude_bin="${BOUNDROOM_CLAUDE_BIN:-claude}"
+hermes_bin="${BOUNDROOM_HERMES_BIN:-hermes}"
+agent_runner="${agent_runner_override:-$(select_agent_runner "${BOUNDROOM_AGENT_RUNNER:-auto}" "$(originating_harness)")}"
 
+export BOUNDROOM_SUPERVISOR_CONTEXT_FILE="$context_file"
+export BOUNDROOM_SUPERVISOR_HANDOFF_FILE="$handoff_file"
+export BOUNDROOM_SUPERVISOR_SLICE_ID="$slice_id"
 export REPO_AUTOMATION_SUPERVISOR_CONTEXT_FILE="$context_file"
 export REPO_AUTOMATION_SUPERVISOR_HANDOFF_FILE="$handoff_file"
 export REPO_AUTOMATION_SUPERVISOR_SLICE_ID="$slice_id"
@@ -237,7 +255,7 @@ cd "$repo_root"
 case "$agent_runner" in
   codex)
     if ! command_exists "$codex_bin"; then
-      echo "Codex CLI not found. Set REPO_AUTOMATION_CODEX_BIN, OWLORY_CODEX_BIN, or install codex." >&2
+      echo "Codex CLI not found. Set BOUNDROOM_CODEX_BIN, OWLORY_CODEX_BIN, or install codex." >&2
       exit 69
     fi
     exec "$codex_bin" --ask-for-approval never exec \
@@ -247,19 +265,19 @@ case "$agent_runner" in
     ;;
   claude)
     if ! command_exists "$claude_bin"; then
-      echo "Claude Code CLI not found. Set REPO_AUTOMATION_CLAUDE_BIN or install claude." >&2
+      echo "Claude Code CLI not found. Set BOUNDROOM_CLAUDE_BIN or install claude." >&2
       exit 69
     fi
     exec "$claude_bin" --print \
       --input-format text \
       --no-session-persistence \
-      --permission-mode "${REPO_AUTOMATION_CLAUDE_PERMISSION_MODE:-bypassPermissions}" \
+      --permission-mode "${BOUNDROOM_CLAUDE_PERMISSION_MODE:-bypassPermissions}" \
       --add-dir "$repo_root" \
       < "$prompt_file"
     ;;
   hermes)
     if ! command_exists "$hermes_bin"; then
-      echo "Hermes CLI not found. Set REPO_AUTOMATION_HERMES_BIN or install hermes." >&2
+      echo "Hermes CLI not found. Set BOUNDROOM_HERMES_BIN or install hermes." >&2
       exit 69
     fi
     # Reproduce the deployed Hermes posture, then subtract what would contaminate a lane.
@@ -296,17 +314,17 @@ case "$agent_runner" in
     # shared one would let a later session read what an earlier one saw - and a measurement
     # of what compaction drops is worthless if the dropped context can be recalled.
     # ponytail: left for the OS to reap, like the workspace dirs the adapter makes.
-    HERMES_HOME="$(mktemp -d "${TMPDIR:-/tmp}/repo-automation-hermes-XXXXXX")"
+    HERMES_HOME="$(mktemp -d "${TMPDIR:-/tmp}/boundroom-hermes-XXXXXX")"
     export HERMES_HOME
     # Diagnostic transport, not a benchmark setting. --oneshot is what every A-E run has
     # been measured on and stays the default; stream-json routes through `hermes chat`
     # instead, which is a different execution path in the agent, so a session produced this
     # way answers "what did the turn do before it died" and is never a lane result.
-    hermes_transport="${REPO_AUTOMATION_HERMES_TRANSPORT:-oneshot}"
+    hermes_transport="${BOUNDROOM_HERMES_TRANSPORT:-oneshot}"
     case "$hermes_transport" in
       oneshot | stream-json) ;;
       *)
-        echo "Unsupported REPO_AUTOMATION_HERMES_TRANSPORT: $hermes_transport" >&2
+        echo "Unsupported BOUNDROOM_HERMES_TRANSPORT: $hermes_transport" >&2
         echo "Expected one of: oneshot, stream-json." >&2
         exit 64
         ;;
@@ -330,16 +348,16 @@ case "$agent_runner" in
     # cli_init_mixin._init_turn_limits, on the chat path, which --oneshot bypasses
     # ("Bypasses cli.py entirely"). A receipt saying max_turns=1 over a session that ran to
     # the wall clock is worse than no cap at all, so this exits instead.
-    max_turns="${REPO_AUTOMATION_HERMES_MAX_TURNS:-}"
+    max_turns="${BOUNDROOM_HERMES_MAX_TURNS:-}"
     if [[ -n "$max_turns" ]]; then
       case "$max_turns" in
         '' | *[!0-9]* | 0)
-          echo "REPO_AUTOMATION_HERMES_MAX_TURNS must be a positive integer: $max_turns" >&2
+          echo "BOUNDROOM_HERMES_MAX_TURNS must be a positive integer: $max_turns" >&2
           exit 64
           ;;
       esac
       if [[ "$hermes_transport" != "stream-json" ]]; then
-        echo "REPO_AUTOMATION_HERMES_MAX_TURNS is only honoured on the stream-json transport;" >&2
+        echo "BOUNDROOM_HERMES_MAX_TURNS is only honoured on the stream-json transport;" >&2
         echo "the pinned --oneshot path ignores every turn cap. Got: $hermes_transport." >&2
         exit 64
       fi
@@ -348,7 +366,7 @@ case "$agent_runner" in
     # ProgramBench cleanroom into the workspace and names the image here; TERMINAL_CWD
     # above is that workspace, which Hermes bind-mounts at /workspace inside the image.
     # Unset, the session runs on the local filesystem exactly as it always has.
-    sandbox_image="${REPO_AUTOMATION_HERMES_SANDBOX_IMAGE:-}"
+    sandbox_image="${BOUNDROOM_HERMES_SANDBOX_IMAGE:-}"
     sandbox_image_id=""
     sandbox_backend="local"
     if [[ -n "$sandbox_image" ]]; then
@@ -392,20 +410,20 @@ case "$agent_runner" in
       # through the mount logic, so both are probed. Run 36485906813 is why: the default
       # backend had the cleanroom at /workspace and the session-scoped one had a tmpfs.
       if [[ -z "$sandbox_image" ]]; then
-        echo "--sandbox-probe needs REPO_AUTOMATION_HERMES_SANDBOX_IMAGE; there is no sandbox to probe." >&2
+        echo "--sandbox-probe needs BOUNDROOM_HERMES_SANDBOX_IMAGE; there is no sandbox to probe." >&2
         exit 78
       fi
       # Hermes' own interpreter, not this shell's: the tools are importable only from the
       # venv it was installed into, and importing them is what routes through config.yaml.
-      probe_python="${REPO_AUTOMATION_HERMES_PYTHON:-$(dirname "$(command -v "$hermes_bin")")/python}"
+      probe_python="${BOUNDROOM_HERMES_PYTHON:-$(dirname "$(command -v "$hermes_bin")")/python}"
       if [[ ! -x "$probe_python" ]]; then
-        echo "Hermes interpreter not found: $probe_python. Set REPO_AUTOMATION_HERMES_PYTHON." >&2
+        echo "Hermes interpreter not found: $probe_python. Set BOUNDROOM_HERMES_PYTHON." >&2
         exit 69
       fi
       probe_log="/dev/null"
-      if [[ -n "${REPO_AUTOMATION_HERMES_USAGE_DIR:-}" ]]; then
-        mkdir -p "$REPO_AUTOMATION_HERMES_USAGE_DIR"
-        probe_log="$REPO_AUTOMATION_HERMES_USAGE_DIR/sandbox-probe.log"
+      if [[ -n "${BOUNDROOM_HERMES_USAGE_DIR:-}" ]]; then
+        mkdir -p "$BOUNDROOM_HERMES_USAGE_DIR"
+        probe_log="$BOUNDROOM_HERMES_USAGE_DIR/sandbox-probe.log"
       fi
       # Proves Hermes was handed the workspace the cleanroom already verified: where am I,
       # is the reference binary here, is this the image's own Git worktree. Three facts,
@@ -417,7 +435,7 @@ case "$agent_runner" in
       # exact filenames in the receipt. `test -f README.md` here was a second, weaker copy
       # of that contract, and it refused cmatsuoka__figlet.202a0a8 - which ships FAQ,
       # README and figlet.6 - aborting all of run 36724292484 over a filename.
-      export REPO_AUTOMATION_SANDBOX_PROBE_COMMAND="${REPO_AUTOMATION_SANDBOX_PROBE_COMMAND:-pwd && test -x ./executable && test -d .git}"
+      export BOUNDROOM_SANDBOX_PROBE_COMMAND="${BOUNDROOM_SANDBOX_PROBE_COMMAND:-pwd && test -x ./executable && test -d .git}"
       set +e
       "$probe_python" - <<'PROBE' 2>&1 | tee "$probe_log"
 import json
@@ -434,7 +452,7 @@ apply_terminal_config_to_env()
 
 from tools.terminal_tool import terminal_tool
 
-command = os.environ["REPO_AUTOMATION_SANDBOX_PROBE_COMMAND"]
+command = os.environ["BOUNDROOM_SANDBOX_PROBE_COMMAND"]
 # The rendezvous with SandboxWitness, composed per call rather than folded into the
 # command above: that command is the cleanroom contract and stays readable as one, while
 # this only decides when the container may be torn down. `container_persistent: false`
@@ -443,8 +461,8 @@ command = os.environ["REPO_AUTOMATION_SANDBOX_PROBE_COMMAND"]
 # backend that had just reported /workspace sound, and the cell was refused for it.
 # Waiting by call number, not by task id: the witness writes the marker the moment it has
 # recorded a container, and only this side knows which of the two calls it is in.
-barrier = os.environ.get("REPO_AUTOMATION_SANDBOX_PROBE_BARRIER", "")
-barrier_seconds = int(os.environ.get("REPO_AUTOMATION_SANDBOX_PROBE_BARRIER_SECONDS", "15"))
+barrier = os.environ.get("BOUNDROOM_SANDBOX_PROBE_BARRIER", "")
+barrier_seconds = int(os.environ.get("BOUNDROOM_SANDBOX_PROBE_BARRIER_SECONDS", "15"))
 
 
 def held_open(release):
@@ -517,9 +535,9 @@ PROBE
       hermes_prompt_flag="--oneshot"
     fi
     session_stem=""
-    if [[ -n "${REPO_AUTOMATION_HERMES_USAGE_DIR:-}" ]]; then
-      mkdir -p "$REPO_AUTOMATION_HERMES_USAGE_DIR"
-      session_stem="$REPO_AUTOMATION_HERMES_USAGE_DIR/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    if [[ -n "${BOUNDROOM_HERMES_USAGE_DIR:-}" ]]; then
+      mkdir -p "$BOUNDROOM_HERMES_USAGE_DIR"
+      session_stem="$BOUNDROOM_HERMES_USAGE_DIR/$(date -u +%Y%m%dT%H%M%SZ)-$$"
       # --usage-file is documented as having no effect outside -z/--oneshot, so the
       # stream-json transport gets no usage report rather than an empty one that would read
       # like a session which spent nothing. The controls below record which path ran, so a

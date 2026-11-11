@@ -7,7 +7,7 @@ the database. It writes nothing anywhere: the JSON queue stays the operational a
 the projection is only a candidate document validated against the same contract.
 
 Kanban owns identity, title, status, priority and dependencies. It has no source for the
-engineering-policy fields, so those come from a repo-automation-owned overlay keyed by task id.
+engineering-policy fields, so those come from a Boundroom-owned overlay keyed by task id.
 A task absent from the overlay is not approved and is never projected, so no worker can start
 from a card nobody admitted.
 """
@@ -83,7 +83,7 @@ class StaleRevisionError(ProjectionError):
 
 
 class KanbanSlicePolicy(Contract):
-    """The policy fields Kanban has no source for, owned by repo-automation per task."""
+    """The policy fields Kanban has no source for, owned by Boundroom per task."""
 
     domain: NonEmptyStr
     allowed_paths: NonEmptyStrList
@@ -389,7 +389,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--board-dir", type=Path, required=True, help="The board directory: ~/.hermes/kanban/boards/<slug>, or a local board's"
     )
-    parser.add_argument("--overlay", type=Path, required=True, help="repo-automation approval overlay JSON")
+    parser.add_argument("--overlay", type=Path, required=True, help="Boundroom approval overlay JSON")
     parser.add_argument("--shadow-queue", type=Path, help="JSON queue to compare the projection with (read only)")
     args = parser.parse_args(argv)
     try:

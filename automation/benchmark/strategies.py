@@ -775,7 +775,7 @@ def run_phase(
         context_path=context_path,
         handoff_path=handoff_path,
         # The public id here too. run_agent.sh exports this as
-        # REPO_AUTOMATION_SUPERVISOR_SLICE_ID and OWLORY_SUPERVISOR_SLICE_ID and writes it
+        # BOUNDROOM_SUPERVISOR_SLICE_ID and OWLORY_SUPERVISOR_SLICE_ID and writes it
         # to the controls receipt; the pinned Hermes path does not render either variable
         # into a prompt, but there is no reason to hand the worker process the real name
         # after removing it from everywhere the model can read.

@@ -90,7 +90,7 @@ jobs:
       # Hermes drives every lane. The runner is held fixed on purpose: A-E differ only in
       # context and workflow, so a lane that changed execution engine would measure the
       # engine, not the treatment.
-      REPO_AUTOMATION_AGENT_RUNNER: hermes
+      BOUNDROOM_AGENT_RUNNER: hermes
       HERMES_INFERENCE_PROVIDER: nvidia
       # `inputs` is populated for workflow_dispatch only, and an empty `model` input is
       # falsy, so this guard supplies the baseline id for both - and for any trigger added
@@ -221,7 +221,7 @@ jobs:
           printf 'Create a file named agent-was-here.txt containing the single word ok in your current working directory, then reply with the single word: ok\n' > "$RUNNER_TEMP/preflight-prompt.md"
           echo '{}' > "$RUNNER_TEMP/preflight-context.json"
           status=0
-          REPO_AUTOMATION_HERMES_USAGE_DIR="$RUNNER_TEMP/preflight-session" \
+          BOUNDROOM_HERMES_USAGE_DIR="$RUNNER_TEMP/preflight-session" \
             timeout --kill-after=30 "$PREFLIGHT_SESSION_SECONDS" \
             automation/supervisor/run_agent.sh \
               --repo-root "$RUNNER_TEMP/agent-preflight" \
@@ -440,9 +440,9 @@ jobs:
           git -C "$proof/repo" init --quiet
           printf 'Do these in order, one tool call at a time: (1) write a file first.txt containing the word alpha, (2) read first.txt back, (3) write a file second.txt containing what you read. Then reply with the single word: done\n' > "$proof/prompt.md"
           echo '{}' > "$proof/context.json"
-          REPO_AUTOMATION_HERMES_USAGE_DIR="$proof/session" \
-          REPO_AUTOMATION_HERMES_TRANSPORT=stream-json \
-          REPO_AUTOMATION_HERMES_MAX_TURNS=1 \
+          BOUNDROOM_HERMES_USAGE_DIR="$proof/session" \
+          BOUNDROOM_HERMES_TRANSPORT=stream-json \
+          BOUNDROOM_HERMES_MAX_TURNS=1 \
             automation/supervisor/run_agent.sh \
               --repo-root "$proof/repo" \
               --prompt-file "$proof/prompt.md" \

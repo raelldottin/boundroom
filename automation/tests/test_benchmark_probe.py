@@ -88,10 +88,10 @@ def _run_phase(tmp: Path, transport: str):
     env = dict(os.environ)
     env.update(
         {
-            "REPO_AUTOMATION_AGENT_RUNNER": "hermes",
-            "REPO_AUTOMATION_HERMES_BIN": str(hermes),
-            "REPO_AUTOMATION_HERMES_USAGE_DIR": str(sessions_dir),
-            "REPO_AUTOMATION_HERMES_TRANSPORT": transport,
+            "BOUNDROOM_AGENT_RUNNER": "hermes",
+            "BOUNDROOM_HERMES_BIN": str(hermes),
+            "BOUNDROOM_HERMES_USAGE_DIR": str(sessions_dir),
+            "BOUNDROOM_HERMES_TRANSPORT": transport,
         }
     )
     ctx = ExecutionContext(
@@ -209,9 +209,9 @@ class TransportContractTests(unittest.TestCase):
             env = dict(os.environ)
             env.update(
                 {
-                    "REPO_AUTOMATION_AGENT_RUNNER": "hermes",
-                    "REPO_AUTOMATION_HERMES_BIN": str(hermes),
-                    "REPO_AUTOMATION_HERMES_TRANSPORT": "tail -f",
+                    "BOUNDROOM_AGENT_RUNNER": "hermes",
+                    "BOUNDROOM_HERMES_BIN": str(hermes),
+                    "BOUNDROOM_HERMES_TRANSPORT": "tail -f",
                 }
             )
             done = subprocess.run(
@@ -233,7 +233,7 @@ class TransportContractTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(64, done.returncode, done.stderr)
-            self.assertIn("REPO_AUTOMATION_HERMES_TRANSPORT", done.stderr)
+            self.assertIn("BOUNDROOM_HERMES_TRANSPORT", done.stderr)
 
 
 class ProbeRecordTests(unittest.TestCase):
@@ -246,11 +246,11 @@ class ProbeRecordTests(unittest.TestCase):
             artifact = workspace / ".rpi" / "research.json"
             artifact.parent.mkdir(parents=True, exist_ok=True)
             artifact.write_text(json.dumps(checkpoint), encoding="utf-8")
-            sessions = Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"])
+            sessions = Path(env["BOUNDROOM_HERMES_USAGE_DIR"])
             sessions.mkdir(parents=True, exist_ok=True)
             stem = sessions / "20260101T000000Z-1"
             stem.with_suffix(".controls.json").write_text(
-                json.dumps({"runner": "hermes", "transport": env["REPO_AUTOMATION_HERMES_TRANSPORT"]}),
+                json.dumps({"runner": "hermes", "transport": env["BOUNDROOM_HERMES_TRANSPORT"]}),
                 encoding="utf-8",
             )
             (sessions / f"20260101T000000Z-1{STREAM_JSON_SUFFIX}").write_text(
@@ -347,7 +347,7 @@ class ProbeEnvironmentIsolationTests(unittest.TestCase):
             artifact = workspace / ".rpi" / "research.json"
             artifact.parent.mkdir(parents=True, exist_ok=True)
             artifact.write_text("{}", encoding="utf-8")
-            sessions = Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"])
+            sessions = Path(env["BOUNDROOM_HERMES_USAGE_DIR"])
             sessions.mkdir(parents=True, exist_ok=True)
             return 0
 
@@ -382,7 +382,7 @@ class ProbeEnvironmentIsolationTests(unittest.TestCase):
     def test_the_probe_still_carries_what_the_runner_reads(self) -> None:
         environment = self._probe_environment()
         self.assertIn("PATH", environment)
-        self.assertEqual("stream-json", environment["REPO_AUTOMATION_HERMES_TRANSPORT"])
+        self.assertEqual("stream-json", environment["BOUNDROOM_HERMES_TRANSPORT"])
 
     def test_the_cli_selects_launcher_variables_by_name(self) -> None:
         from automation.benchmark import probe as probe_module
@@ -407,7 +407,7 @@ class ProbeArtifactLinkTests(unittest.TestCase):
             rpi.mkdir(parents=True, exist_ok=True)
             (rpi / "research.json").write_text("{}", encoding="utf-8")
             (rpi / "host-file.json").symlink_to(target)
-            Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+            Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
             return 0
 
         return run_probe(self.INSTANCE, out, repo_root=REPO_ROOT, budget_seconds=30, runner=runner, cleanroom=False)
@@ -461,7 +461,7 @@ class ProbeArtifactLinkTests(unittest.TestCase):
 
             def runner(_command: str, workspace: Path, env, _timeout: int) -> int:
                 (workspace / ".rpi").symlink_to(host, target_is_directory=True)
-                Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+                Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
                 return 0
 
             record = run_probe(self.INSTANCE, out, repo_root=REPO_ROOT, budget_seconds=30, runner=runner, cleanroom=False)
@@ -490,7 +490,7 @@ class ProbeArtifactLinkTests(unittest.TestCase):
                 rpi = workspace / ".rpi"
                 (rpi / "nested").mkdir(parents=True)
                 (rpi / "research.json").write_text("{}", encoding="utf-8")
-                Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+                Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
                 return 0
 
             record = run_probe(self.INSTANCE, out, repo_root=REPO_ROOT, budget_seconds=30, runner=runner, cleanroom=False)
@@ -506,7 +506,7 @@ class ProbeArtifactLinkTests(unittest.TestCase):
             rpi = workspace / ".rpi"
             rpi.mkdir(parents=True, exist_ok=True)
             (rpi / "research.json").write_text("{}", encoding="utf-8")
-            Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+            Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
             return 0
 
         with tempfile.TemporaryDirectory() as raw:
@@ -534,7 +534,7 @@ class ProbeOutputOwnershipTests(unittest.TestCase):
             artifact = workspace / ".rpi" / "research.json"
             artifact.parent.mkdir(parents=True, exist_ok=True)
             artifact.write_text("{}", encoding="utf-8")
-            Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+            Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
             if squats is not None:
                 squats()
             return 0
@@ -653,7 +653,7 @@ class ProbeHardLinkTests(unittest.TestCase):
                 rpi.mkdir(parents=True, exist_ok=True)
                 (rpi / "research.json").write_text("{}", encoding="utf-8")
                 os.link(host, rpi / "id_rsa")
-                Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+                Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
                 return 0
 
             record = run_probe(self.INSTANCE, out, repo_root=REPO_ROOT, budget_seconds=30, runner=runner, cleanroom=False)
@@ -688,7 +688,7 @@ class ProbeSummaryRenderingTests(unittest.TestCase):
 
             def runner(_command: str, workspace: Path, env, _timeout: int) -> int:
                 (workspace / ".rpi" / name).mkdir(parents=True)
-                Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+                Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
                 return 0
 
             record = run_probe(self.INSTANCE, out, repo_root=REPO_ROOT, budget_seconds=30, runner=runner, cleanroom=False)
@@ -721,7 +721,7 @@ class ProbeCleanroomInheritanceTests(unittest.TestCase):
 
         def runner(_command: str, workspace: Path, env, _timeout: int) -> int:
             calls.append({"workspace": workspace, "env": dict(env)})
-            sessions = Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"])
+            sessions = Path(env["BOUNDROOM_HERMES_USAGE_DIR"])
             sessions.mkdir(parents=True, exist_ok=True)
             (sessions / f"turn{STREAM_JSON_SUFFIX}").write_text(
                 json.dumps({"type": "system", "subtype": "init", "timestamp": 1000})
@@ -755,7 +755,7 @@ class ProbeCleanroomInheritanceTests(unittest.TestCase):
             # Named by the image the caller materialized, so run_agent.sh takes its sandbox
             # branch instead of Hermes' local backend.
             self.assertEqual(image_for(self.INSTANCE), calls[0]["env"][SANDBOX_IMAGE_ENV])
-            self.assertEqual("stream-json", calls[0]["env"]["REPO_AUTOMATION_HERMES_TRANSPORT"])
+            self.assertEqual("stream-json", calls[0]["env"]["BOUNDROOM_HERMES_TRANSPORT"])
             # De-identified, like a cell's: the agent's shell prompt shows this directory.
             workspace = calls[0]["workspace"].name
             self.assertIn(task_spec(self.INSTANCE).public_id, workspace)
@@ -787,7 +787,7 @@ class ProbeCleanroomInheritanceTests(unittest.TestCase):
             out = Path(raw) / "probe"
 
             def runner(_command: str, _workspace: Path, env, _timeout: int) -> int:
-                Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+                Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
                 return 0
 
             witness = StubWitness(violations=("container ran with NetworkMode=bridge",))
@@ -805,7 +805,7 @@ class ProbeCleanroomInheritanceTests(unittest.TestCase):
         from automation.benchmark.probe import run_probe
 
         def runner(_command: str, _workspace: Path, env, _timeout: int) -> int:
-            Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+            Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
             return 0
 
         with tempfile.TemporaryDirectory() as raw:
@@ -921,7 +921,7 @@ class FirstTurnAccountingTests(unittest.TestCase):
 
         def runner(_command: str, _workspace: Path, env, _timeout: int) -> int:
             captured.update(env)
-            sessions = Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"])
+            sessions = Path(env["BOUNDROOM_HERMES_USAGE_DIR"])
             sessions.mkdir(parents=True, exist_ok=True)
             if session == "report":
                 (sessions / f"turn{USAGE_SUFFIX}").write_text(json.dumps(self.REPORT), encoding="utf-8")
@@ -954,8 +954,8 @@ class FirstTurnAccountingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             record, env = self._run(Path(raw) / "probe", transport="stream-json", max_turns=1)
 
-            self.assertEqual("stream-json", env["REPO_AUTOMATION_HERMES_TRANSPORT"])
-            self.assertEqual("1", env["REPO_AUTOMATION_HERMES_MAX_TURNS"])
+            self.assertEqual("stream-json", env["BOUNDROOM_HERMES_TRANSPORT"])
+            self.assertEqual("1", env["BOUNDROOM_HERMES_MAX_TURNS"])
             self.assertEqual(1, record["max_turns"])
 
     def test_a_cap_on_the_uncappable_transport_is_refused_not_recorded(self) -> None:
@@ -986,7 +986,7 @@ class FirstTurnAccountingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             record, env = self._run(Path(raw) / "probe", transport="oneshot", session="report")
 
-            self.assertNotIn("REPO_AUTOMATION_HERMES_MAX_TURNS", env)
+            self.assertNotIn("BOUNDROOM_HERMES_MAX_TURNS", env)
             self.assertIsNone(record["max_turns"])
 
     def test_the_capped_transport_reads_its_accounting_from_the_session_ledger(self) -> None:
@@ -1171,7 +1171,7 @@ class PlanProbeTests(unittest.TestCase):
             seen["prompt"] = next(
                 Path(part).read_text(encoding="utf-8") for part in command.split() if part.endswith("prompt.md")
             )
-            sessions = Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"])
+            sessions = Path(env["BOUNDROOM_HERMES_USAGE_DIR"])
             sessions.mkdir(parents=True, exist_ok=True)
             (sessions / "20260101T000000Z-7.controls.json").write_text(
                 json.dumps({"transport": "stream-json", "slice_id": "task:plan"}), encoding="utf-8"
@@ -1217,14 +1217,14 @@ class PlanProbeTests(unittest.TestCase):
             (workspace / ".rpi" / "research.json").write_text(json.dumps(self.RESEARCH), encoding="utf-8")
             (observed / "usage_h.txt").write_text("Usage: cmatrix", encoding="utf-8")
             (observed / "deeper").mkdir()
-            Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+            Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
             return 0
 
         seen: dict[str, object] = {}
 
         def plan_runner(_command: str, workspace: Path, env, _timeout: int) -> int:
             seen["observed"] = sorted(p.name for p in (workspace / ".rpi" / "observed").iterdir())
-            Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
+            Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).mkdir(parents=True, exist_ok=True)
             return 0
 
         with tempfile.TemporaryDirectory() as raw:
@@ -1266,7 +1266,7 @@ class PlanProbeTests(unittest.TestCase):
             def runner(_command: str, workspace: Path, env, _timeout: int, plan_text=plan_text) -> int:
                 if plan_text is not None:
                     (workspace / ".rpi" / "plan.json").write_text(plan_text, encoding="utf-8")
-                sessions = Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"])
+                sessions = Path(env["BOUNDROOM_HERMES_USAGE_DIR"])
                 sessions.mkdir(parents=True, exist_ok=True)
                 (sessions / "20260101T000000Z-8.controls.json").write_text(
                     json.dumps({"transport": "stream-json", "slice_id": "task:plan"}), encoding="utf-8"

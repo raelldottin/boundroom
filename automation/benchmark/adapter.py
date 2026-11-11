@@ -67,7 +67,7 @@ CommandRunner = Callable[[str, Path, Mapping[str, str], int], int]
 # A cell's whole job is to run model-authored commands, and it used to be handed
 # ``dict(os.environ)``: the operator's provider keys, GitHub token, cloud credentials and
 # SSH agent socket, none of which rebuilds a C repository. The list is names, not patterns,
-# because a pattern fails open - ``REPO_AUTOMATION_*`` ships the next variable somebody adds
+# because a pattern fails open - ``BOUNDROOM_*`` ships the next variable somebody adds
 # under that prefix, whatever ends up in it, and the property worth having is that a variable
 # nobody considered is absent. Anything else a session genuinely needs (a provider key, a base
 # URL) is authorized deliberately through ``env=`` / ``--agent-env``.
@@ -80,6 +80,12 @@ INHERITED_ENV_NAMES = (
     "TMPDIR",  # run_agent.sh mktemp -d's the throwaway HERMES_HOME under it
     "LANG",
     "LC_ALL",
+    "BOUNDROOM_AGENT_RUNNER",
+    "BOUNDROOM_CODEX_BIN",
+    "BOUNDROOM_CLAUDE_BIN",
+    "BOUNDROOM_CLAUDE_PERMISSION_MODE",
+    "BOUNDROOM_HERMES_BIN",
+    # Names from before the 0.3.0 rename (SPEC-005), which run_agent.sh still honours.
     "REPO_AUTOMATION_AGENT_RUNNER",
     "REPO_AUTOMATION_CODEX_BIN",
     "REPO_AUTOMATION_CLAUDE_BIN",
@@ -201,7 +207,7 @@ def _subprocess_runner(command: str, workspace: Path, env: Mapping[str, str], ti
     """
     # Its own process group, so the timeout can collect the whole session: the agent spawns
     # tool subprocesses, and one left behind would spend the next cell's wall clock too.
-    sessions_dir = Path(env["REPO_AUTOMATION_HERMES_USAGE_DIR"]) if env.get("REPO_AUTOMATION_HERMES_USAGE_DIR") else None
+    sessions_dir = Path(env["BOUNDROOM_HERMES_USAGE_DIR"]) if env.get("BOUNDROOM_HERMES_USAGE_DIR") else None
     announced = controls_stems(sessions_dir) if sessions_dir is not None else frozenset()
     with subprocess.Popen(command, cwd=workspace, shell=True, env=dict(env), start_new_session=True) as agent:
         try:
@@ -227,7 +233,7 @@ AGENT_SESSIONS_DIR = "agent-sessions"
 # What the sandbox was proved to be, written next to the submission it produced.
 CLEANROOM_RECEIPT_FILENAME = "cleanroom.json"
 # Read by run_agent.sh: the image the model-facing tools run inside, or nothing at all.
-SANDBOX_IMAGE_ENV = "REPO_AUTOMATION_HERMES_SANDBOX_IMAGE"
+SANDBOX_IMAGE_ENV = "BOUNDROOM_HERMES_SANDBOX_IMAGE"
 # What was actually graded, kept when the tarball itself is not.
 SUBMISSION_MANIFEST_FILENAME = "submission.files.txt"
 
@@ -342,8 +348,8 @@ def probe_sandbox(
         **environment,
         # The container's view of the barrier, which is the only view the waiting command
         # has: /workspace is where the cleanroom is mounted.
-        "REPO_AUTOMATION_SANDBOX_PROBE_BARRIER": f"{WORKSPACE_DIR}/{SANDBOX_PROBE_BARRIER_DIR}",
-        "REPO_AUTOMATION_SANDBOX_PROBE_BARRIER_SECONDS": str(SANDBOX_PROBE_BARRIER_SECONDS),
+        "BOUNDROOM_SANDBOX_PROBE_BARRIER": f"{WORKSPACE_DIR}/{SANDBOX_PROBE_BARRIER_DIR}",
+        "BOUNDROOM_SANDBOX_PROBE_BARRIER_SECONDS": str(SANDBOX_PROBE_BARRIER_SECONDS),
     }
     # Guarding the probe only, deliberately: a `finally` around the `mkdir` above would
     # delete the very directory the collision check exists to protect.
@@ -379,7 +385,7 @@ def probe_sandbox(
 
 
 class SupervisorAgentAdapter:
-    """Drive the repo-automation supervisor loop to produce a submission, locally."""
+    """Drive the Boundroom supervisor loop to produce a submission, locally."""
 
     def __init__(
         self,
@@ -446,7 +452,7 @@ class SupervisorAgentAdapter:
         # --run-dir is usually relative: a relative path here wrote the reports into the
         # workspace, which archived them into the submission and left run.json with none.
         sessions_dir = (out_tar.parent / AGENT_SESSIONS_DIR).resolve()
-        environment["REPO_AUTOMATION_HERMES_USAGE_DIR"] = str(sessions_dir)
+        environment["BOUNDROOM_HERMES_USAGE_DIR"] = str(sessions_dir)
 
         receipt = None
         if self._cleanroom:

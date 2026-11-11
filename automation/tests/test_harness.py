@@ -297,10 +297,11 @@ class AutomationHarnessTests(unittest.TestCase):
 {
   for arg in "$@"; do printf 'arg:%s\\n' "$arg"; done
   printf 'cwd:%s\\n' "$PWD"
-  printf 'context:%s\\n' "${REPO_AUTOMATION_SUPERVISOR_CONTEXT_FILE:-}"
-  printf 'handoff:%s\\n' "${REPO_AUTOMATION_SUPERVISOR_HANDOFF_FILE:-}"
-  printf 'slice:%s\\n' "${REPO_AUTOMATION_SUPERVISOR_SLICE_ID:-}"
+  printf 'context:%s\\n' "${BOUNDROOM_SUPERVISOR_CONTEXT_FILE:-}"
+  printf 'handoff:%s\\n' "${BOUNDROOM_SUPERVISOR_HANDOFF_FILE:-}"
+  printf 'slice:%s\\n' "${BOUNDROOM_SUPERVISOR_SLICE_ID:-}"
   printf 'legacy_context:%s\\n' "${OWLORY_SUPERVISOR_CONTEXT_FILE:-}"
+  printf 'pre_rename_slice:%s\\n' "${REPO_AUTOMATION_SUPERVISOR_SLICE_ID:-}"
   printf 'stdin:'
   cat
   printf '\\n'
@@ -315,7 +316,7 @@ class AutomationHarnessTests(unittest.TestCase):
                 "100\t101\t-zsh\t-zsh\n101\t0\t/opt/homebrew/bin/claude\t/opt/homebrew/bin/claude\n", encoding="utf-8"
             )
             env["FAKE_PS_TREE"] = str(tree)
-            env.pop("REPO_AUTOMATION_AGENT_RUNNER", None)
+            env.pop("BOUNDROOM_AGENT_RUNNER", None)
 
             result = subprocess.run(
                 [
@@ -352,6 +353,7 @@ class AutomationHarnessTests(unittest.TestCase):
             self.assertIn(f"handoff:{handoff_path}", capture)
             self.assertIn("slice:slice-a", capture)
             self.assertIn(f"legacy_context:{context_path}", capture)
+            self.assertIn("pre_rename_slice:slice-a", capture)
             self.assertIn("stdin:slice prompt", capture)
 
     def test_agent_wrapper_can_still_launch_codex_when_requested(self) -> None:
@@ -384,7 +386,7 @@ class AutomationHarnessTests(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
             env["CAPTURE_FILE"] = str(capture_path)
-            env["REPO_AUTOMATION_AGENT_RUNNER"] = "codex"
+            env["BOUNDROOM_AGENT_RUNNER"] = "codex"
 
             result = subprocess.run(
                 [
@@ -441,7 +443,7 @@ class AutomationHarnessTests(unittest.TestCase):
 {
   for arg in "$@"; do printf 'arg:%s\\n' "$arg"; done
   printf 'cwd:%s\\n' "$PWD"
-  printf 'slice:%s\\n' "${REPO_AUTOMATION_SUPERVISOR_SLICE_ID:-}"
+  printf 'slice:%s\\n' "${BOUNDROOM_SUPERVISOR_SLICE_ID:-}"
   printf 'home:%s\\n' "${HERMES_HOME:-}"
   printf 'safemode:%s\\n' "${HERMES_SAFE_MODE:-}"
   printf 'ignoreconfig:%s\\n' "${HERMES_IGNORE_USER_CONFIG:-}"
@@ -453,8 +455,8 @@ class AutomationHarnessTests(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
             env["CAPTURE_FILE"] = str(capture_path)
-            env["REPO_AUTOMATION_AGENT_RUNNER"] = "hermes"
-            env["REPO_AUTOMATION_HERMES_USAGE_DIR"] = str(usage_dir)
+            env["BOUNDROOM_AGENT_RUNNER"] = "hermes"
+            env["BOUNDROOM_HERMES_USAGE_DIR"] = str(usage_dir)
             env["HERMES_HOME"] = str(temp_path / "shared-home")
 
             result = subprocess.run(
@@ -571,9 +573,9 @@ class AutomationHarnessTests(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
             env["CAPTURE_FILE"] = str(temp_path / "capture.txt")
-            env["REPO_AUTOMATION_AGENT_RUNNER"] = "hermes"
-            env["REPO_AUTOMATION_HERMES_USAGE_DIR"] = str(usage_dir)
-            env["REPO_AUTOMATION_HERMES_SANDBOX_IMAGE"] = image
+            env["BOUNDROOM_AGENT_RUNNER"] = "hermes"
+            env["BOUNDROOM_HERMES_USAGE_DIR"] = str(usage_dir)
+            env["BOUNDROOM_HERMES_SANDBOX_IMAGE"] = image
 
             result = subprocess.run(
                 [
@@ -668,7 +670,7 @@ class AutomationHarnessTests(unittest.TestCase):
                 bin_dir / "python",
                 "#!/usr/bin/env bash\ncat > /dev/null\nstatus=0\n"
                 'for task in default "probe-$$"; do\n'
-                '  if output="$(sh -c "$REPO_AUTOMATION_SANDBOX_PROBE_COMMAND" 2>&1)"; then code=0; else code=$?; status=1; fi\n'
+                '  if output="$(sh -c "$BOUNDROOM_SANDBOX_PROBE_COMMAND" 2>&1)"; then code=0; else code=$?; status=1; fi\n'
                 '  printf \'{"task_id": "%s", "result": {"output": "%s", "exit_code": %s}}\\n\' "$task" "$output" "$code"\n'
                 "done\nexit $status\n",
             )
@@ -676,10 +678,10 @@ class AutomationHarnessTests(unittest.TestCase):
             usage_dir = temp_path / "sessions"
             env = os.environ.copy()
             env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
-            env["REPO_AUTOMATION_AGENT_RUNNER"] = "hermes"
-            env["REPO_AUTOMATION_HERMES_PYTHON"] = str(bin_dir / "python")
-            env["REPO_AUTOMATION_HERMES_USAGE_DIR"] = str(usage_dir)
-            env["REPO_AUTOMATION_HERMES_SANDBOX_IMAGE"] = "programbench/cmatsuoka_1776_figlet.202a0a8:task_cleanroom_v6"
+            env["BOUNDROOM_AGENT_RUNNER"] = "hermes"
+            env["BOUNDROOM_HERMES_PYTHON"] = str(bin_dir / "python")
+            env["BOUNDROOM_HERMES_USAGE_DIR"] = str(usage_dir)
+            env["BOUNDROOM_HERMES_SANDBOX_IMAGE"] = "programbench/cmatsuoka_1776_figlet.202a0a8:task_cleanroom_v6"
 
             result = subprocess.run(
                 [str(self.repo_root / "automation/supervisor/run_agent.sh"), "--repo-root", str(workspace), "--sandbox-probe"],
@@ -753,15 +755,15 @@ class AutomationHarnessTests(unittest.TestCase):
         }
         env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
         env["PYTHONPATH"] = str(self.fake_hermes_importables(temp_path / "fake-hermes"))
-        env["REPO_AUTOMATION_AGENT_RUNNER"] = "hermes"
-        env["REPO_AUTOMATION_HERMES_PYTHON"] = sys.executable
-        env["REPO_AUTOMATION_HERMES_USAGE_DIR"] = str(usage_dir)
-        env["REPO_AUTOMATION_HERMES_SANDBOX_IMAGE"] = "programbench/x.1:task_cleanroom_v6"
+        env["BOUNDROOM_AGENT_RUNNER"] = "hermes"
+        env["BOUNDROOM_HERMES_PYTHON"] = sys.executable
+        env["BOUNDROOM_HERMES_USAGE_DIR"] = str(usage_dir)
+        env["BOUNDROOM_HERMES_SANDBOX_IMAGE"] = "programbench/x.1:task_cleanroom_v6"
         # The path the waiting command sees. A cell passes the container's view,
         # /workspace/...; with no container here, the command runs where the bind mount
         # would have put it.
-        env["REPO_AUTOMATION_SANDBOX_PROBE_BARRIER"] = str(barrier)
-        env["REPO_AUTOMATION_SANDBOX_PROBE_BARRIER_SECONDS"] = seconds
+        env["BOUNDROOM_SANDBOX_PROBE_BARRIER"] = str(barrier)
+        env["BOUNDROOM_SANDBOX_PROBE_BARRIER_SECONDS"] = seconds
         env["FAKE_TERMINAL_LOG"] = str(terminal_log)
 
         result = subprocess.run(
@@ -844,8 +846,8 @@ exit 7
             usage_dir = temp_path / "sessions"
             env = os.environ.copy()
             env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
-            env["REPO_AUTOMATION_AGENT_RUNNER"] = "hermes"
-            env["REPO_AUTOMATION_HERMES_USAGE_DIR"] = str(usage_dir)
+            env["BOUNDROOM_AGENT_RUNNER"] = "hermes"
+            env["BOUNDROOM_HERMES_USAGE_DIR"] = str(usage_dir)
 
             result = subprocess.run(
                 [
@@ -892,8 +894,8 @@ exit 7
         self.write_fake_executable(bin_dir / "hermes", hermes_body)
         env = os.environ.copy()
         env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
-        env["REPO_AUTOMATION_AGENT_RUNNER"] = "hermes"
-        env["REPO_AUTOMATION_HERMES_USAGE_DIR"] = str(temp_path / "sessions")
+        env["BOUNDROOM_AGENT_RUNNER"] = "hermes"
+        env["BOUNDROOM_HERMES_USAGE_DIR"] = str(temp_path / "sessions")
         env.update(extra_env)
 
         return subprocess.run(
@@ -931,7 +933,7 @@ exit 7
             result = self._run_hermes_wrapper(
                 temp_path,
                 self.ARG_ECHO,
-                {"REPO_AUTOMATION_HERMES_MAX_TURNS": "1", "REPO_AUTOMATION_HERMES_TRANSPORT": "stream-json"},
+                {"BOUNDROOM_HERMES_MAX_TURNS": "1", "BOUNDROOM_HERMES_TRANSPORT": "stream-json"},
             )
 
             self.assertEqual(0, result.returncode, result.stderr)
@@ -977,7 +979,7 @@ exit 7
                 temp_path,
                 self.ARG_ECHO,
                 {
-                    "REPO_AUTOMATION_HERMES_TRANSPORT": "stream-json",
+                    "BOUNDROOM_HERMES_TRANSPORT": "stream-json",
                     "HERMES_INFERENCE_MODEL": "z-ai/glm-5.3",
                     "HERMES_INFERENCE_PROVIDER": "nvidia",
                 },
@@ -1004,7 +1006,7 @@ exit 7
                 Path(temp_dir),
                 self.ARG_ECHO,
                 {
-                    "REPO_AUTOMATION_HERMES_TRANSPORT": "stream-json",
+                    "BOUNDROOM_HERMES_TRANSPORT": "stream-json",
                     "HERMES_INFERENCE_MODEL": "",
                     "HERMES_INFERENCE_PROVIDER": "",
                 },
@@ -1022,7 +1024,7 @@ exit 7
                 Path(temp_dir),
                 self.ARG_ECHO,
                 {
-                    "REPO_AUTOMATION_HERMES_TRANSPORT": "oneshot",
+                    "BOUNDROOM_HERMES_TRANSPORT": "oneshot",
                     "HERMES_INFERENCE_MODEL": "z-ai/glm-5.3",
                     "HERMES_INFERENCE_PROVIDER": "nvidia",
                 },
@@ -1043,7 +1045,7 @@ exit 7
             result = self._run_hermes_wrapper(
                 Path(temp_dir),
                 "#!/usr/bin/env bash\necho launched\n",
-                {"REPO_AUTOMATION_HERMES_MAX_TURNS": "1", "REPO_AUTOMATION_HERMES_TRANSPORT": "oneshot"},
+                {"BOUNDROOM_HERMES_MAX_TURNS": "1", "BOUNDROOM_HERMES_TRANSPORT": "oneshot"},
             )
 
             self.assertEqual(64, result.returncode, result.stdout)
@@ -1061,8 +1063,8 @@ exit 7
                         (temp_path / bad.replace(".", "_")),
                         "#!/usr/bin/env bash\necho launched\n",
                         {
-                            "REPO_AUTOMATION_HERMES_MAX_TURNS": bad,
-                            "REPO_AUTOMATION_HERMES_TRANSPORT": "stream-json",
+                            "BOUNDROOM_HERMES_MAX_TURNS": bad,
+                            "BOUNDROOM_HERMES_TRANSPORT": "stream-json",
                         },
                     )
 
@@ -1073,7 +1075,7 @@ exit 7
     def test_agent_wrapper_leaves_the_turn_budget_alone_when_no_cap_is_asked_for(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            result = self._run_hermes_wrapper(temp_path, self.ARG_ECHO, {"REPO_AUTOMATION_HERMES_TRANSPORT": "stream-json"})
+            result = self._run_hermes_wrapper(temp_path, self.ARG_ECHO, {"BOUNDROOM_HERMES_TRANSPORT": "stream-json"})
 
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertNotIn("max-turns", result.stdout)

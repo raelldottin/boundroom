@@ -8,7 +8,7 @@ Code: `automation/supervisor/kanban_projection.py`. Tests: `automation/tests/tes
 
 ```text
 ~/.hermes/kanban/boards/<slug>/kanban.db ──read_board──▶ BoardSnapshot ─┐
-repo-automation approval overlay (JSON) ──load_overlay──▶ KanbanOverlay ─┴─project──▶ Projection
+boundroom approval overlay (JSON) ──load_overlay──▶ KanbanOverlay ─┴─project──▶ Projection
                                                                                     (queue, provenance, revision)
 ```
 
@@ -19,7 +19,7 @@ repo-automation approval overlay (JSON) ──load_overlay──▶ KanbanOverla
 
 ## Approval overlay
 
-Kanban has no source for `domain`, `allowed_paths`, `required_validations`, `max_files_changed` or the proof level. repo-automation owns these in an overlay, keyed by Kanban task id (`KanbanOverlay`; example in `automation/examples/kanban-overlay.json`):
+Kanban has no source for `domain`, `allowed_paths`, `required_validations`, `max_files_changed` or the proof level. Boundroom owns these in an overlay, keyed by Kanban task id (`KanbanOverlay`; example in `automation/examples/kanban-overlay.json`):
 
 ```json
 {"version": 1, "board": "<slug>", "policy": {<QueuePolicy>}, "approved": {"t_xxxxxxxx": {<policy fields>}}}

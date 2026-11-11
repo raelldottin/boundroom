@@ -1,14 +1,14 @@
 {
-  "name": "repo-automation",
+  "name": "boundroom",
   "interface": {
-    "displayName": "repo-automation"
+    "displayName": "Boundroom"
   },
   "plugins": [
     {
-      "name": "repo-automation",
+      "name": "boundroom",
       "source": {
         "source": "local",
-        "path": "./plugins/repo-automation"
+        "path": "./plugins/boundroom"
       },
       "policy": {
         "installation": "AVAILABLE",

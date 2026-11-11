@@ -217,9 +217,9 @@ class SandboxProbeBarrierTests(unittest.TestCase):
                 benchmark_adapter.probe_sandbox(self.repo_root, runner, workspace, {}, sessions, self.receipt)
 
             self.assertEqual(str(workspace / ".sandbox-probe-barrier"), passed["release_dir"])
-            self.assertEqual("/workspace/.sandbox-probe-barrier", passed["REPO_AUTOMATION_SANDBOX_PROBE_BARRIER"])
+            self.assertEqual("/workspace/.sandbox-probe-barrier", passed["BOUNDROOM_SANDBOX_PROBE_BARRIER"])
             # Bounded: a witness that never releases costs the cell seconds, not a budget.
-            self.assertEqual("15", passed["REPO_AUTOMATION_SANDBOX_PROBE_BARRIER_SECONDS"])
+            self.assertEqual("15", passed["BOUNDROOM_SANDBOX_PROBE_BARRIER_SECONDS"])
 
     def test_the_barrier_is_gone_before_the_agent_gets_the_workspace(self) -> None:
         # The workspace is archived as the submission, so the rendezvous has to leave it.
@@ -631,7 +631,7 @@ class AgentSessionReportTests(unittest.TestCase):
         captured: dict[str, str] = {}
 
         def fake_runner(command: str, workspace: Path, env: Mapping[str, str], timeout: int) -> int:
-            captured["sessions"] = env["REPO_AUTOMATION_HERMES_USAGE_DIR"]
+            captured["sessions"] = env["BOUNDROOM_HERMES_USAGE_DIR"]
             return 0
 
         task = TaskSpec(
@@ -682,16 +682,16 @@ class AgentEnvironmentIsolationTests(unittest.TestCase):
         self.assertFalse(marker in environment, f"{marker} reached the agent session")
 
     def test_the_allowlist_is_exact_names_not_a_prefix_rule(self) -> None:
-        """A prefix rule fails open the first time somebody names a REPO_AUTOMATION_*_TOKEN."""
-        marker = "REPO_AUTOMATION_UNLISTED_SENTINEL"
+        """A prefix rule fails open the first time somebody names a BOUNDROOM_*_TOKEN."""
+        marker = "BOUNDROOM_UNLISTED_SENTINEL"
         with unittest.mock.patch.dict(os.environ, {marker: "sentinel-value"}):
             inherited = benchmark_adapter.audited_inherited_environment()
         self.assertFalse(marker in inherited, f"{marker} matched a pattern instead of a name")
 
     def test_what_the_agent_runner_reads_is_still_inherited(self) -> None:
-        with unittest.mock.patch.dict(os.environ, {"REPO_AUTOMATION_AGENT_RUNNER": "hermes"}):
+        with unittest.mock.patch.dict(os.environ, {"BOUNDROOM_AGENT_RUNNER": "hermes"}):
             environment = self._session_environment()
-        self.assertEqual("hermes", environment["REPO_AUTOMATION_AGENT_RUNNER"])
+        self.assertEqual("hermes", environment["BOUNDROOM_AGENT_RUNNER"])
         # Without PATH the runner cannot find any agent CLI at all.
         self.assertIn("PATH", environment)
 

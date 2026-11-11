@@ -21,7 +21,7 @@ So a Claude Code parent can use Kanban mode only on a machine with Hermes instal
 ## Decision (proposed)
 
 1. **One board interface.** The supervisor talks to a board only through a `BoardBackend` protocol. The projection, the approval overlay and the supervisor's rules don't know which backend is behind it.
-2. **A local backend as the default board.** repo-automation ships a small board store: a versioned SQLite file, accessed with the standard library only, plus a command-line tool for people and agents. It needs no Hermes, no daemon and no network.
+2. **A local backend as the default board.** Boundroom ships a small board store: a versioned SQLite file, accessed with the standard library only, plus a command-line tool for people and agents. It needs no Hermes, no daemon and no network.
 3. **Hermes becomes an optional backend.** The existing adapters move behind the interface unchanged. Hermes is no longer the target named by SPEC-001.
 4. **Exactly one canonical board per consumer.** A consumer picks one backend. Nothing mirrors or dual-writes between the local board, a Hermes board and the JSON queue. Board mode already ignores `--queue`, and that stays.
 
@@ -88,7 +88,7 @@ Every event records an `actor`, taken from `--actor` or the OS user.
 
 | Parent | Path |
 | --- | --- |
-| Claude Code, Codex, Hermes | The same four plugin skills in every harness. `repo-automation-status` reads the board and names the next eligible slice. The `repo-automation-run-next` skill passes `--board-backend local --board <dir> --kanban-overlay <file>` to `run_next.py --single-slice`. `run_agent.sh` picks the runner from the originating harness, as today. The skills change only in prose, with no code (SPEC-002). |
+| Claude Code, Codex, Hermes | The same four plugin skills in every harness. `boundroom-status` reads the board and names the next eligible slice. The `boundroom-run-next` skill passes `--board-backend local --board <dir> --kanban-overlay <file>` to `run_next.py --single-slice`. `run_agent.sh` picks the runner from the originating harness, as today. The skills change only in prose, with no code (SPEC-002). |
 | Plain shell or CI | The same `run_next.py` flags. Headless runs name a runner explicitly (SPEC-001 D). |
 | A person | `python -m automation.supervisor.local_board` for edits and approvals |
 
@@ -167,7 +167,7 @@ The performance rule in AGENTS.md applies. RA-BD-002 and RA-BD-003 add file I/O 
 ## Open decisions for the owner
 
 1. ~~Is the local backend the SPEC-001 target, with Hermes optional?~~ **Decided 2026-11-10:** yes. The local backend is the default and Hermes is optional.
-2. Where do boards live by convention? An explicit path is always required, but should the docs suggest `~/.local/state/repo-automation/boards/<slug>/`?
+2. Where do boards live by convention? An explicit path is always required, but should the docs suggest `~/.local/state/boundroom/boards/<slug>/`?
 3. ~~Is auditable approval enough for now?~~ **Decided 2026-11-10:** yes. Every approval records its actor, and a test checks that the supervisor and the runner environment never call `approve`. OS-level separation can be proposed later as its own change.
 4. ~~Should existing Hermes boards be migrated?~~ **Decided 2026-11-10:** no migration is required. Hermes boards stay on the Hermes backend. A one-way import can be proposed later if a consumer wants one.
 5. Approval of the upstream hermes-swarm-protocol change in RA-BD-005.

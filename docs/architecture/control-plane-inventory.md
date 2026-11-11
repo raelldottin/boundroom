@@ -26,7 +26,7 @@ Every claim carries an evidence tag `[E#]`. [Appendix B](#appendix-b-evidence) l
 | hermes-swarm-protocol local checkout | `~/Documents/Personal/hermes-swarm-protocol` | Branch `wiki/design-contract-phase0` @ `855a0194…` with uncommitted edits. **Not the deployed source.** | [E14] |
 | Hindsight Hermes integration | Hermes plugin catalog entry, not installed | `vectorize-io/hindsight` @ `d952b6e655fccab4581ee0722b51c5f103873d12`, subdir `hindsight-integrations/hermes`, version `1.2.3` | [E15] |
 | ByteRover CLI (`brv`) | `~/.brv-cli/bin/brv` | `byterover-cli/3.16.1` | [E13] |
-| repo-automation | this repository | `main` @ `d1e788526990340f044a7f71b37d64c5e2a00d20` | [E18] |
+| Boundroom | this repository | `main` @ `d1e788526990340f044a7f71b37d64c5e2a00d20` | [E18] |
 
 ## Hermes Kanban
 
@@ -82,7 +82,7 @@ Cross-checking `tasks.assignee` on every board against those directories [E4]:
 - Each tick takes a per-board `kanban.db.dispatch.lock` (`_dispatch_tick_lock`, `kanban_db_connect.py:161`) [E5].
 - Dispatch limits set in `config.yaml`: `max_in_progress: 4`, `max_in_progress_per_profile: 1`, `max_spawn: 1`, `failure_limit: 2`, `auto_decompose: true` [E5].
 
-repo-automation must not run its own dispatcher against these boards. SPEC-001 already forbids that.
+Boundroom must not run its own dispatcher against these boards. SPEC-001 already forbids that.
 
 ### Read surfaces a projection could consume
 
@@ -118,11 +118,11 @@ Tables present on every populated board: `tasks, task_runs, task_events, task_li
 | `entry_condition`, `recommended_unblocker` | none | `tasks.block_kind` and `last_failure_error` exist but do not match these meanings. |
 | `manual_proof`, `required_proof_level` | none | **No source.** |
 
-**Conclusion for RA-CP-002.** Kanban can supply identity, title, status (lossy), priority (inverted) and dependencies. It cannot supply the engineering-policy fields `allowed_paths`, `required_validations`, `max_files_changed`, `domain` or the proof level. Those must come from a repo-automation-owned source keyed by Kanban task id, or from a structured block in the task that RA-CP-002 specifies. Either way repo-automation keeps policy authority, as SPEC-001 intends.
+**Conclusion for RA-CP-002.** Kanban can supply identity, title, status (lossy), priority (inverted) and dependencies. It cannot supply the engineering-policy fields `allowed_paths`, `required_validations`, `max_files_changed`, `domain` or the proof level. Those must come from a Boundroom-owned source keyed by Kanban task id, or from a structured block in the task that RA-CP-002 specifies. Either way Boundroom keeps policy authority, as SPEC-001 intends.
 
 ### Execution identity Kanban already records
 
-These facts already exist. repo-automation should read them and not rebuild them:
+These facts already exist. Boundroom should read them and not rebuild them:
 
 - **One run row per attempt.** `task_runs` has one row per claim, with `profile, step_key, status, claim_lock, claim_expires, worker_pid, worker_started_at, last_heartbeat_at, started_at, ended_at, outcome, summary, metadata, error`. On `alepes`, 350 runs cover 139 tasks [E3]. `claimed` events carry `lock, run_id, retry_of, source, source_status, actor, expires` [E3].
 - **`worker_bound`.** Its payload is `{claim_lock, pid, started_at}`. `bound_interpreter_gone` uses it to decide whether the bound interpreter for the current run is dead (`kanban_owner_recovery.py:36-46`). `worker_result` (`{claim_lock, exit_code, last_output, pid}`) counts for a run only under the same claim lock and pid (`managed_run_exit_code`, lines 49-70) [E8], [E3].
@@ -233,14 +233,14 @@ SPDX identifiers come from the GitHub license API unless noted [E17], [E19].
 
 ## Gaps for RA-CP-002 and later
 
-1. **Policy fields have no Kanban source.** `allowed_paths`, `required_validations`, `max_files_changed`, `domain` and the proof level need a repo-automation-owned source keyed by Kanban task id.
+1. **Policy fields have no Kanban source.** `allowed_paths`, `required_validations`, `max_files_changed`, `domain` and the proof level need a Boundroom-owned source keyed by Kanban task id.
 2. **Status is lossy, and there is no `failed` state.** Priority order is inverted.
 3. **No board revision column.** Expected-revision semantics need a tested watermark.
 4. **The CLI read path writes on init.** Use a `mode=ro` / `query_only` snapshot as the wiki compiler does, or confirm with Hermes upstream that a supported read-only snapshot API exists.
 5. **The schema is unversioned** (`user_version` 0). Check required columns like the compiler's `REQUIRED`, and pin the Hermes commit.
 6. **Link semantics.** Dependency links and provenance links share one `task_links` table.
 7. **Not delivered here: the machine-checkable inventory template.** The roadmap's RA-CP-001 acceptance asks for one. This document is the reviewed prose register. A schema-validated template can follow once RA-CP-002 fixes which fields it must carry.
-8. **License decisions.** The owner licensed `repo-automation` and `hermes-swarm-protocol` `GPL-2.0-only` on 2026-11-02. The ByteRover Elastic-2.0 dependency, which is not an OSI license, still blocks the P0.5 open-source claim.
+8. **License decisions.** The owner licensed `repo-automation` (renamed Boundroom in 0.3.0) and `hermes-swarm-protocol` `GPL-2.0-only` on 2026-11-02. The ByteRover Elastic-2.0 dependency, which is not an OSI license, still blocks the P0.5 open-source claim.
 9. **The Hermes fork drift** (33 local commits) needs provenance before P0.5 pins it.
 
 ## Appendix A: the reader

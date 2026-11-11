@@ -1,4 +1,4 @@
-site_name: repo-automation
+site_name: Boundroom
 site_description: Reusable supervised-slice automation distribution
 site_url: https://raelldottin.github.io/boundroom/
 repo_url: https://github.com/raelldottin/boundroom
@@ -41,13 +41,14 @@ nav:
   - Memory Interface Contract: architecture/memory-interface.md
   - Swarm Wiki Compiler Pin: architecture/swarm-wiki-compiler.md
   - Agent Plugin Specification: architecture/agent-plugin.md
+  - Rename to Boundroom: architecture/boundroom-rename.md
   - Discord Knowledge Loop Specification: architecture/discord-knowledge-loop.md
   - Agentic SDLC and GitOps Standard (draft): architecture/agentic-gitops-sdlc-standard.md
   - Product Roadmap: product-roadmap.md
   - CIS and SOC 2 Control Map: compliance/controls.md
   - Technical Roadmap (October 2026): roadmap.md
   - CodSpeed Removal Roadmap: codspeed-removal.md
-  - Workflow: workflows/repo-automation.md
+  - Workflow: workflows/boundroom.md
   - Effectiveness Benchmark: workflows/effectiveness-benchmark.md
 
 markdown_extensions:

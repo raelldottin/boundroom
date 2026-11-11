@@ -8,7 +8,7 @@ Include what you found, how to reproduce it, the affected release tag or commit,
 
 ## Supported versions
 
-Security fixes go into the next release from `main`. Only the latest `vMAJOR.MINOR.PATCH` release is supported. Consumers should pin a released tag and update through `Tools/repo-automation-sync.sh`.
+Security fixes go into the next release from `main`. Only the latest `vMAJOR.MINOR.PATCH` release is supported. Consumers should pin a released tag and update through `Tools/boundroom-sync.sh`.
 
 ## Scope
 

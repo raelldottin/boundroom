@@ -56,19 +56,19 @@ class RunnerSelectionTests(unittest.TestCase):
             lines.append(f"{depth + 100}\t{parent}\t{comm}\t{args}")
         tree.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        env = {key: value for key, value in os.environ.items() if not key.startswith("REPO_AUTOMATION_")}
+        env = {key: value for key, value in os.environ.items() if not key.startswith(("BOUNDROOM_", "REPO_AUTOMATION_"))}
         env.update(
             {
                 "FAKE_PS_TREE": str(tree) if ancestry else "",
-                "REPO_AUTOMATION_CODEX_BIN": str(temp / "absent-codex"),
-                "REPO_AUTOMATION_CLAUDE_BIN": str(temp / "absent-claude"),
-                "REPO_AUTOMATION_HERMES_BIN": str(temp / "absent-hermes"),
+                "BOUNDROOM_CODEX_BIN": str(temp / "absent-codex"),
+                "BOUNDROOM_CLAUDE_BIN": str(temp / "absent-claude"),
+                "BOUNDROOM_HERMES_BIN": str(temp / "absent-hermes"),
                 **extra_env,
             }
         )
         env.pop("OWLORY_CODEX_BIN", None)
         if runner is not None:
-            env["REPO_AUTOMATION_AGENT_RUNNER"] = runner
+            env["BOUNDROOM_AGENT_RUNNER"] = runner
         return subprocess.run(
             [
                 str(SCRIPT),
@@ -120,7 +120,7 @@ class RunnerSelectionTests(unittest.TestCase):
         config_path = ("/bin/cat", "cat /Users/someone/.claude/settings.json /Users/someone/.codex/config.toml")
         result = self.run_wrapper([config_path, wrapper, SHELL, LOGIN])
         self.assertEqual(78, result.returncode, result.stderr)
-        self.assertIn("REPO_AUTOMATION_AGENT_RUNNER", result.stderr)
+        self.assertIn("BOUNDROOM_AGENT_RUNNER", result.stderr)
 
     def test_an_explicit_runner_that_matches_the_enclosing_harness_is_honoured(self) -> None:
         self.assertSelected("claude", self.run_wrapper([SHELL, CLAUDE], runner="claude"))
@@ -130,7 +130,7 @@ class RunnerSelectionTests(unittest.TestCase):
             with self.subTest(runner=runner, harness=harness):
                 result = self.run_wrapper([SHELL, process], runner=runner)
                 self.assertEqual(78, result.returncode, result.stderr)
-                self.assertIn(f"REPO_AUTOMATION_AGENT_RUNNER={runner}", result.stderr)
+                self.assertIn(f"BOUNDROOM_AGENT_RUNNER={runner}", result.stderr)
                 self.assertIn(f"inside {harness}", result.stderr)
                 for message in NOT_FOUND.values():
                     self.assertNotIn(message, result.stderr)
@@ -154,19 +154,27 @@ class RunnerSelectionTests(unittest.TestCase):
                 result = self.run_wrapper(
                     [SHELL, LOGIN],
                     runner=runner,
-                    REPO_AUTOMATION_CODEX_BIN=str(temp / "codex"),
-                    REPO_AUTOMATION_CLAUDE_BIN=str(temp / "claude"),
-                    REPO_AUTOMATION_HERMES_BIN=str(temp / "hermes"),
+                    BOUNDROOM_CODEX_BIN=str(temp / "codex"),
+                    BOUNDROOM_CLAUDE_BIN=str(temp / "claude"),
+                    BOUNDROOM_HERMES_BIN=str(temp / "hermes"),
                 )
                 self.assertEqual(78, result.returncode, result.stderr)
                 self.assertIn("No enclosing agent harness", result.stderr)
-                self.assertIn("REPO_AUTOMATION_AGENT_RUNNER", result.stderr)
+                self.assertIn("BOUNDROOM_AGENT_RUNNER", result.stderr)
                 self.assertFalse(launched.exists(), "an agent CLI was launched without a harness or a choice")
+
+    def test_the_legacy_runner_name_is_honoured_when_the_new_one_is_unset(self) -> None:
+        """SPEC-005: settings written before the rename keep choosing the runner."""
+        self.assertSelected("hermes", self.run_wrapper([SHELL, LOGIN], REPO_AUTOMATION_AGENT_RUNNER="hermes"))
+
+    def test_the_new_runner_name_wins_over_the_legacy_one(self) -> None:
+        result = self.run_wrapper([SHELL, LOGIN], runner="claude", REPO_AUTOMATION_AGENT_RUNNER="hermes")
+        self.assertSelected("claude", result)
 
     def test_an_unsupported_runner_is_still_a_usage_error(self) -> None:
         result = self.run_wrapper([SHELL, CLAUDE], runner="gemini")
         self.assertEqual(64, result.returncode, result.stderr)
-        self.assertIn("Unsupported REPO_AUTOMATION_AGENT_RUNNER: gemini", result.stderr)
+        self.assertIn("Unsupported BOUNDROOM_AGENT_RUNNER: gemini", result.stderr)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""ProgramBench effectiveness benchmark for the repo-automation harness.
+"""ProgramBench effectiveness benchmark for the Boundroom harness.
 
 Measures how effective the supervisor harness is at producing working code by having
 it rebuild ProgramBench programs and scoring the results with ProgramBench's own

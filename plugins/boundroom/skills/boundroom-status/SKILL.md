@@ -1,16 +1,16 @@
 ---
-name: repo-automation-status
-description: Show what repo-automation would do next in this repository without running anything. Names the next eligible slice, lists blocked slices, and with a Kanban board compares the board's projection with the JSON queue. Read-only. Use when asked what is next, what is queued or blocked, or whether the board and queue agree.
+name: boundroom-status
+description: Show what Boundroom would do next in this repository without running anything. Names the next eligible slice, lists blocked slices, and with a Kanban board compares the board's projection with the JSON queue. Read-only. Use when asked what is next, what is queued or blocked, or whether the board and queue agree.
 license: GPL-2.0-only
 ---
 
 # Queue status
 
-This skill reads the supervisor copy that `Tools/repo-automation-sync.sh` placed in the repository. It changes nothing.
+This skill reads the supervisor copy that `Tools/boundroom-sync.sh` placed in the repository. It changes nothing.
 
 ## Before you run anything
 
-Work from the repository root. Run `test -f automation/supervisor/run_next.py` on its own, not joined to another command. If it fails, stop and say: "This repository has not adopted repo-automation."
+Work from the repository root. Run `test -f automation/supervisor/run_next.py` on its own, not joined to another command. If it fails, stop and say: "This repository has not adopted Boundroom."
 
 ## Next slice
 
@@ -32,4 +32,4 @@ Report the `shadow` section: unmapped tasks, slices missing on either side, fiel
 
 ## Boundaries
 
-Don't edit the queue, the board or any handoff. Don't run a slice; that is `repo-automation-run-next`.
+Don't edit the queue, the board or any handoff. Don't run a slice; that is `boundroom-run-next`.

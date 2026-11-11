@@ -1,16 +1,16 @@
 ---
-name: repo-automation-evaluate-handoff
-description: Evaluate a repo-automation handoff for a queued slice whose work was finished outside run_next, and report the supervisor's decision without changing the queue. Use when asked to check or close a queued slice from its handoff file. It does not re-check a slice that is already done.
+name: boundroom-evaluate-handoff
+description: Evaluate a Boundroom handoff for a queued slice whose work was finished outside run_next, and report the supervisor's decision without changing the queue. Use when asked to check or close a queued slice from its handoff file. It does not re-check a slice that is already done.
 license: GPL-2.0-only
 ---
 
 # Evaluate a handoff
 
-This skill runs the evaluator in the supervisor copy that `Tools/repo-automation-sync.sh` placed in the repository.
+This skill runs the evaluator in the supervisor copy that `Tools/boundroom-sync.sh` placed in the repository.
 
 ## Before you run anything
 
-1. Work from the repository root. Run `test -f automation/supervisor/evaluate_handoff.py` on its own, not joined to another command. If it fails, stop and say: "This repository has not adopted repo-automation."
+1. Work from the repository root. Run `test -f automation/supervisor/evaluate_handoff.py` on its own, not joined to another command. If it fails, stop and say: "This repository has not adopted Boundroom."
 2. Get from the user, or from the handoff and git history:
    - the slice id;
    - the handoff file;

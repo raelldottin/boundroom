@@ -492,7 +492,7 @@ class ActivitySnapshotTests(unittest.TestCase):
                 while signum == signal.SIGTERM and not cleared.exists() and time.monotonic() < deadline:
                     time.sleep(0.01)
 
-            env = {"PATH": "/usr/bin:/bin", "REPO_AUTOMATION_HERMES_USAGE_DIR": str(sessions)}
+            env = {"PATH": "/usr/bin:/bin", "BOUNDROOM_HERMES_USAGE_DIR": str(sessions)}
             try:
                 with mock.patch.object(adapter.os, "killpg", killpg_then_await_clear):
                     returncode = adapter._subprocess_runner(f"exec {sys.executable} {child}", Path(tmp), env, 2)
