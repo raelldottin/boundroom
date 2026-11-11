@@ -1,8 +1,8 @@
 site_name: repo-automation
 site_description: Reusable supervised-slice automation distribution
-site_url: https://raelldottin.github.io/repo-automation/
-repo_url: https://github.com/raelldottin/repo-automation
-repo_name: raelldottin/repo-automation
+site_url: https://raelldottin.github.io/boundroom/
+repo_url: https://github.com/raelldottin/boundroom
+repo_name: raelldottin/boundroom
 edit_uri: edit/main/docs/
 
 theme:

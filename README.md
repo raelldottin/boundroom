@@ -43,8 +43,8 @@ Each consuming repository owns its queue, validation commands, domain docs, hand
 Clone the package:
 
 ```bash
-git clone https://github.com/raelldottin/repo-automation.git
-cd repo-automation
+git clone https://github.com/raelldottin/boundroom.git
+cd boundroom
 ```
 
 Run lint and the standalone type check:
@@ -117,23 +117,23 @@ live end-to-end:
 Install from a release tag, such as `v0.2.5`, not from `main`:
 
 ```bash
-claude plugin marketplace add raelldottin/repo-automation@<tag>
+claude plugin marketplace add raelldottin/boundroom@<tag>
 claude plugin install repo-automation@repo-automation
 ```
 
 ```bash
-codex plugin marketplace add raelldottin/repo-automation@<tag>
+codex plugin marketplace add raelldottin/boundroom@<tag>
 codex plugin add repo-automation@repo-automation
 ```
 
 Hermes takes only a full commit SHA, so look up the commit the tag points to first:
 
 ```bash
-git ls-remote https://github.com/raelldottin/repo-automation.git 'refs/tags/<tag>^{}'
+git ls-remote https://github.com/raelldottin/boundroom.git 'refs/tags/<tag>^{}'
 ```
 
 ```bash
-hermes plugins install raelldottin/repo-automation#plugins/repo-automation --ref <commit-sha>
+hermes plugins install raelldottin/boundroom#plugins/repo-automation --ref <commit-sha>
 hermes plugins enable repo-automation
 ```
 

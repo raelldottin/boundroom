@@ -110,7 +110,7 @@ What the version means to a consumer:
 To verify a release, check the archive against its checksum, then confirm that the tag's commit is the one you pin:
 
 ```bash
-gh release download v0.1.0 -R raelldottin/repo-automation
+gh release download v0.1.0 -R raelldottin/boundroom
 sha256sum -c repo-automation-v0.1.0.tar.gz.sha256
 git -C <canonical-checkout> rev-parse 'v0.1.0^{commit}'
 ```
@@ -284,7 +284,7 @@ Consumer repositories can override executable names with `REPO_AUTOMATION_CODEX_
 
 The points below describe where the harness is heading. None of them changes what `run_agent.sh` does today.
 
-- **Hermes as orchestration engine.** Hermes is the preferred orchestration engine for the proposed Kanban/Hindsight/Swarm Wiki control plane (proposed in raelldottin/repo-automation#69 and raelldottin/repo-automation#70). It is **not** the supervisor's default runner: the default stays `auto`, which follows the originating harness. Claude Code and Codex remain supported execution options.
+- **Hermes as orchestration engine.** Hermes is the preferred orchestration engine for the proposed Kanban/Hindsight/Swarm Wiki control plane (proposed in raelldottin/boundroom#69 and raelldottin/boundroom#70). It is **not** the supervisor's default runner: the default stays `auto`, which follows the originating harness. Claude Code and Codex remain supported execution options.
 - **Roles are responsibilities.** Researcher, implementer, tester and reviewer are intended as logical responsibilities. They are not fixed assignments to a particular product; any supported runner may carry any of them.
 - **Two kinds of delegation.**
   - *Agent-native delegation* (available today): Claude Code may launch its own sub-agents with its existing capabilities, because the Claude Code runner sets no tool restrictions. The `delegate_task` removal is a Hermes-only toolset pin. Agent-native delegation is not supervisor-controlled delegation.
@@ -307,12 +307,12 @@ Tools/repo-automation-sync.sh --check --target /Users/raelldottin/Documents/Pers
 The external repository remote is:
 
 ```text
-https://github.com/raelldottin/repo-automation.git
+https://github.com/raelldottin/boundroom.git
 ```
 
 `main` tracks `origin/main`, and `git -C /Users/raelldottin/Documents/Personal/repo-automation rev-list --left-right --count HEAD...@{u}` returns `0 0`.
 
-The GitHub repository also exposes the SSH URL `git@github.com:raelldottin/repo-automation.git`, but this machine does not currently have GitHub SSH key authentication configured. Publication used the GitHub CLI authenticated HTTPS path.
+The GitHub repository also exposes the SSH URL `git@github.com:raelldottin/boundroom.git`, but this machine does not currently have GitHub SSH key authentication configured. Publication used the GitHub CLI authenticated HTTPS path.
 
 ## Consumer Adoption Bootstrap
 

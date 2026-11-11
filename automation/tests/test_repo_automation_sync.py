@@ -42,7 +42,7 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
         # Outside the source tree on purpose: a manifest written into the canonical checkout
         # would leave it dirty, which protection 4 correctly refuses.
         self.manifest = self.tmpdir / "manifest.json"
-        self.remote = "https://github.com/raelldottin/repo-automation.git"
+        self.remote = "https://github.com/raelldottin/boundroom.git"
 
     # --- helpers ---------------------------------------------------------
 

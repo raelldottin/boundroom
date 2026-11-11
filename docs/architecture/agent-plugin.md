@@ -18,9 +18,9 @@ All three harnesses read the same `skills/<name>/SKILL.md` layout. Each wants it
 
 | Harness | Manifest | Install |
 | --- | --- | --- |
-| Claude Code | `plugins/repo-automation/.claude-plugin/plugin.json`, listed by `.claude-plugin/marketplace.json` at the repository root | `claude plugin marketplace add raelldottin/repo-automation@<tag>`, then `claude plugin install repo-automation@repo-automation` |
-| Codex 0.166 | `plugins/repo-automation/.codex-plugin/plugin.json` (`"skills": "./skills/"`) beside the portable `plugin.json`, listed by `.agents/plugins/marketplace.json` at the repository root with a `local` source | `codex plugin marketplace add raelldottin/repo-automation@<tag>`, then `codex plugin add repo-automation@repo-automation` |
-| Hermes (`~/.hermes/hermes-agent` at `31bde0d`) | `plugins/repo-automation/plugin.json` in the portable **Agent Plugins v1** format (`$schema` `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`) | `hermes plugins install raelldottin/repo-automation#plugins/repo-automation --ref <sha>`, where `<sha>` is the full commit the tag points to (Hermes refuses a tag name), then `hermes plugins enable repo-automation`; Hermes installs portable packages disabled |
+| Claude Code | `plugins/repo-automation/.claude-plugin/plugin.json`, listed by `.claude-plugin/marketplace.json` at the repository root | `claude plugin marketplace add raelldottin/boundroom@<tag>`, then `claude plugin install repo-automation@repo-automation` |
+| Codex 0.166 | `plugins/repo-automation/.codex-plugin/plugin.json` (`"skills": "./skills/"`) beside the portable `plugin.json`, listed by `.agents/plugins/marketplace.json` at the repository root with a `local` source | `codex plugin marketplace add raelldottin/boundroom@<tag>`, then `codex plugin add repo-automation@repo-automation` |
+| Hermes (`~/.hermes/hermes-agent` at `31bde0d`) | `plugins/repo-automation/plugin.json` in the portable **Agent Plugins v1** format (`$schema` `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`) | `hermes plugins install raelldottin/boundroom#plugins/repo-automation --ref <sha>`, where `<sha>` is the full commit the tag points to (Hermes refuses a tag name), then `hermes plugins enable repo-automation`; Hermes installs portable packages disabled |
 
 Hermes's native `plugin.yaml` and `register(ctx)` format is not needed. Agent Plugins v1 discovers `skills/` with no Python, and Hermes already ignores `.claude-plugin/` and `.codex-plugin/` during discovery. Superpowers ships the same Claude and Codex manifests side by side in one repository.
 
@@ -60,7 +60,7 @@ Each skill first finds the synced copy at `<repository>/automation/`. If there i
     - A test reads the fenced command out of the run-next `SKILL.md` and runs exactly that command on the two-slice queue. That checks the invocation the skill tells agents to use, not a paraphrase of it.
 
     `--single-slice` enforces one slice only when it is used. This spec doesn't claim that a model can't run `run_next.py` some other way, or that anything caps such a run below what its caller asks for. If an untrusted worker needs a globally immutable upper bound, that is a separate trusted policy change with its own review. This spec doesn't supply or imply one. The existing rule that no worker or sub-agent may start the next slice still holds as a rule. It isn't a technical guarantee.
-2. **The runner rule stands.** `run_next` already picks the runner from the nearest enclosing harness and refuses a mismatch (raelldottin/repo-automation#68). The plugin never sets `REPO_AUTOMATION_AGENT_RUNNER`, so Claude Code runs Claude, Codex runs Codex and Hermes runs Hermes.
+2. **The runner rule stands.** `run_next` already picks the runner from the nearest enclosing harness and refuses a mismatch (raelldottin/boundroom#68). The plugin never sets `REPO_AUTOMATION_AGENT_RUNNER`, so Claude Code runs Claude, Codex runs Codex and Hermes runs Hermes.
 3. **No hooks, MCP servers or daemons.** Nothing runs at session start or on a tool call, and there is no server process. An MCP server would edge toward the "no coordination daemon" rule in SPEC-001 and would need its own design decision.
 4. **No credentials.** The plugin holds no keys. The Hindsight and Kanban flags of `run_next` keep reading their credentials the way they do now.
 5. **Consumers still change only through a pull request.** `repo-automation-sync` is the existing sync script with a confirmation in front of it. It never commits to a consumer's default branch.
@@ -107,8 +107,8 @@ The owner confirmed these decisions in reviewing this spec. Agents do not choose
 
 | Tool | Install |
 | --- | --- |
-| Claude Code | `claude plugin marketplace add raelldottin/repo-automation@v0.2.1`, then `claude plugin install repo-automation@repo-automation` |
-| Codex 0.166 | `codex plugin marketplace add raelldottin/repo-automation@v0.2.1` cloned the tag and resolved `.agents/plugins/marketplace.json`; then `codex plugin add repo-automation@repo-automation` |
+| Claude Code | `claude plugin marketplace add raelldottin/boundroom@v0.2.1`, then `claude plugin install repo-automation@repo-automation` |
+| Codex 0.166 | `codex plugin marketplace add raelldottin/boundroom@v0.2.1` cloned the tag and resolved `.agents/plugins/marketplace.json`; then `codex plugin add repo-automation@repo-automation` |
 | Hermes | `--ref v0.2.1` was refused: `--ref` must be a full 40-character commit SHA. `--ref 8daaeb422aa06fda8be242ad1d8af775eaf0c51a`, the tag's commit, installed; then `hermes plugins enable repo-automation` |
 
 ## Rollout
@@ -128,7 +128,7 @@ The owner approved the trial. It ran against **Owlory**, which has no eligible s
 
 | Step | Result |
 | --- | --- |
-| Install | `claude plugin marketplace add raelldottin/repo-automation@v0.2.0`, then `claude plugin install repo-automation@repo-automation`. `0.2.0` enabled at user scope in the operator's real Claude Code. Codex and Hermes were proven only in throwaway homes during implementation. |
+| Install | `claude plugin marketplace add raelldottin/boundroom@v0.2.0`, then `claude plugin install repo-automation@repo-automation`. `0.2.0` enabled at user scope in the operator's real Claude Code. Codex and Hermes were proven only in throwaway homes during implementation. |
 | `repo-automation-status` | A headless Claude Code session, allowed only to read and to run `run_next.py`, ran `run_next.py --dry-run --include-blocked`. It reported no eligible slice and the eight blocked or deferred slices with their unblockers. The clone was unchanged. |
 | `repo-automation-run-next` on the old copy | Owlory's synced copy was from `751c851` (2026-09-28) and has no `--single-slice`. The skill read `--help`, said the copy was too old, and stopped. It ran no slice and wrote no handoff. |
 | `repo-automation-sync` | From a clean `v0.2.0` checkout, `--check` passed every provenance gate: pin, origin, clean source and quality gate. It reported 33 differences (19 changed, 14 missing). `--sync` applied them. The lock pin was updated, and Owlory's own `make repo-automation-check` reported `target is current`. Delivered as owlory/owlory#4 (34 files), which the owner merged as `ae1c4bd`. Owlory's `main` now pins `d516e8d`. |

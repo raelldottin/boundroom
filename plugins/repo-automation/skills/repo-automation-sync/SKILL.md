@@ -21,7 +21,7 @@ If any of these is missing or unclear, ask.
 From the repo-automation checkout:
 
 ```bash
-Tools/repo-automation-sync.sh --check --target <consumer-path> --pin <full-sha> --expect-remote https://github.com/raelldottin/repo-automation.git
+Tools/repo-automation-sync.sh --check --target <consumer-path> --pin <full-sha> --expect-remote https://github.com/raelldottin/boundroom.git
 ```
 
 `--check` reports drift and changes nothing. The script refuses a dirty source, a source at a different commit than the pin, a source with the wrong origin, or a source that fails its own quality gate. Report what it says. Don't bypass a refusal, and never use `--allow-unverified-source` here.

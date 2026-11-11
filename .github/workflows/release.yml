@@ -179,5 +179,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "$TAG" \
-            --notes "Manifest-owned tree of raelldottin/repo-automation at commit $COMMIT. Consumers sync from this tag; see docs/workflows/repo-automation.md#releases." \
+            --notes "Manifest-owned tree of raelldottin/boundroom at commit $COMMIT. Consumers sync from this tag; see docs/workflows/repo-automation.md#releases." \
             "${flags[@]}"

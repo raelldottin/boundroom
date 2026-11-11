@@ -4,7 +4,7 @@
 
 **What this page can and can't claim.** SOC 2 is an auditor's report on an organization's controls over a period. A repository can't "be SOC 2 compliant" on its own. What it can be is audit-ready: its controls are defined, enforced where possible, and leave evidence an auditor can sample. Nothing here is an attestation.
 
-**How each control is held.** **Enforced** means GitHub or a workflow blocks the action. **Process** means [AGENTS.md](https://github.com/raelldottin/repo-automation/blob/main/AGENTS.md) requires it but nothing blocks it. **Gap** means it is not in place.
+**How each control is held.** **Enforced** means GitHub or a workflow blocks the action. **Process** means [AGENTS.md](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md) requires it but nothing blocks it. **Gap** means it is not in place.
 
 ## Change management: SOC 2 CC8.1; CIS 1.1, code changes
 
@@ -63,7 +63,7 @@ These are repository and account security settings. The agent doesn't change the
 2. **Require review on `main`.** Done on 2026-11-10. The `main` ruleset's pull request rule requires one approving review, code-owner review, dismissal of stale approvals on push, and approval of the last push. This is the command that set it:
 
    ```bash
-   gh api repos/raelldottin/repo-automation/rulesets/25254426 | jq '{name, target, enforcement, conditions, bypass_actors, rules: [.rules[] | if .type == "pull_request" then .parameters |= (.required_approving_review_count = 1 | .require_code_owner_review = true | .dismiss_stale_reviews_on_push = true | .require_last_push_approval = true) else . end]}' | gh api -X PUT repos/raelldottin/repo-automation/rulesets/25254426 --input -
+   gh api repos/raelldottin/boundroom/rulesets/25254426 | jq '{name, target, enforcement, conditions, bypass_actors, rules: [.rules[] | if .type == "pull_request" then .parameters |= (.required_approving_review_count = 1 | .require_code_owner_review = true | .dismiss_stale_reviews_on_push = true | .require_last_push_approval = true) else . end]}' | gh api -X PUT repos/raelldottin/boundroom/rulesets/25254426 --input -
    ```
 
    The CIS guide recommends two approvers. With one maintainer, one approving review plus required checks is the achievable control. Record that as a known deviation.
@@ -71,11 +71,11 @@ These are repository and account security settings. The agent doesn't change the
 4. **Turn on Dependabot alerts, then Dependabot security updates.** Security updates fail while alerts are off, so run these in order:
 
    ```bash
-   gh api -X PUT repos/raelldottin/repo-automation/vulnerability-alerts
+   gh api -X PUT repos/raelldottin/boundroom/vulnerability-alerts
    ```
 
    ```bash
-   gh api -X PUT repos/raelldottin/repo-automation/automated-security-fixes
+   gh api -X PUT repos/raelldottin/boundroom/automated-security-fixes
    ```
 
 5. **Turn on code scanning** (CodeQL default setup, free for public repositories): **Settings → Code security → Code scanning → Default**.

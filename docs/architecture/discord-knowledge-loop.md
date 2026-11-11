@@ -1,6 +1,6 @@
 # SPEC-003: Discord knowledge loop (planned, not deployed)
 
-**Status:** design and roadmap proposal, 2026-11-09. **Epic:** [RA-KNOW-000](https://github.com/raelldottin/repo-automation/issues/173). **Depends on:** [SPEC-001](control-plane.md), [Hindsight interface](memory-interface.md), [Swarm Wiki compiler pin](swarm-wiki-compiler.md), and [product roadmap](../product-roadmap.md).
+**Status:** design and roadmap proposal, 2026-11-09. **Epic:** [RA-KNOW-000](https://github.com/raelldottin/boundroom/issues/173). **Depends on:** [SPEC-001](control-plane.md), [Hindsight interface](memory-interface.md), [Swarm Wiki compiler pin](swarm-wiki-compiler.md), and [product roadmap](../product-roadmap.md).
 
 ## Decision and product boundary
 
@@ -78,11 +78,11 @@ Scheduling is explicitly restricted to knowledge maintenance. No overnight code-
 
 | Slice | Output | Acceptance |
 | --- | --- | --- |
-| [RA-KNOW-001](https://github.com/raelldottin/repo-automation/issues/174) | Opt-in capture contract and adapters | Reversible incremental ingest; permission/edit/delete and sensitive-content tests; no blanket DM capture |
-| [RA-KNOW-002](https://github.com/raelldottin/repo-automation/issues/175) | Provenance-preserving evidence → Hindsight → Wiki pipeline | Source-kind aware verification, complete deterministic snapshots, independently reproducible `--check` and denial tests |
-| [RA-KNOW-003](https://github.com/raelldottin/repo-automation/issues/176) | Read-only Discord Q&A and reviewed sharing | User + destination ACL enforced; citations and abstention; no cross-channel private leakage; no supervisor access |
-| [RA-KNOW-004](https://github.com/raelldottin/repo-automation/issues/177) | Bounded nightly processing / weekly curation | Operator opt-in; fake clock/crash/backfill tests; no loss of canonical evidence or automatic policy writes |
-| [RA-KNOW-005](https://github.com/raelldottin/repo-automation/issues/178) | Permission-aware retrieval evaluation and quality release gate | Reproducible seeded cases, before/after reports, zero access-control regression, no cost-bearing calls in ordinary CI |
+| [RA-KNOW-001](https://github.com/raelldottin/boundroom/issues/174) | Opt-in capture contract and adapters | Reversible incremental ingest; permission/edit/delete and sensitive-content tests; no blanket DM capture |
+| [RA-KNOW-002](https://github.com/raelldottin/boundroom/issues/175) | Provenance-preserving evidence → Hindsight → Wiki pipeline | Source-kind aware verification, complete deterministic snapshots, independently reproducible `--check` and denial tests |
+| [RA-KNOW-003](https://github.com/raelldottin/boundroom/issues/176) | Read-only Discord Q&A and reviewed sharing | User + destination ACL enforced; citations and abstention; no cross-channel private leakage; no supervisor access |
+| [RA-KNOW-004](https://github.com/raelldottin/boundroom/issues/177) | Bounded nightly processing / weekly curation | Operator opt-in; fake clock/crash/backfill tests; no loss of canonical evidence or automatic policy writes |
+| [RA-KNOW-005](https://github.com/raelldottin/boundroom/issues/178) | Permission-aware retrieval evaluation and quality release gate | Reproducible seeded cases, before/after reports, zero access-control regression, no cost-bearing calls in ordinary CI |
 
 **Dependency and prioritization:** the **design and hermetic adapter/tests** can proceed separately from supervisor deployment. A **live** capture/answer/wiki canary depends on accepted Hindsight/Wiki component evidence (product H2), scoped Discord permissions, local model/egress decisions, data-retention review and operator-approved hosting. It does **not** depend on or authorize a supervisor/Kanban writeback cutover (product H3); these systems remain separate.
 
