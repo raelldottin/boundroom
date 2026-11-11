@@ -30,7 +30,7 @@ The agent never weakens, bypasses or disables a control to make progress. When a
 
 ## Control-Plane Architecture and Roadmap Priority
 
-Before architecture or new feature work, read [SPEC-001](docs/architecture/control-plane.md) and [the roadmap](docs/roadmap.md). The proposed top layer is **Hermes Kanban**, **self-hosted Hindsight memory** and a **generated Swarm Wiki**, with distinct canonical owners and the deterministic repo-automation supervisor beneath it. **This is a proposed target, not an installed integration.**
+Before architecture or new feature work, read [SPEC-001](docs/architecture/control-plane.md) and [the roadmap](docs/roadmap.md). The proposed top layer is **Hermes Kanban**, **self-hosted Hindsight memory** and a **generated Swarm Wiki**, with distinct canonical owners and the deterministic Boundroom supervisor beneath it. **This is a proposed target, not an installed integration.**
 
 - Prioritize the P0 adapter/inventory/canary acceptance gate before expanding the supervisor roadmap.
 - **Benchmark exemption.** Benchmark and effectiveness work is exempt from the P0 ordering by owner decision. Do not defer, pause or refuse benchmark work because P0 is incomplete. Each run, model, provider or budget change needs a person's approval (Agent Authority and Human Approval, above).
@@ -78,9 +78,9 @@ Agents MUST NOT hand-build, upload, or edit a release asset, and MUST NOT move o
 
 ### Consumer Repositories
 
-Consumers receive changes only through `Tools/repo-automation-sync.sh`, driven by `automation/reusable-manifest.json`, from a released tag or a pinned commit. The result lands through a pull request in the consumer repository.
+Consumers receive changes only through `Tools/boundroom-sync.sh`, driven by `automation/reusable-manifest.json`, from a released tag or a pinned commit. The result lands through a pull request in the consumer repository.
 
-An agent MAY deliver a sync to a consumer, but only as a reviewable pull request: run the sync script from a released tag or a pinned commit, commit exactly its result, and the consumer's lock pin as described below, on a new branch, push that branch, and open a pull request against the consumer's default branch. This is what the plugin's `repo-automation-sync` skill does, after the user's go-ahead.
+An agent MAY deliver a sync to a consumer, but only as a reviewable pull request: run the sync script from a released tag or a pinned commit, commit exactly its result, and the consumer's lock pin as described below, on a new branch, push that branch, and open a pull request against the consumer's default branch. This is what the plugin's `boundroom-sync` skill does, after the user's go-ahead.
 
 Agents MUST NOT:
 
@@ -96,20 +96,20 @@ Agents MUST NOT:
 
 If the head changes after the approval, the agent asks again.
 
-**The consumer's lock.** The sync script refuses to write `automation/repo-automation.lock`, because the consumer's `make` runs what its pin names. A consumer that keeps a lock checks its vendored files against that pin before a push: Owlory's pre-push hook runs `make repo-automation-check`, so a sync committed under the old pin cannot be pushed. In the same commit as the sync result, an agent MAY set the lock's `commit` to the full SHA it passed as `--pin`, and `imported_at` to the import time, after showing the owner those values and getting a yes. It MUST NOT change any other field of the lock, including `remote` and `repository`, and MUST NOT skip the consumer's hooks to push.
+**The consumer's lock.** The lock is `automation/boundroom.lock`, or `automation/repo-automation.lock` in a consumer that adopted before the 0.3.0 rename ([SPEC-005](docs/architecture/boundroom-rename.md)); the rules here apply to either name, and renaming the file is the consumer owner's change. The sync script refuses to write either, because the consumer's `make` runs what its pin names. A consumer that keeps a lock checks its vendored files against that pin before a push: Owlory's pre-push hook runs `make repo-automation-check`, so a sync committed under the old pin cannot be pushed. In the same commit as the sync result, an agent MAY set the lock's `commit` to the full SHA it passed as `--pin`, and `imported_at` to the import time, after showing the owner those values and getting a yes. It MUST NOT change any other field of the lock, including `remote` and `repository`, and MUST NOT skip the consumer's hooks to push.
 
 Automatic consumer updates, including Owlory, are not implemented. Every sync starts from a person's request.
 
 ### Agent-Harness Plugin
 
-[SPEC-002](docs/architecture/agent-plugin.md) specifies one optional plugin for Claude Code, Codex and Hermes. It lives in `plugins/repo-automation/`, with its catalogs at `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. It is **released**, first in `v0.2.0`. Install it from a release tag, not from an untagged commit on `main`.
+[SPEC-002](docs/architecture/agent-plugin.md) specifies one optional plugin for Claude Code, Codex and Hermes. It lives in `plugins/boundroom/`, with its catalogs at `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. It is **released**, first in `v0.2.0`. Install it from a release tag, not from an untagged commit on `main`.
 
-The plugin is a front end, not another supervisor or authority. It is skills and manifests only. Its skills drive the supervisor copy that `Tools/repo-automation-sync.sh` placed in the repository being worked on. That synced copy, its queue and the supervisor's gates remain the authority. A repository without a synced copy has nothing for the plugin to run.
+The plugin is a front end, not another supervisor or authority. It is skills and manifests only. Its skills drive the supervisor copy that `Tools/boundroom-sync.sh` placed in the repository being worked on. That synced copy, its queue and the supervisor's gates remain the authority. A repository without a synced copy has nothing for the plugin to run.
 
 Agents MUST NOT:
 
 - put supervisor, policy, queue or schema code in the plugin, or let it fall back to a bundled copy;
-- use the plugin to deliver repo-automation to a consumer, or to change a consumer except through the sync script and a pull request;
+- use the plugin to deliver Boundroom to a consumer, or to change a consumer except through the sync script and a pull request;
 - add a hook, MCP server or background process to the plugin without a separate design decision;
 - describe a skill's instructions as enforcement. One slice per invocation is enforced only by `run_next.py --single-slice` when it is used, and the queue's `consecutive_autonomous_limit` is a default a caller can override, not a ceiling.
 

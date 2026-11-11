@@ -42,7 +42,7 @@ The following are **implementation gaps to verify per repository**, not unsuppor
 8. Production release, signing, promotion, merge of agent-authored changes, rule changes and Git tag changes require the repository owner's explicit approval on the specific head/artifact. No prior consent automatically transfers to a new SHA.
 9. Prefer declarative, pull/reconcile deployment where platform permits; observe desired versus actual state, alert on drift, preserve manual recovery authority. Never install Kubernetes/ArgoCD purely for a label.
 10. Document the executed checks, exact test outcomes, security findings, validation gaps, evidence level and clean-stop status. Missing environment/credentials means BLOCKED, not PASS.
-11. Preserve existing consumer lock/pin, Tools/repo-automation-sync.sh and reusable-manifest rules. Never independently update consumer pins or auto-merge synchronized changes without the owner's separate authorization.
+11. Preserve existing consumer lock/pin, Tools/boundroom-sync.sh and reusable-manifest rules. Never independently update consumer pins or auto-merge synchronized changes without the owner's separate authorization.
 
 ## Platform adapters (choose one; do not enforce an incompatible universal deploy workflow)
 
@@ -58,7 +58,7 @@ The following are **implementation gaps to verify per repository**, not unsuppor
 
 R0 INVENTORY: List active owned repos, real branch and CI checks, AGENTS.md present/absent, environment, release owner, existing test proof and sensitive boundaries.
 
-R1 STANDARD: Version and review this policy through repo-automation PR; do not rewrite the existing supervisor/control plane, consumers' locks or branch policies.
+R1 STANDARD: Version and review this policy through Boundroom PR; do not rewrite the existing supervisor/control plane, consumers' locks or branch policies.
 
 R2 PILOT: Use raelldottin/climate-closet-ios, issue #2. Create a docs/AGENTS PR before changing automation; separately implement a minimal CI policy/negative test gate. Do not add Apple signing/upload secrets until a separately approved promotion milestone.
 

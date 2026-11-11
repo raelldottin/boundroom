@@ -46,7 +46,7 @@ The adapter talks REST with the standard library. It doesn't use the generated P
 
 ## A bank ID is not authorization
 
-Every call names the caller's project and the bank it wants. `authorize` refuses the call unless the map grants that project that exact bank and that operation. A refused call raises `MemoryAccessError` (a `policy.ConfigError`) and never reaches the network. A `401` or `403` from the server is also a `MemoryAccessError`. Bank isolation on the server itself (tenant keys, network reachability) is still the deployment's job. This check only stops repo-automation from asking for another project's bank.
+Every call names the caller's project and the bank it wants. `authorize` refuses the call unless the map grants that project that exact bank and that operation. A refused call raises `MemoryAccessError` (a `policy.ConfigError`) and never reaches the network. A `401` or `403` from the server is also a `MemoryAccessError`. Bank isolation on the server itself (tenant keys, network reachability) is still the deployment's job. This check only stops Boundroom from asking for another project's bank.
 
 ## Provenance
 

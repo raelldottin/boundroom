@@ -86,9 +86,9 @@ class KilledPhaseDurabilityTests(unittest.TestCase):
         env = dict(os.environ)
         env.update(
             {
-                "REPO_AUTOMATION_AGENT_RUNNER": "hermes",
-                "REPO_AUTOMATION_HERMES_BIN": str(hermes),
-                "REPO_AUTOMATION_HERMES_USAGE_DIR": str(sessions_dir),
+                "BOUNDROOM_AGENT_RUNNER": "hermes",
+                "BOUNDROOM_HERMES_BIN": str(hermes),
+                "BOUNDROOM_HERMES_USAGE_DIR": str(sessions_dir),
             }
         )
 

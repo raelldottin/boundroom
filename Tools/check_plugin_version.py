@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-PLUGIN = Path("plugins/repo-automation")
+PLUGIN = Path("plugins/boundroom")
 MANIFESTS = ("plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
 EX_USAGE = 64
 

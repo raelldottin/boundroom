@@ -50,7 +50,9 @@ COMPARISON_MARKDOWN = "lane-comparison.md"
 
 # Recorded so a result can be reproduced. Anything key-like is redacted, never stored.
 PROVENANCE_ENV_KEYS = (
-    "REPO_AUTOMATION_AGENT_RUNNER",
+    "BOUNDROOM_AGENT_RUNNER",
+    "BOUNDROOM_CLAUDE_PERMISSION_MODE",
+    "REPO_AUTOMATION_AGENT_RUNNER",  # pre-0.3.0 names (SPEC-005), still honoured
     "REPO_AUTOMATION_CLAUDE_PERMISSION_MODE",
     "OPENAI_BASE_URL",
     "OPENAI_MODEL",

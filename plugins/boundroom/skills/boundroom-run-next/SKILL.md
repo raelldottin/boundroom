@@ -1,19 +1,19 @@
 ---
-name: repo-automation-run-next
-description: Run exactly one queued slice through this repository's repo-automation supervisor, then stop and report the handoff and the stop reason. Use when asked to run the next slice, advance the queue by one, or start supervised work in a repository that has adopted repo-automation.
+name: boundroom-run-next
+description: Run exactly one queued slice through this repository's Boundroom supervisor, then stop and report the handoff and the stop reason. Use when asked to run the next slice, advance the queue by one, or start supervised work in a repository that has adopted Boundroom.
 license: GPL-2.0-only
 ---
 
 # Run the next slice
 
-This skill drives the supervisor that `Tools/repo-automation-sync.sh` copied into the repository you are working in. That copy, its queue and its gates decide what runs. This skill only starts it.
+This skill drives the supervisor that `Tools/boundroom-sync.sh` copied into the repository you are working in. That copy, its queue and its gates decide what runs. This skill only starts it.
 
 ## Before you run anything
 
 Run each check as its own command. Don't join them with `&&`, `;` or a pipe: a harness with a narrow command allowlist can refuse the combined form.
 
-1. Work from the repository root. Run `test -f automation/supervisor/run_next.py`. If it fails, stop and say: "This repository has not adopted repo-automation."
-2. Run `python3 automation/supervisor/run_next.py --help` and read its output for `--single-slice`. If it isn't listed, stop and say the synced copy is too old for this plugin and needs a sync to a newer repo-automation release.
+1. Work from the repository root. Run `test -f automation/supervisor/run_next.py`. If it fails, stop and say: "This repository has not adopted Boundroom."
+2. Run `python3 automation/supervisor/run_next.py --help` and read its output for `--single-slice`. If it isn't listed, stop and say the synced copy is too old for this plugin and needs a sync to a newer Boundroom release.
 
 ## The one supported command
 

@@ -1,6 +1,6 @@
 """Guards on the canonical -> consumer import path.
 
-repo-automation is the canonical source of reusable automation. Consumers vendor a pinned
+Boundroom is the canonical source of reusable automation. Consumers vendor a pinned
 snapshot of it and never write back. These tests pin the nine protections that make that
 direction unbreakable; they are the canonical copy, and consumers are expected to keep
 their own equivalents against their vendored checkout.
@@ -20,20 +20,20 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SYNC_TOOL = REPO_ROOT / "Tools" / "repo-automation-sync.sh"
+SYNC_TOOL = REPO_ROOT / "Tools" / "boundroom-sync.sh"
 
 
-class RepoAutomationImportGuardTests(unittest.TestCase):
+class BoundroomImportGuardTests(unittest.TestCase):
     """The nine protections that make the canonical -> consumer direction unbreakable.
 
-    repo-automation is canonical and Owlory vendors a pinned snapshot of it. Every test
+    Boundroom is canonical and Owlory vendors a pinned snapshot of it. Every test
     here drives the real tool the way `make repo-automation-import` drives it: a pinned,
     published, clean canonical source importing into a consumer checkout. Each protection
     must exit non-zero and leave the filesystem untouched.
     """
 
     def setUp(self) -> None:
-        self.tmpdir = Path(tempfile.mkdtemp(prefix="repo-automation-guard-"))
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="boundroom-guard-"))
         self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
         self.source = self.tmpdir / "canonical"
         self.target = self.tmpdir / "consumer"
@@ -342,7 +342,7 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
 
     def test_3_source_repository_identity_must_match_the_lock(self) -> None:
         pin = self.canonical_source_with()
-        self.git(self.source, "remote", "set-url", "origin", "https://github.com/attacker/repo-automation.git")
+        self.git(self.source, "remote", "set-url", "origin", "https://github.com/attacker/boundroom.git")
         self.write_manifest([self.entry("seed.txt", "seed.txt")])
 
         result = self.run_tool("--sync", pin=pin)
@@ -461,19 +461,26 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
         must never be able to write it - the manifest comes from the same place an attacker
         would be.
         """
+        self.assert_lock_is_refused("automation/boundroom.lock")
+
+    def test_5d_the_lock_name_from_before_the_rename_is_still_consumer_owned(self) -> None:
+        """SPEC-005: a consumer synced before 0.3.0 keeps its lock under the old name."""
+        self.assert_lock_is_refused("automation/repo-automation.lock")
+
+    def assert_lock_is_refused(self, lock: str) -> None:
         self.init_canonical_source()
         self.write_source("payload.txt", "payload\n")
         pin = self.publish_source()
         self.init_consumer()
-        self.write_target("automation/repo-automation.lock", '{"commit": "real"}\n')
+        self.write_target(lock, '{"commit": "real"}\n')
         self.commit_consumer()
-        self.write_manifest([self.entry("payload.txt", "automation/repo-automation.lock")])
+        self.write_manifest([self.entry("payload.txt", lock)])
 
         result = self.run_tool("--sync", pin=pin)
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("destination", result.stderr)
-        self.assertIn("real", (self.target / "automation/repo-automation.lock").read_text(encoding="utf-8"))
+        self.assertIn("real", (self.target / lock).read_text(encoding="utf-8"))
 
     # --- protection 6 ----------------------------------------------------
 
@@ -664,7 +671,7 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
         pin = self.canonical_source_with(("tool.py", "canonical\n"))
         self.write_manifest([self.entry("tool.py", "vendored/tool.py")])
 
-        result = self.run_tool("--sync", pin=pin, quality_command="repo-automation-no-such-gate")
+        result = self.run_tool("--sync", pin=pin, quality_command="boundroom-no-such-gate")
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("could not run the canonical quality gate", result.stderr)
@@ -730,12 +737,12 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
         self.assertEqual("canonical\n", (self.target / "vendored/tool.py").read_text(encoding="utf-8"))
 
     def test_9_absent_runtime_dependency_is_refused_before_any_write(self) -> None:
-        pin = self.stage_runtime_case(self.runtime_block("repo-automation-not-a-real-distribution", 1, 2))
+        pin = self.stage_runtime_case(self.runtime_block("boundroom-not-a-real-distribution", 1, 2))
 
         result = self.run_tool("--sync", pin=pin, runtime_python=sys.executable)
 
         self.assertNotEqual(0, result.returncode)
-        self.assertIn("missing_runtime_dependency: repo-automation-not-a-real-distribution>=1,<2", result.stderr)
+        self.assertIn("missing_runtime_dependency: boundroom-not-a-real-distribution>=1,<2", result.stderr)
         self.assertFalse((self.target / "vendored/tool.py").exists())
 
     def test_9_runtime_dependency_below_the_supported_major_is_refused(self) -> None:
@@ -775,7 +782,7 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
         self.assertEqual("canonical\n", (self.target / "vendored/tool.py").read_text(encoding="utf-8"))
 
     def test_9_pinned_check_verifies_the_consumer_runtime_too(self) -> None:
-        pin = self.stage_runtime_case(self.runtime_block("repo-automation-not-a-real-distribution", 1, 2))
+        pin = self.stage_runtime_case(self.runtime_block("boundroom-not-a-real-distribution", 1, 2))
 
         result = self.run_tool("--check", pin=pin, runtime_python=sys.executable)
 
@@ -784,7 +791,7 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
 
     def test_9_allow_unverified_source_does_not_waive_the_runtime_check(self) -> None:
         """That flag says the source is trusted, not that the consumer can run the code."""
-        self.stage_runtime_case(self.runtime_block("repo-automation-not-a-real-distribution", 1, 2))
+        self.stage_runtime_case(self.runtime_block("boundroom-not-a-real-distribution", 1, 2))
 
         result = self.run_tool("--sync", "--allow-unverified-source", runtime_python=sys.executable)
 
@@ -822,6 +829,29 @@ class RepoAutomationImportGuardTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, msg=result.stderr)
         self.assertEqual((REPO_ROOT / "COPYING").read_bytes(), (self.target / "automation/COPYING").read_bytes())
         self.assertFalse((self.target / "COPYING").exists())
+
+
+class PreRenameNamesTests(unittest.TestCase):
+    """SPEC-005: what a consumer synced before 0.3.0 still calls keeps working."""
+
+    def test_the_old_script_path_runs_the_renamed_script(self) -> None:
+        old = REPO_ROOT / "Tools" / "repo-automation-sync.sh"
+        self.assertTrue(os.access(old, os.X_OK))
+        result = subprocess.run([str(old), "--help"], capture_output=True, text=True, check=False)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("--target", result.stdout)
+        self.assertIn("renamed to boundroom-sync.sh", result.stderr)
+
+    def test_the_manifest_still_delivers_the_old_names(self) -> None:
+        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+        destinations = {entry["destination"] for entry in manifest["entries"]}
+        for path in (
+            "Tools/boundroom-sync.sh",
+            "Tools/repo-automation-sync.sh",
+            "docs/workflows/boundroom.md",
+            "docs/workflows/repo-automation.md",
+        ):
+            self.assertIn(path, destinations)
 
 
 if __name__ == "__main__":

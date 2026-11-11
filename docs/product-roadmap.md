@@ -1,4 +1,4 @@
-# Product roadmap: repo-automation
+# Product roadmap: Boundroom
 
 **Snapshot:** 2026-11-10 (original capability audit: 2026-11-03) | **Planning status:** proposed product priorities; not an execution authorization | **Current published release:** [v0.2.4](https://github.com/raelldottin/boundroom/releases/tag/v0.2.4)
 
@@ -8,7 +8,7 @@ This is the **product roadmap and source of truth for priorities, outcomes, sequ
 
 ## 1. Product thesis
 
-**repo-automation makes AI-assisted repository work bounded, reproducible and reviewable.** A person or authorized control plane chooses a narrow slice. The deterministic supervisor enforces eligibility, scope, validation, evidence and a clean stop. The runner can be Hermes, Claude Code or Codex; neither an agent's reasoning nor a memory or wiki summary grants execution authority.
+**Boundroom makes AI-assisted repository work bounded, reproducible and reviewable.** A person or authorized control plane chooses a narrow slice. The deterministic supervisor enforces eligibility, scope, validation, evidence and a clean stop. The runner can be Hermes, Claude Code or Codex; neither an agent's reasoning nor a memory or wiki summary grants execution authority.
 
 **The job to be done:** “I need an AI agent to make one well-scoped repository change, show what it touched and verified, stop safely, and let me decide what happens next—across my different repositories and agent tools.”
 
@@ -16,7 +16,7 @@ The long-term product is an **open, self-hostable agentic software-delivery cont
 - **Hermes Kanban** for human-visible canonical work state and approvals;
 - **Hindsight** for isolated, durable, source-attributed project memory;
 - **Swarm Wiki** for deterministic, versioned knowledge publications; and
-- the **repo-automation supervisor** as the sole execution and continuation authority.
+- the **Boundroom supervisor** as the sole execution and continuation authority.
 
 These are complementary responsibilities, not four competing task stores. The plugin is a thin operator interface to a *consumer's synced copy*, not an additional supervisor.
 
@@ -42,8 +42,8 @@ Use three statuses consistently: **SHIPPED** means code or a release exists; **P
 | Capability | Evidence as of 2026-11-03 | Product status and limitation |
 | --- | --- | --- |
 | Deterministic slice supervisor | `automation/supervisor/`, Pydantic/JSON schemas, replayed validations, bounded diffs, handoffs, runner selection and `run_next.py --single-slice` tests | **SHIPPED**. `--single-slice` limits an invocation only when supplied; the queue's ordinary autonomous limit remains caller-overridable. |
-| Versioned consumer distribution | `Tools/repo-automation-sync.sh`, reusable manifest, GPL `automation/COPYING` export, provenance/pin checks and release archive | **SHIPPED**. Consumer changes still require an explicit PR and owner-controlled merge; no automatic updates. |
-| Portable agent plugin | [SPEC-002](architecture/agent-plugin.md), `plugins/repo-automation/`, four shared skills, three-harness manifest/install tests; [v0.2.0](https://github.com/raelldottin/boundroom/releases/tag/v0.2.0) through v0.2.4 | **SHIPPED**, including a limited [Owlory trial](architecture/agent-plugin.md#rollout-trial-step-6-2026-11-02). The run-next trial stopped cleanly with no eligible slice; it did not prove a full live production slice. |
+| Versioned consumer distribution | `Tools/boundroom-sync.sh`, reusable manifest, GPL `automation/COPYING` export, provenance/pin checks and release archive | **SHIPPED**. Consumer changes still require an explicit PR and owner-controlled merge; no automatic updates. |
+| Portable agent plugin | [SPEC-002](architecture/agent-plugin.md), `plugins/boundroom/`, four shared skills, three-harness manifest/install tests; [v0.2.0](https://github.com/raelldottin/boundroom/releases/tag/v0.2.0) through v0.2.4 | **SHIPPED**, including a limited [Owlory trial](architecture/agent-plugin.md#rollout-trial-step-6-2026-11-02). The run-next trial stopped cleanly with no eligible slice; it did not prove a full live production slice. |
 | GitOps, quality and security gates | `AGENTS.md`; five required checks; Python 3.11/3.12; full-suite coverage with an **88% floor**; dependency review/audit; release tag/manifest guards | **SHIPPED**. The 90.04% full-suite coverage figure was measured in the [#139 validation](https://github.com/raelldottin/boundroom/pull/139), not promised as a future constant. |
 | Read-only Kanban projection | [RA-CP-002](architecture/kanban-projection.md); deterministic overlay, shadow comparison and stale/foreign/unapproved-task refusals | **SHIPPED as opt-in adapter / PROVEN IN TESTS**. JSON queue is still the default. |
 | Kanban claim and status write-back | [RA-CP-005](architecture/kanban-cutover.md); real Hermes CLI test and dedicated two-task scripted canary (2026-10-29) | **PROVEN IN A BOUNDED TEST**. Not a fleet cutover; no claimed race proof with the gateway or real-model full-control-plane canary. |
@@ -251,7 +251,7 @@ Metrics must be generated from independently inspectable receipts. The targets b
 - **Version/release:** tags are `vMAJOR.MINOR.PATCH[-prerelease]` on `main`; release workflow verifies ancestry and manifest version and ships the manifest-owned archive plus checksum. New tags require specific maintainer authorization. A proposed horizon does not itself authorize a release.
 - **Consumer deployment:** use a released tag/pinned SHA, provenance and `--check` first, review actual file diff, carry consumer lock when required, then a consumer PR and an explicit owner merge decision. Do not force a consumer upgrade because this source repository releases.
 - **Runtime/control-plane:** a new real board, Hindsight bank, credential, provider, storage location, automatic dispatch setting or external network route needs scoped operator approval and independent rollback evidence.
-- **License boundary:** the repo-automation code and distributed files are GPL-2.0-only; this does not automatically relicense separately authored application code. Preserve upstream notices and check packaging/combined-work obligations case by case. A fully self-hosted open-source runtime remains subject to the model, ByteRover-history and transitive-dependency audit.
+- **License boundary:** the Boundroom code and distributed files are GPL-2.0-only; this does not automatically relicense separately authored application code. Preserve upstream notices and check packaging/combined-work obligations case by case. A fully self-hosted open-source runtime remains subject to the model, ByteRover-history and transitive-dependency audit.
 - **Research boundary:** ProgramBench runs can proceed in parallel only under their own explicit provider, model, experiment and budget approval, with isolation from live boards, banks and Wikis.
 
 **Go/no-go packet for every milestone:** exact refs, scope/owners, dependencies, tests and failures, security/license assessment, benchmark/egress evidence if applicable, migration/rollback plan, observed metrics and a written maintainer decision. Missing evidence means **NO-GO**, even if CI is green.
@@ -282,7 +282,7 @@ Metrics must be generated from independently inspectable receipts. The targets b
 
 **Still requiring a maintainer decision:** which Discord guilds/channels and source categories to opt in, allowed response/publishing destinations, retention/deletion policy, bot credentials and deployment boundary, nightly/weekly activation and first live canary; local model and weight set, Hindsight inference/reflect route and hosting, byte-for-byte/semantic memory migration policy, claim renewal or TTL policy, whether Wiki CI becomes required, first real consumer for H3, initial fleet set, 1.0 support commitments, exact release tags and any change to benchmark budgets.
 
-**Evidence references, not substitutes for live acceptance:** [technical roadmap](roadmap.md), [SPEC-001](architecture/control-plane.md), [RA-CP-001 inventory](architecture/control-plane-inventory.md), [Kanban projection](architecture/kanban-projection.md), [Kanban write-back and canary](architecture/kanban-cutover.md), [Hindsight live proof](architecture/memory-interface.md), [Swarm Wiki compiler pin](architecture/swarm-wiki-compiler.md), [SPEC-002 plugin trial](architecture/agent-plugin.md), [consumer distribution workflow](workflows/repo-automation.md), [effectiveness benchmark](workflows/effectiveness-benchmark.md), [CodSpeed removal history](codspeed-removal.md) and [release history](https://github.com/raelldottin/boundroom/releases), [SPEC-003 Discord knowledge loop](architecture/discord-knowledge-loop.md), [RA-KNOW-000 epic](https://github.com/raelldottin/boundroom/issues/173), and the draft [agentic SDLC and GitOps standard](architecture/agentic-gitops-sdlc-standard.md) for consumer rollout ([#170](https://github.com/raelldottin/boundroom/issues/170)).
+**Evidence references, not substitutes for live acceptance:** [technical roadmap](roadmap.md), [SPEC-001](architecture/control-plane.md), [RA-CP-001 inventory](architecture/control-plane-inventory.md), [Kanban projection](architecture/kanban-projection.md), [Kanban write-back and canary](architecture/kanban-cutover.md), [Hindsight live proof](architecture/memory-interface.md), [Swarm Wiki compiler pin](architecture/swarm-wiki-compiler.md), [SPEC-002 plugin trial](architecture/agent-plugin.md), [consumer distribution workflow](workflows/boundroom.md), [effectiveness benchmark](workflows/effectiveness-benchmark.md), [CodSpeed removal history](codspeed-removal.md) and [release history](https://github.com/raelldottin/boundroom/releases), [SPEC-003 Discord knowledge loop](architecture/discord-knowledge-loop.md), [RA-KNOW-000 epic](https://github.com/raelldottin/boundroom/issues/173), and the draft [agentic SDLC and GitOps standard](architecture/agentic-gitops-sdlc-standard.md) for consumer rollout ([#170](https://github.com/raelldottin/boundroom/issues/170)).
 
 ---
 

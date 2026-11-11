@@ -23,7 +23,7 @@ from automation.tests.test_run_next_kanban import AGENT
 consumer = test_run_next_kanban.consumer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILL = REPO_ROOT / "plugins/repo-automation/skills/repo-automation-run-next/SKILL.md"
+SKILL = REPO_ROOT / "plugins/boundroom/skills/boundroom-run-next/SKILL.md"
 FIRST, SECOND = "first-slice", "second-slice"
 
 

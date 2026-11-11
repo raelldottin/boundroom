@@ -26,7 +26,7 @@ Introduce a separately deployed, **opt-in Discord knowledge service** with five 
                 retrieval evaluation receipts
 
   ----------------- STRICT TRUST BOUNDARY -----------------
-  repo-automation supervisor: slice eligibility, execution,
+  boundroom supervisor: slice eligibility, execution,
   validation, handoffs, continuation and Kanban write-back
   (no calls or credentials from Discord knowledge service)
 ```
@@ -92,4 +92,4 @@ Scheduling is explicitly restricted to knowledge maintenance. No overnight code-
 
 No Slack support; no implicit archival of all Discord history; no private-attachment scraping; no silent transcription; no public knowledge dump; no new task store or parallel agent scheduler; no automatic governance edits, PR creation, repository writes or Kanban status updates; no semantic claim that Hindsight reflect output is independent source evidence; no assumption that a wiki test proves an operational Discord service.
 
-**Implementation state:** as of this specification, repo-automation has Hindsight retain/recall/reflect/snapshot code, bounded memory context and a synthetically tested Swarm Wiki compiler. The full Discord loop, its schedules and retrieval evaluations are **proposed and not implemented**. Review every implementation slice independently through the existing `AGENTS.md` GitOps gates.
+**Implementation state:** as of this specification, Boundroom has Hindsight retain/recall/reflect/snapshot code, bounded memory context and a synthetically tested Swarm Wiki compiler. The full Discord loop, its schedules and retrieval evaluations are **proposed and not implemented**. Review every implementation slice independently through the existing `AGENTS.md` GitOps gates.

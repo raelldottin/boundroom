@@ -400,10 +400,10 @@ def run_probe(
     environment = audited_inherited_environment()
     if env:
         environment.update(env)
-    environment["REPO_AUTOMATION_HERMES_USAGE_DIR"] = str(sessions_dir)
-    environment["REPO_AUTOMATION_HERMES_TRANSPORT"] = transport
+    environment["BOUNDROOM_HERMES_USAGE_DIR"] = str(sessions_dir)
+    environment["BOUNDROOM_HERMES_TRANSPORT"] = transport
     if max_turns is not None:
-        environment["REPO_AUTOMATION_HERMES_MAX_TURNS"] = str(max_turns)
+        environment["BOUNDROOM_HERMES_MAX_TURNS"] = str(max_turns)
 
     session_runner = runner or _subprocess_runner
     receipt = None

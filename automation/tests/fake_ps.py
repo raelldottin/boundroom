@@ -2,7 +2,7 @@
 
 ``run_agent.sh`` selects its runner from the nearest agent harness among its real ancestors, so
 a suite launched from inside Claude Code or Codex would see that harness above every test that
-runs the wrapper and refuse a test's explicit ``REPO_AUTOMATION_AGENT_RUNNER=hermes`` as a
+runs the wrapper and refuse a test's explicit ``BOUNDROOM_AGENT_RUNNER=hermes`` as a
 mismatch. The same suite passes in CI, where nothing encloses it. A result that depends on who
 ran the tests is not a result, so importing this module replaces ``ps`` for the whole process
 with a double that reports no ancestry unless a test describes one in ``FAKE_PS_TREE``.
@@ -46,7 +46,7 @@ case "$field" in
 esac
 """
 
-_FAKE_PS_DIR = Path(tempfile.mkdtemp(prefix="repo-automation-fake-ps-"))
+_FAKE_PS_DIR = Path(tempfile.mkdtemp(prefix="boundroom-fake-ps-"))
 (_FAKE_PS_DIR / "ps").write_text(FAKE_PS, encoding="utf-8")
 (_FAKE_PS_DIR / "ps").chmod(0o755)
 # At import rather than in a fixture: tests build subprocess environments from os.environ at

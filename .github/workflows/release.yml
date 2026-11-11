@@ -128,8 +128,8 @@ jobs:
             echo "::error::checkout origin $origin is not $REMOTE"
             exit 1
           fi
-          stage="$RUNNER_TEMP/repo-automation-$TAG"
-          Tools/repo-automation-sync.sh --sync --target "$stage" \
+          stage="$RUNNER_TEMP/boundroom-$TAG"
+          Tools/boundroom-sync.sh --sync --target "$stage" \
             --pin "$COMMIT" --expect-remote "$REMOTE" --runtime-python .venv/bin/python
 
       - name: Build archive and checksum
@@ -137,7 +137,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           mkdir -p dist
-          name="repo-automation-$TAG"
+          name="boundroom-$TAG"
           mtime="$(git log -1 --format=%ct HEAD)"
           tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$mtime" \
             -C "$RUNNER_TEMP" -cf - "$name" | gzip -n > "dist/$name.tar.gz"
@@ -179,5 +179,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "$TAG" \
-            --notes "Manifest-owned tree of raelldottin/boundroom at commit $COMMIT. Consumers sync from this tag; see docs/workflows/repo-automation.md#releases." \
+            --notes "Manifest-owned tree of raelldottin/boundroom at commit $COMMIT. Consumers sync from this tag; see docs/workflows/boundroom.md#releases." \
             "${flags[@]}"

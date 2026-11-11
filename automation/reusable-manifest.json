@@ -150,6 +150,14 @@
       "template": false
     },
     {
+      "source": "docs/workflows/boundroom.md",
+      "destination": "docs/workflows/boundroom.md",
+      "kind": "file",
+      "preserve_executable": false,
+      "delete_stale": false,
+      "template": false
+    },
+    {
       "source": "docs/workflows/repo-automation.md",
       "destination": "docs/workflows/repo-automation.md",
       "kind": "file",
@@ -162,6 +170,14 @@
       "destination": "docs/workflows/effectiveness-benchmark.md",
       "kind": "file",
       "preserve_executable": false,
+      "delete_stale": false,
+      "template": false
+    },
+    {
+      "source": "Tools/boundroom-sync.sh",
+      "destination": "Tools/boundroom-sync.sh",
+      "kind": "file",
+      "preserve_executable": true,
       "delete_stale": false,
       "template": false
     },

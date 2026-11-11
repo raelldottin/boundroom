@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PLUGIN = "plugins/repo-automation"
+PLUGIN = "plugins/boundroom"
 MANIFESTS = tuple(f"{PLUGIN}/{name}" for name in ("plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"))
 VERSION = re.compile(r"\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?")
 # The intersection of Agent Plugins v1 (Hermes), Claude Code and Codex skill rules.
@@ -36,7 +36,7 @@ def test_every_manifest_agrees_on_identity_and_license():
     manifests = [load(path) for path in MANIFESTS]
 
     assert {(m["name"], m["version"], m["license"]) for m in manifests} == {
-        ("repo-automation", manifests[0]["version"], "GPL-2.0-only")
+        ("boundroom", manifests[0]["version"], "GPL-2.0-only")
     }
     assert VERSION.fullmatch(manifests[0]["version"])
     assert manifests[0]["$schema"] == "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
@@ -48,16 +48,16 @@ def test_both_marketplaces_list_the_plugin_directory():
     claude = load(".claude-plugin/marketplace.json")["plugins"]
     codex = load(".agents/plugins/marketplace.json")["plugins"]
 
-    assert [(p["name"], p["source"], p["version"]) for p in claude] == [("repo-automation", f"./{PLUGIN}", version)]
-    assert [(p["name"], p["source"]) for p in codex] == [("repo-automation", {"source": "local", "path": f"./{PLUGIN}"})]
+    assert [(p["name"], p["source"], p["version"]) for p in claude] == [("boundroom", f"./{PLUGIN}", version)]
+    assert [(p["name"], p["source"]) for p in codex] == [("boundroom", {"source": "local", "path": f"./{PLUGIN}"})]
 
 
 def test_the_four_skills_ship():
     assert [path.parent.name for path in SKILLS] == [
-        "repo-automation-evaluate-handoff",
-        "repo-automation-run-next",
-        "repo-automation-status",
-        "repo-automation-sync",
+        "boundroom-evaluate-handoff",
+        "boundroom-run-next",
+        "boundroom-status",
+        "boundroom-sync",
     ]
 
 

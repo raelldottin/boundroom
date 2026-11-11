@@ -992,7 +992,7 @@ class MatrixTests(unittest.TestCase):
         with unittest.mock.patch.dict(
             os.environ,
             {
-                "REPO_AUTOMATION_AGENT_RUNNER": "hermes",
+                "BOUNDROOM_AGENT_RUNNER": "hermes",
                 "HERMES_INFERENCE_PROVIDER": "nvidia",
                 "HERMES_INFERENCE_MODEL": "moonshotai/kimi-k3",
                 "NVIDIA_API_KEY": "sk-should-never-be-recorded",
@@ -1001,7 +1001,7 @@ class MatrixTests(unittest.TestCase):
         ):
             fingerprint = lanes_module._environment_fingerprint()
 
-        self.assertEqual("hermes", fingerprint["REPO_AUTOMATION_AGENT_RUNNER"])
+        self.assertEqual("hermes", fingerprint["BOUNDROOM_AGENT_RUNNER"])
         self.assertEqual("nvidia", fingerprint["HERMES_INFERENCE_PROVIDER"])
         self.assertEqual("moonshotai/kimi-k3", fingerprint["HERMES_INFERENCE_MODEL"])
         self.assertNotIn("sk-should-never-be-recorded", json.dumps(fingerprint))

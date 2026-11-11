@@ -46,7 +46,7 @@ host (or in CI).
 
 The benchmark drives Hermes, which reaches NVIDIA directly: provider and model are
 first-class flags, so nothing has to be translated through a second vendor's config file
-or wire protocol. `REPO_AUTOMATION_AGENT_RUNNER=codex|claude` still work; they are just
+or wire protocol. `BOUNDROOM_AGENT_RUNNER=codex|claude` still work; they are just
 more setup for the same thing.
 
 The runner is set explicitly because a benchmark host is headless: the wrapper inherits its
@@ -55,7 +55,7 @@ command run from inside Claude Code or Codex is refused (exit 78) - a run starte
 agent is run by that agent - so launch local benchmark runs from a plain shell.
 
 ```shell
-export REPO_AUTOMATION_AGENT_RUNNER=hermes
+export BOUNDROOM_AGENT_RUNNER=hermes
 export HERMES_INFERENCE_PROVIDER=nvidia
 export HERMES_INFERENCE_MODEL=moonshotai/kimi-k3
 export NVIDIA_API_KEY="$NVIDIA_API_KEY"
@@ -79,13 +79,13 @@ listed by literal name in `adapter.INHERITED_ENV_NAMES`:
 
 ```text
 PATH  HOME  TMPDIR  LANG  LC_ALL
-REPO_AUTOMATION_AGENT_RUNNER  REPO_AUTOMATION_CODEX_BIN  REPO_AUTOMATION_CLAUDE_BIN
-REPO_AUTOMATION_CLAUDE_PERMISSION_MODE  REPO_AUTOMATION_HERMES_BIN  OWLORY_CODEX_BIN
+BOUNDROOM_AGENT_RUNNER  BOUNDROOM_CODEX_BIN  BOUNDROOM_CLAUDE_BIN
+BOUNDROOM_CLAUDE_PERMISSION_MODE  BOUNDROOM_HERMES_BIN  OWLORY_CODEX_BIN
 HERMES_REVISION  HERMES_INFERENCE_PROVIDER  HERMES_INFERENCE_MODEL
 CLAUDECODE  CLAUDE_CODE  CLAUDE_CODE_ENTRYPOINT
 ```
 
-Names, never patterns. `REPO_AUTOMATION_*` would ship the next variable somebody adds under
+Names, never patterns. `BOUNDROOM_*` would ship the next variable somebody adds under
 that prefix whatever ends up in it; the property worth having is that a variable nobody
 considered is **absent**. `TERMINAL_CWD` and `HERMES_HOME` are deliberately not on the list:
 the runner sets both per invocation, and inheriting either would point a session at the
@@ -208,7 +208,7 @@ than a hand-written HTTP probe, which only proves whatever protocol the probe ch
 such probe returned 200 while every agent session was failing:
 
 ```shell
-REPO_AUTOMATION_HERMES_USAGE_DIR=/tmp/preflight automation/supervisor/run_agent.sh \
+BOUNDROOM_HERMES_USAGE_DIR=/tmp/preflight automation/supervisor/run_agent.sh \
   --repo-root /tmp/scratch-checkout --prompt-file /tmp/prompt.md \
   --context-file /tmp/context.json --handoff-file /tmp/handoff.json --slice-id preflight
 ```
@@ -381,7 +381,7 @@ narrower: prove Hermes was handed that already-verified workspace. A `test -f RE
 here was a second, weaker copy of the same contract, and it refused
 `cmatsuoka__figlet.202a0a8` — which ships `FAQ`, `README` and `figlet.6` — which aborted all
 of run 36724292484, 35 sound cells in, over a filename.
-`REPO_AUTOMATION_SANDBOX_PROBE_COMMAND` overrides the command for a one-off diagnostic.
+`BOUNDROOM_SANDBOX_PROBE_COMMAND` overrides the command for a one-off diagnostic.
 
 The cell is refused before the budget is spent unless both probes exit 0 and the witness
 saw, for each of the two backends, a container with the cleanroom image id,
@@ -450,7 +450,7 @@ them:
   prompt for the lanes that get harness context.
 - The cell's workspace directory name, which is the agent's own cwd outside a cleanroom.
 - The `--slice-id` handed to `run_agent.sh`, which it exports as
-  `REPO_AUTOMATION_SUPERVISOR_SLICE_ID` and `OWLORY_SUPERVISOR_SLICE_ID`. The pinned Hermes
+  `BOUNDROOM_SUPERVISOR_SLICE_ID` and `OWLORY_SUPERVISOR_SLICE_ID`. The pinned Hermes
   path renders neither into a prompt, but the worker process has no use for the real name.
 
 What they carry instead is `TaskSpec.public_id`: `task-` plus twelve hex characters of
@@ -759,7 +759,7 @@ harmless. Where the evidence actually comes from is the diagnostic transport bel
 
 ### The diagnostic transport (`stream-json`)
 
-`REPO_AUTOMATION_HERMES_TRANSPORT=stream-json` runs the session as
+`BOUNDROOM_HERMES_TRANSPORT=stream-json` runs the session as
 `hermes chat -q "$PROMPT" --format stream-json` instead of `hermes --oneshot "$PROMPT"`.
 That path flushes one JSON object per event — `system/init`, text deltas, `tool_use`,
 `tool_result` — so a session killed at its ceiling keeps everything it had already emitted.
@@ -795,7 +795,7 @@ provider unauthenticated.
 
 It also runs **where a cell runs**. The probe materializes the same
 `task_cleanroom_v6` workspace through `prepare()`, names the image in
-`REPO_AUTOMATION_HERMES_SANDBOX_IMAGE`, runs the same `--sandbox-probe` proof of both
+`BOUNDROOM_HERMES_SANDBOX_IMAGE`, runs the same `--sandbox-probe` proof of both
 backends before it spends any budget, and wraps the session in the same `SandboxWitness`,
 down to the exact-id cleanup on a timeout kill. Its workspace directory is named from
 `public_id`, like a cell's, because the agent's shell prompt shows its own working
