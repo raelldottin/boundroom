@@ -207,7 +207,7 @@ SPDX identifiers come from the GitHub license API unless noted [E17], [E19].
 
 | Component | Role | SPDX | Risk |
 | --- | --- | --- | --- |
-| `raelldottin/repo-automation` | supervisor (this repo) | `GPL-2.0-only` since 2026-11-02 (#138; GitHub detects GPL-2.0). Was **none** (no root `LICENSE`, GitHub `license: null`) when this register was taken. | Decided by the owner. Synced copies carry `automation/COPYING`. |
+| `raelldottin/boundroom` | supervisor (this repo) | `GPL-2.0-only` since 2026-11-02 (#138; GitHub detects GPL-2.0). Was **none** (no root `LICENSE`, GitHub `license: null`) when this register was taken. | Decided by the owner. Synced copies carry `automation/COPYING`. |
 | `raelldottin/hermes-swarm-protocol` | wiki compiler and swarm plugin | `GPL-2.0-only` since 2026-11-02 (raelldottin/hermes-swarm-protocol#9; GitHub detects GPL-2.0). Was **none** (no `LICENSE` in the `main` tree, GitHub `license: null`) when this register was taken. | Decided by the owner. Each fleet release is a checkout of one commit, so `COPYING` ships with it. |
 | `NousResearch/hermes-agent` | Kanban, dispatcher, gateway | MIT (local `LICENSE`: "Copyright (c) 2025 Nous Research") | Low. The deployed build is a 33-commit local fork; its added commits' provenance belongs in a P0.5 SBOM. |
 | `vectorize-io/hindsight` (incl. `hindsight-integrations/hermes`) | target memory | MIT | Low |
@@ -287,6 +287,6 @@ Payload key sets were gathered the same way, with `json.loads(payload).keys()` p
 | E15 | `~/.hermes/hermes-agent/plugin-catalog/hindsight.yaml`; `git ls-tree origin/main plugins/memory/`; `gh api repos/vectorize-io/hindsight/contents/<path>?ref=d952b6e6…` for `README.md`, `.env.example`, `docker/docker-compose/local-llm/{docker-compose.yaml,README.md}`, `docker/docker-compose/external-pg/docker-compose.yaml`, `hindsight-integrations/hermes/README.md`; tree listing at that sha |
 | E16 | `automation/schemas/models.py:20-78`; `automation/supervisor/policy.py:313-326`; `automation/README.md:23,87` |
 | E17 | `gh api repos/<owner>/<repo> --jq .license.spdx_id` for each GitHub component; `gh api repos/campfirein/byterover-cli/contents/LICENSE`; `gh api repos/pgvector/pgvector/contents/LICENSE`; `head -3 ~/.hermes/hermes-agent/LICENSE`; `gh repo view raelldottin/{repo-automation,hermes-swarm-protocol} --json licenseInfo` |
-| E18 | `git ls-remote https://github.com/raelldottin/repo-automation refs/heads/main` |
+| E18 | `git ls-remote https://github.com/raelldottin/boundroom refs/heads/main` |
 | E19 | `https://huggingface.co/api/models/<id>` (`license:` tags and `sha`) for the four models listed |
 | E20 | `https://www.superlogical.com/rex/docs/linux/installation`, `…/linux/server-modes`, `…/reference/privacy`; `gh api users/superlogical --jq .public_repos` → 0; `jessfraz/agent` `README.md:5-7` |

@@ -1,6 +1,6 @@
 # Agentic SDLC and GitOps: portable governance standard (draft v0)
 
-Status: proposed, documentation-only. Owner approval and evidence required before adopting any deployment adapter. See tracking issue [#170](https://github.com/raelldottin/repo-automation/issues/170). This document complements, and does not override, each consumer repository's AGENTS.md, branch rules, license, infrastructure ownership or release contract.
+Status: proposed, documentation-only. Owner approval and evidence required before adopting any deployment adapter. See tracking issue [#170](https://github.com/raelldottin/boundroom/issues/170). This document complements, and does not override, each consumer repository's AGENTS.md, branch rules, license, infrastructure ownership or release contract.
 
 ## Scope and terms
 
@@ -85,7 +85,7 @@ Scanned selected active repositories via GitHub. Presence of a workflow does not
 | alepes-com/home_lab | no on default dev | no | Verify branch and local Compose/Terraform/Chef phases first |
 | alepes-com/website | yes | 1 | Web preview vs production release checks |
 | raelldottin/hermes-swarm-protocol | no | no | Verify canonical location of swarm wiki/policy |
-| raelldottin/repo-automation | yes; GitOps section | 9 | Shared policy source; preserve pins |
+| raelldottin/boundroom | yes; GitOps section | 9 | Shared policy source; preserve pins |
 | raelldottin/tachikoma | yes | 8 | Eval/run workflow and release provenance |
 | raelldottin/hermes-agent | yes | many | Inventory existing upstream workflows before any patch |
 

@@ -40,4 +40,4 @@ real consumer.
 ## Reporting issues
 
 Bug reports and adoption questions go to
-[github.com/raelldottin/repo-automation/issues](https://github.com/raelldottin/repo-automation/issues).
+[github.com/raelldottin/boundroom/issues](https://github.com/raelldottin/boundroom/issues).
