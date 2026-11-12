@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from automation.context.memory import MemoryConfig
 from automation.schemas.models import SliceQueue
 from automation.schemas.models import RepositoryTelemetry
-from automation.supervisor import evaluate_handoff, kanban_projection, run_next, settings, telemetry_settings
+from automation.supervisor import evaluate_handoff, kanban_projection, operator_status, run_next, settings, telemetry_settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUN_AGENT = REPO_ROOT / "automation/supervisor/run_agent.sh"
@@ -80,6 +80,7 @@ class CompletenessTests(unittest.TestCase):
             "run_next": parser_options(run_next.build_parser()),
             "evaluate_handoff": parser_options(evaluate_handoff.build_parser()),
             "kanban_projection": parser_options(kanban_projection.build_parser()),
+            "operator_status": parser_options(operator_status.build_parser()),
             "sync": sync_options(),
         }
         for entry_point, options in parsers.items():
@@ -146,6 +147,7 @@ class DefaultsTests(unittest.TestCase):
             "run_next": run_next.build_parser(),
             "evaluate_handoff": evaluate_handoff.build_parser(),
             "kanban_projection": kanban_projection.build_parser(),
+            "operator_status": operator_status.build_parser(),
         }
         for entry_point, parser in parsers.items():
             by_option = settings.flags_for(entry_point)

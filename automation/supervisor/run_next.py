@@ -123,13 +123,18 @@ class KanbanQueue:
         self.backend.record(self.claims[slice_id], status, reason or status, handoff_path)
 
 
+def board_inside_repository(board_dir: Path, repo_root: Path) -> bool:
+    """Whether a board sits in the repository, where a board write would leave the worktree dirty."""
+    resolved, root = board_dir.resolve(), repo_root.resolve()
+    return resolved == root or root in resolved.parents
+
+
 def board_for(args: argparse.Namespace, repo_root: Path) -> board_backend.BoardBackend:
     """The board ``--kanban-board`` names, as the backend ``--board-backend`` or the overlay picks."""
     board_dir = Path(args.kanban_board)
-    resolved, root = board_dir.resolve(), repo_root.resolve()
-    if resolved == root or root in resolved.parents:
+    if board_inside_repository(board_dir, repo_root):
         # A board write would leave the worktree dirty, and the supervisor's clean stop would fail.
-        raise policy.ConfigError(f"the board {board_dir} is inside the repository; keep boards outside {root}")
+        raise policy.ConfigError(f"the board {board_dir} is inside the repository; keep boards outside {repo_root.resolve()}")
     kind = kanban_projection.load_overlay(Path(args.kanban_overlay)).backend
     if args.board_backend and args.board_backend != kind:
         raise policy.ConfigError(f"--board-backend {args.board_backend} but the overlay is for a {kind} board")

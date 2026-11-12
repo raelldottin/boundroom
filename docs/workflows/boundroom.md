@@ -232,6 +232,30 @@ A future repository should consume `boundroom` as a reusable package or template
 
 New repositories must start from examples or templates, not Owlory's live queue, handoffs, proofs, or SecondBrain history.
 
+## Operator Status
+
+Before a slice, `automation/supervisor/operator_status.py` reports what the supervisor would do next, and from what:
+
+```bash
+python3 automation/supervisor/operator_status.py
+python3 automation/supervisor/operator_status.py --board-dir <board-dir> --overlay <overlay.json> --json
+```
+
+`python3 -m automation.supervisor.operator_status` runs the same command. The plugin's `boundroom-status` skill runs it first.
+
+It reports:
+
+- the Boundroom version, from `plugins/boundroom/plugin.json`. A consumer's synced copy has no plugin directory, so there the version is `null` and the sync pin identifies the copy;
+- the sync pin from `automation/boundroom.lock`, or from `automation/repo-automation.lock` in a consumer that adopted before 0.3.0: which file, and its `commit`, `remote`, `repository` and `imported_at`. With no lock, as in Boundroom itself, the pin is `null`;
+- the mode: the JSON queue, or a board projected through its overlay, with the board's revision;
+- the next eligible slice, the blocked and deferred slices with their entry conditions and unblockers, and queued slices still waiting on dependencies. It selects with the same functions as `run_next.py --dry-run --include-blocked`;
+- the reasons `run_next.py` would refuse to start: a slice already in progress, nothing eligible, a dirty path outside the next slice's scope, no agent command, or a board inside the repository;
+- provenance: the HEAD commit, whether the worktree is clean, and every file it read.
+
+`--json` prints one object whose `schema` is `boundroom.operator-status/1`. The command writes nothing: no queue, board, handoff, lock or state file. Its only subprocesses are the read-only `git rev-parse`, `git diff` and `git ls-files` calls the supervisor already uses. Run as a file path, it writes no bytecode either; under `python3 -m`, set `PYTHONDONTWRITEBYTECODE=1` for the same. It exits 0 when it printed the report, and 1 when it printed it but could not read the queue, the board or git.
+
+The report is advice for a person. It does not run a slice, and it is not independent verification.
+
 ## Reviewing a Handoff
 
 After a slice, `automation/supervisor/handoff_summary.py` prints a short review summary, so a reviewer doesn't have to read the raw JSON:

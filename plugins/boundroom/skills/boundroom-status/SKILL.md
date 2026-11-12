@@ -1,6 +1,6 @@
 ---
 name: boundroom-status
-description: Show what Boundroom would do next in this repository without running anything. Names the next eligible slice, lists blocked slices, and with a Kanban board compares the board's projection with the JSON queue. Read-only. Use when asked what is next, what is queued or blocked, or whether the board and queue agree.
+description: Show what Boundroom would do next in this repository without running anything. Reports the version, sync pin, queue or board mode and refusal reasons, names the next eligible slice, lists blocked slices, and with a Kanban board compares the board's projection with the JSON queue. Read-only. Use when asked what is next, what is queued or blocked, or whether the board and queue agree.
 license: GPL-2.0-only
 ---
 
@@ -11,6 +11,18 @@ This skill reads the supervisor copy that `Tools/boundroom-sync.sh` placed in th
 ## Before you run anything
 
 Work from the repository root. Run `test -f automation/supervisor/run_next.py` on its own, not joined to another command. If it fails, stop and say: "This repository has not adopted Boundroom."
+
+## Operator status
+
+Run this first. It is one read-only command:
+
+```bash
+python3 automation/supervisor/operator_status.py
+```
+
+It reports the Boundroom version, the consumer's sync pin from its lock, whether slices come from the JSON queue or a board, the next eligible slice, the blocked and deferred slices, the reasons `run_next.py` would refuse to start, and the commit and files it read. Report those. Add `--json` for one versioned object, and add `--board-dir <board-dir> --overlay <overlay.json>` when the user names a board. It writes nothing. An exit status of 1 means it could not read the queue, the board or git; say so.
+
+If `automation/supervisor/operator_status.py` does not exist, the synced copy predates it. Say so, and go on to the next section.
 
 ## Next slice
 
