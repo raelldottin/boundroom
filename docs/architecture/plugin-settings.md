@@ -79,7 +79,7 @@ Every setting known today. The registry is built from this table in RA-SET-001, 
 | Setting | Source | Class | Why it surfaces |
 | --- | --- | --- | --- |
 | Runner (`BOUNDROOM_AGENT_RUNNER`) | env | security | Decides which agent executes the slice |
-| Claude Code runner profile and ceiling (`BOUNDROOM_CLAUDE_PROFILE`, `BOUNDROOM_CLAUDE_PROFILE_CEILING`, and `BOUNDROOM_CLAUDE_PERMISSION_MODE` as an override) | env, userConfig | security | **Today the runner always defaults to `bypassPermissions`.** [A safer default](#a-safer-default-for-the-claude-code-runner) proposes `parent`, which matches the parent's mode, including bypass, with an optional user ceiling. The quick view always shows the chain from the parent's mode to the effective profile, and warns when it's `unbounded`. |
+| Claude Code runner profile and ceiling (`BOUNDROOM_CLAUDE_PROFILE`, `BOUNDROOM_CLAUDE_PROFILE_CEILING`, and `BOUNDROOM_CLAUDE_PERMISSION_MODE` as an override) | env, userConfig | security | **Today the runner defaults to `bypassPermissions`.** [A safer default](#a-safer-default-for-the-claude-code-runner) proposes `parent`, capped at `edits`. The quick view always shows the chain from the parent's mode to the effective profile, and warns when it's `unbounded`. |
 | One slice or several (`--single-slice`, `--autonomous-limit`, policy `consecutive_autonomous_limit`) | flag, policy | security | How much runs unattended. As AGENTS.md says, the policy value is a default a caller can override, so both views show which one won. |
 | Agent command (`--agent-cmd`, policy `agent_command_template`) | flag, policy | security | What actually runs. Shown as *default* or *custom*, with the custom command printed. |
 | Supervisor-owned paths (policy `supervisor_owned_paths`) | policy | security | The files no slice may change |
@@ -111,7 +111,7 @@ Applying the rule above, two settings qualify today, and two more once SPEC-006 
 
 | Option | Maps to | When |
 | --- | --- | --- |
-| `claude_profile` and `claude_profile_ceiling` | `BOUNDROOM_CLAUDE_PROFILE` and `BOUNDROOM_CLAUDE_PROFILE_CEILING` | RA-SET-006, after RA-SET-008. Choosing `unbounded` explicitly here is refused unless the parent runs in bypass mode or isolation is declared. |
+| `claude_profile` and `claude_profile_ceiling` | `BOUNDROOM_CLAUDE_PROFILE` and `BOUNDROOM_CLAUDE_PROFILE_CEILING` | RA-SET-006, after RA-SET-008. Neither can make `unbounded` reachable without the isolation declaration or an explicit ceiling. |
 | `telemetry` (`off` and nothing else at first) | SPEC-006's kill switch | After SPEC-006's RA-TEL-001 |
 | `telemetry_endpoint` | SPEC-006's `endpoint` | After SPEC-006, and only if the owner wants destinations settable from Claude Code. Headers stay out, because they're secrets. |
 
@@ -124,7 +124,7 @@ No `userConfig` option has a `default`, so leaving one empty changes nothing and
 ```text
 Boundroom 0.3.0 settings (quick view)          run `boundroom settings --all` for everything
   runner             claude                      env BOUNDROOM_AGENT_RUNNER
-  claude profile     parent → unbounded   ! matches a bypassPermissions parent; set a ceiling to cap it
+  claude profile     parent → unbounded → edits (ceiling)   ! parent runs bypassPermissions
   slices per run     1                           flag --single-slice
   agent command      default
   work source        local board ~/.boards/demo  overlay ./automation/overlay.json
@@ -144,7 +144,7 @@ Warnings
 
 ## A safer default for the Claude Code runner
 
-Owner decisions recorded here (2026-11-12): **propose a safer default** than `bypassPermissions` for Claude Code runners. Then: **the runner's profile must match the parent process, or be configurable by the user.** The profiles below do both: `parent` matches the parent, and every profile, including `parent`, is a user setting with an optional user-set ceiling. Third decision: **a runner under a bypass-mode parent matches it.** By default it gets `unbounded`, and capping it is the user's opt-in choice. The owner accepted the residual risk this leaves, recorded under [No nested runs](#no-nested-runs).
+Owner decisions recorded here (2026-11-12): **propose a safer default** than `bypassPermissions` for Claude Code runners. Then: **the runner's profile must match the parent process, or be configurable by the user.** The profiles below do both: `parent` matches the parent, and every profile, including `parent`, is a user setting with a user-set ceiling.
 
 ### Why change it
 
@@ -169,9 +169,7 @@ A new setting, `BOUNDROOM_CLAUDE_PROFILE`, chooses one of five profiles. `BOUNDR
 | `unbounded` | `bypassPermissions` | Everything | Off | As above |
 | `custom` | The operator's own `--settings` file (`BOUNDROOM_CLAUDE_SETTINGS`) | As the file says | As the file says | As above |
 
-`edits` reproduces the RA-BD-004 canary's setup for machines where the sandbox can't start. `unbounded` keeps today's behavior. A runner reaches it in two ways: through `parent`, when the parent itself runs in bypass mode, or by explicit request. An explicit request is accepted only when the parent runs in bypass mode or `BOUNDROOM_CLAUDE_ISOLATED=1` declares a container or VM. Any profile can be capped by the user's [ceiling](#choosing-a-profile-and-its-ceiling), and the quick view warns whenever the effective profile is `unbounded`.
-
-**What actually changes, then.** A runner under a bypass-mode parent behaves as it does today. Runners under every other parent, and under no Claude Code parent at all, stop getting bypass mode by default.
+`edits` reproduces the RA-BD-004 canary's setup for machines where the sandbox can't start. `unbounded` keeps today's behavior. Every profile, including the one `parent` resolves to, is then limited by the [ceiling](#choosing-a-profile-and-its-ceiling). The default ceiling admits `unbounded` only with `BOUNDROOM_CLAUDE_ISOLATED=1`, the operator's declaration that the run is in a container or VM. The quick view warns whenever the effective profile is `unbounded`.
 
 ### Matching the parent
 
@@ -186,7 +184,7 @@ A new setting, `BOUNDROOM_CLAUDE_PROFILE`, chooses one of five profiles. `BOUNDR
 
 **How `parent` resolves.** The supervisor walks up its process tree to the nearest Claude Code process, which `run_agent.sh` already does to pick the harness. It then reads that process's launch flags: only `--permission-mode` and `--dangerously-skip-permissions`, nothing else. It maps them as follows:
 
-| Parent launched with | Runner gets, before any ceiling | Why |
+| Parent launched with | Runner gets, before the ceiling | Why |
 | --- | --- | --- |
 | `bypassPermissions` or `--dangerously-skip-permissions` | `unbounded` | The same mode |
 | `acceptEdits` | `edits` | The same mode. The slice allowlist pre-approves the commands the parent's user would have been asked about, because no one is there to ask. |
@@ -195,13 +193,13 @@ A new setting, `BOUNDROOM_CLAUDE_PROFILE`, chooses one of five profiles. `BOUNDR
 | `plan` | Nothing. The run is refused before the claim. | Plan mode means no edits, so starting a slice would contradict it. |
 | No Claude Code parent (a shell, Codex or Hermes, a forced `BOUNDROOM_AGENT_RUNNER=claude`), or flags that can't be read | The fallback profile, `bounded` by default | Nothing to match |
 
-A worked example: this specification was written in a desktop session launched with `--permission-mode=bypassPermissions`. Under `parent`, its runner resolves to `unbounded` and runs that way, with a warning in the quick view and the decision report. A user who wants it capped sets `claude_profile_ceiling`, for example to `edits`.
+A worked example: this specification was written in a desktop session launched with `--permission-mode=bypassPermissions`. Under `parent`, its runner resolves to `unbounded`, and the default ceiling then lowers it to `edits`, with a warning saying so, unless the operator declares isolation.
 
 ### Choosing a profile and its ceiling
 
 **Two user settings,** both in the SPEC-008 registry:
 - **`claude_profile`:** `parent`, `bounded`, `edits`, `unbounded` or `custom`. The default is `parent`.
-- **`claude_profile_ceiling`:** the most a runner may get, whatever the profile asks for or resolves to. It's **unset by default**: no cap, so `parent` matches the parent exactly. Setting it is the user's opt-in, and it's the one change that makes the nested-run guard below hold even under a bypass-mode parent.
+- **`claude_profile_ceiling`:** the most a runner may get, whatever the profile asks for or resolves to. The default is `edits`, or `unbounded` when `BOUNDROOM_CLAUDE_ISOLATED=1` is set.
 
 Profiles are ordered by what runs without anyone's approval: `bounded` (and the `dontAsk` mapping), then `edits`, then `unbounded`. The effective profile is the lower of the requested or resolved profile and the ceiling. `custom` is the operator's own settings file, and isn't capped, because the operator wrote it.
 
@@ -223,14 +221,7 @@ Matching the parent can give a runner wide permissions. So the rule that no work
 - **The mechanism:**
   - `run_next.py`, `evaluate_handoff.py` without `--dry-run`, and the board's write commands refuse to start when `BOUNDROOM_SUPERVISOR_SLICE_ID`, or one of its legacy names, is set. `run_agent.sh` already exports it to every runner.
   - The outer run also holds an exclusive run lock outside the repository, and a nested start refuses while that lock is held.
-- **Its limit, stated plainly:** an `unbounded` runner can unset a variable or remove a lock file, so the guard holds only for runners below `unbounded`.
-- **Accepted risk (owner, 2026-11-12):** by choosing to match bypass, the owner accepted that a runner under a bypass-mode parent could defeat this guard and start another slice. What still limits the risk:
-  - the queue's `in_progress` check and the board's compare-and-swap claim on the same queue or board;
-  - the supervisor's scope and committed-path checks on whatever the slice changed;
-  - the human approval every merge to `main` needs;
-  - the warning and the `runner_profile` record on every such run.
-
-  A user removes the risk by setting a ceiling of `edits` or lower.
+- **Its limit, stated plainly:** an `unbounded` runner can unset a variable or remove a lock file. That is why the default ceiling admits `unbounded` only on a declared isolated machine.
 
 ### The slice allowlist
 
@@ -256,8 +247,8 @@ A denied call isn't a supervisor error. If the agent can't finish within its all
 ### Rollout
 
 1. **RA-SET-008:** generate the per-slice settings file, and add the profiles, `parent` resolution, the ceiling, the `runner_profile` record and the nested-run guard. `unbounded` stays the default, so nothing changes unless the operator opts in, apart from the guard, which only refuses nested runs.
-2. **RA-SET-009:** canary slices on a disposable local board, on the owner's machine with Claude Code only: `bounded`; `edits`; and `parent` under parents launched in Manual, `acceptEdits` and `bypassPermissions`, with no ceiling, and once more under the bypass-mode parent with a ceiling of `edits`. Also check whether `auto` works in `-p`. Record any call that was denied but needed, and adjust the allowlist rules in the spec before the switch.
-3. **RA-SET-010:** switch the default to `parent`, with no default ceiling, in a minor release (`v0.4.0`), with release notes naming `BOUNDROOM_CLAUDE_PROFILE=unbounded` and `BOUNDROOM_CLAUDE_ISOLATED=1` as the way back.
+2. **RA-SET-009:** canary slices on a disposable local board, on the owner's machine with Claude Code only: `bounded`; `edits`; and `parent` under parents launched in Manual, `acceptEdits` and `bypassPermissions`, with the default ceiling. Also check whether `auto` works in `-p`. Record any call that was denied but needed, and adjust the allowlist rules in the spec before the switch.
+3. **RA-SET-010:** switch the default to `parent` with the default ceiling, in a minor release (`v0.4.0`), with release notes naming `BOUNDROOM_CLAUDE_PROFILE=unbounded` and `BOUNDROOM_CLAUDE_ISOLATED=1` as the way back.
 
 The switch is reversible: `unbounded` stays available for isolated environments, and the previous default can be restored by one setting.
 
@@ -279,12 +270,12 @@ The switch is reversible: `unbounded` stays available for isolated environments,
 | PS-10 | Defaults are unchanged until RA-SET-010 | The registry's defaults equal today's behavior through RA-SET-009, so introducing it changes nothing a user sees except the new views |
 | PS-11 | The slice allowlist comes from the slice record only | The generated settings file is a pure function of the slice record and policy. A handoff or repository file can't add a rule. |
 | PS-12 | Deny wins | Edits to `supervisor_owned_paths`, `.git/**` and `.claude/**`, and reads of `~/.ssh/**`, are denied even when an allow rule also matches |
-| PS-13 | Explicit `unbounded` needs a bypass-mode parent or the isolation declaration | An explicit `unbounded` without either is refused before the claim, and the board's bytes are unchanged. `parent` resolving to `unbounded` under a bypass-mode parent is accepted. |
+| PS-13 | `unbounded` needs the isolation declaration | `unbounded` without `BOUNDROOM_CLAUDE_ISOLATED=1` is refused before the claim, and the board's bytes are unchanged |
 | PS-14 | `bounded` fails closed | If the sandbox can't start, the run stops before the agent runs; it isn't silently unsandboxed |
 | PS-15 | The settings file stays outside the repository | Written under the run's temporary directory, and removed afterwards. The worktree is unchanged by it. |
 | PS-16 | `parent` resolves as specified | With a fake process tree, each launch flag in the mapping table yields its row's profile. Only `--permission-mode` and `--dangerously-skip-permissions` are read from the parent's arguments. |
 | PS-17 | An unknown parent falls back | With no Claude Code ancestor, or unreadable flags, the fallback profile applies and the reason is recorded |
-| PS-18 | The ceiling applies when set | For every pair of requested profile and ceiling, the effective profile is the lower one. With no ceiling, `parent` yields exactly its mapped profile. |
+| PS-18 | The ceiling always applies | For every pair of requested profile and ceiling, the effective profile is the lower one. `unbounded` is reached only with an explicit ceiling or `BOUNDROOM_CLAUDE_ISOLATED=1`. |
 | PS-19 | A plan-mode parent starts nothing | Refused before the claim, and the board's bytes are unchanged |
 | PS-20 | No nested runs | With `BOUNDROOM_SUPERVISOR_SLICE_ID` set, or the run lock held, `run_next`, a non-dry-run `evaluate_handoff` and board writes refuse, against any queue or board |
 | PS-21 | The choice is recorded | The decision report's `runner_profile` block names each step, and the quick view shows the same chain |
@@ -311,7 +302,7 @@ Each slice is one pull request by the agent, approved by a person.
 | RA-SET-007 | SPEC-006 and SPEC-007 settings, as each lands | PS-1 to PS-9 for the new entries |
 | RA-SET-008 | The Claude runner profiles, `parent` resolution, the ceiling, the per-slice settings file, the `runner_profile` record and the nested-run guard, with `unbounded` still the default | PS-11 to PS-21, using a fake process tree and a fake `claude` that records its arguments and settings file |
 | RA-SET-009 | Canary: `bounded`, `edits`, and `parent` under Manual, `acceptEdits` and `bypassPermissions` parents; plus `auto` in `-p`. Claude Code only, on a disposable local board. | Each run reaches review or is refused exactly as specified. Denied-but-needed calls are recorded and the allowlist rules are adjusted. Recorded in this spec. |
-| RA-SET-010 | Switch the default to `parent`, with no default ceiling, in `v0.4.0`, with release notes | PS-10 is updated to the new default. The quick view shows the chain. |
+| RA-SET-010 | Switch the default to `parent`, with the default ceiling, in `v0.4.0`, with release notes | PS-10 is updated to the new default. The quick view shows the chain. |
 
 ## Alternatives considered
 
@@ -321,7 +312,7 @@ Each slice is one pull request by the agent, approved by a person.
 
 ## Open decisions for the owner
 
-1. **The runner profile's remaining details,** proposed in [A safer default](#a-safer-default-for-the-claude-code-runner): `parent` as the default after the canary, `bounded` as the fallback for an unknown parent, the $5 per-slice cap, allowing `git push`, and `v0.4.0` for the switch. Matching a bypass-mode parent, with no default ceiling, was decided on 2026-11-12.
+1. **The runner profile's details,** proposed in [A safer default](#a-safer-default-for-the-claude-code-runner): `parent` as the default after the canary; the default ceiling of `edits` unless isolation is declared, which means a bypass-mode parent's runner gets `edits`; `bounded` as the fallback for an unknown parent; the $5 per-slice cap; allowing `git push`; and `v0.4.0` for the switch.
 2. **Which `userConfig` options to ship:** `claude_profile` after RA-SET-008, and the telemetry options after SPEC-006.
 3. **Whether to require Claude Code 2.1.271** for fixed-choice `options` pickers.
 4. **Whether destinations,** such as a telemetry endpoint, should ever be settable from Claude Code's `/config`, or only from the operator's files.
