@@ -104,6 +104,8 @@ Horizon names are **planning increments**, not committed dates or promises of a 
 
 **Proposed backlog:** RA-PROD-101 operator status contract; 102 multi-harness install/update matrix; 103 consumer lock and pin UX; 104 one-slice success/failure smoke fixture; 105 handoff diagnostic summary; 106 version skew and migration guidance.
 
+**RA-PROD-105 status (2026-11-12): implemented.** `automation/supervisor/handoff_summary.py` is a read-only command that prints step 4's review summary from a handoff and, optionally, the supervisor's decision or evaluation report ([Reviewing a Handoff](workflows/boundroom.md#reviewing-a-handoff)). It labels the agent's claims apart from the supervisor's evidence, and without a report it says the handoff is not independently verified. One gap remains: `run_next.py`'s decision report records no base or head commit, so with that report the summary can show only the head commit the agent claims. Recording them in the report is a separate change. The summary alone does not meet H1's exit evidence.
+
 **Exit evidence:** repeatable fresh-home installs in Claude Code, Codex and Hermes; at least one opted-in consumer with both a successful *bounded* slice and a failure-path proof; manifest-owned sync is the only writer; no default-branch mutation by an agent; exact commands and transcripts attached to a PR. An empty-queue stop alone does not satisfy this gate.
 
 ### H2 — Finish per-component P0 acceptance, without cutover
