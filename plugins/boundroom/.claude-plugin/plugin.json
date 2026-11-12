@@ -15,5 +15,32 @@
     "agents",
     "slices",
     "kanban"
-  ]
+  ],
+  "userConfig": {
+    "claude_profile": {
+      "type": "string",
+      "title": "Claude runner profile",
+      "description": "parent, bounded, edits, unbounded or custom. Empty uses the supervisor's default, bounded."
+    },
+    "claude_profile_ceiling": {
+      "type": "string",
+      "title": "Claude runner ceiling",
+      "description": "bounded, edits or unbounded: the most a runner may get. Empty uses the supervisor's default, edits, or unbounded on a machine declared isolated."
+    },
+    "telemetry": {
+      "type": "string",
+      "title": "Telemetry mode",
+      "description": "off, file or otlp. Empty means off: telemetry is never on unless you set a mode and a destination."
+    },
+    "telemetry_capture": {
+      "type": "string",
+      "title": "Telemetry capture",
+      "description": "metadata or content. Empty means metadata."
+    },
+    "telemetry_runner": {
+      "type": "string",
+      "title": "Runner telemetry",
+      "description": "off, metadata or content. Empty means off."
+    }
+  }
 }

@@ -1,6 +1,6 @@
 # SPEC-008: Plugin settings you can see
 
-Status: **accepted (raelldottin/boundroom#198, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request with its own approval. RA-SET-001, the registry (`automation/supervisor/settings.py`) and its completeness tests, RA-SET-002, its resolver, and RA-SET-008, the Claude runner profiles with the ceiling, the per-slice settings file, the `runner_profile` record and the nested-run guard (`automation/supervisor/runner_profile.py`), are implemented, and so are RA-SET-004, the generated [reference page](../reference/settings.md) that `make reusable-check` keeps current, RA-SET-005, the plugin's `boundroom-settings` skill and the settings warnings in `boundroom-status`, and RA-SET-003, the read-only views (`python3 automation/supervisor/settings_view.py` with `--all`, `--json` or `--explain <id>`). RA-SET-010 switches the default to `bounded`, by the owner's decision of 2026-11-12, for `v0.4.0`: a supervised Claude runner starts in `dontAsk` with the slice allowlist and the sandbox unless the user chooses another profile, and `BOUNDROOM_CLAUDE_PERMISSION_MODE` set on its own still overrides the profile with just a mode. `run_agent.sh` called without the supervisor has no slice to build an allowlist from, so it keeps its own default. The other slices aren't yet.
+Status: **accepted (raelldottin/boundroom#198, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request with its own approval. RA-SET-001, the registry (`automation/supervisor/settings.py`) and its completeness tests, RA-SET-002, its resolver, and RA-SET-008, the Claude runner profiles with the ceiling, the per-slice settings file, the `runner_profile` record and the nested-run guard (`automation/supervisor/runner_profile.py`), are implemented, and so are RA-SET-004, the generated [reference page](../reference/settings.md) that `make reusable-check` keeps current, RA-SET-005, the plugin's `boundroom-settings` skill and the settings warnings in `boundroom-status`, and RA-SET-003, the read-only views (`python3 automation/supervisor/settings_view.py` with `--all`, `--json` or `--explain <id>`). RA-SET-006 adds the Claude Code `userConfig` options, one per user setting the owner chose (the profile, its ceiling and each non-secret telemetry setting), none with a default, and the run-next skill passes each one that is set. RA-SET-010 switches the default to `bounded`, by the owner's decision of 2026-11-12, for `v0.4.0`: a supervised Claude runner starts in `dontAsk` with the slice allowlist and the sandbox unless the user chooses another profile, and `BOUNDROOM_CLAUDE_PERMISSION_MODE` set on its own still overrides the profile with just a mode. `run_agent.sh` called without the supervisor has no slice to build an allowlist from, so it keeps its own default. The other slices aren't yet.
 
 Owner request recorded here (2026-11-12): give the user a quick or an extensive look at every option the Boundroom plugin can be configured with, and decide which options and settings should be surfaced to the user.
 
@@ -107,15 +107,15 @@ Every setting known today. The registry is built from this table in RA-SET-001, 
 
 ### Proposed Claude Code `userConfig`
 
-Applying the rule above, two settings qualify today, and two more once SPEC-006 lands:
+Applying the rule above, these options ship (RA-SET-006):
 
 | Option | Maps to | When |
 | --- | --- | --- |
 | `claude_profile` and `claude_profile_ceiling` | `BOUNDROOM_CLAUDE_PROFILE` and `BOUNDROOM_CLAUDE_PROFILE_CEILING` | RA-SET-006, after RA-SET-008. Neither can make `unbounded` reachable without the isolation declaration or an explicit ceiling. |
 | `telemetry` (`off` and nothing else at first) | SPEC-006's kill switch | After SPEC-006's RA-TEL-001 |
-| `telemetry_endpoint` | SPEC-006's `endpoint` | After SPEC-006, and only if the owner wants destinations settable from Claude Code. Headers stay out, because they're secrets. |
+| `telemetry_capture` and `telemetry_runner` | SPEC-006's `capture` and `runner` | RA-SET-006. Destinations (`endpoint`, `file_dir`) are not options: by the owner's decision 4, they come only from the operator's own files, variables or flags. Headers stay out, because they're secrets. |
 
-No `userConfig` option has a `default`, so leaving one empty changes nothing and the supervisor's own sources apply. Fixed-choice `options` need Claude Code 2.1.271 or later. The spec avoids them unless the owner accepts that minimum version.
+No `userConfig` option has a `default`, so leaving one empty changes nothing and the supervisor's own sources apply. Fixed-choice `options` would need Claude Code 2.1.271 or later. By the owner's decision 3, the options stay free text and the supervisor validates them.
 
 ## The views
 
@@ -345,10 +345,11 @@ Each slice is one pull request by the agent, approved by a person.
 
 **Decided by the owner (2026-11-12):**
 - **Decision 1, the runner's default:** **`bounded`**, not `parent`. From `v0.4.0` (RA-SET-010), a supervised Claude Code runner starts in `bounded`: `dontAsk`, the slice allowlist, and the sandbox with `failIfUnavailable`, whatever the parent session runs, unless the user chooses another profile. `BOUNDROOM_CLAUDE_PERMISSION_MODE` stays an explicit override, and `BOUNDROOM_CLAUDE_PROFILE=unbounded` with `BOUNDROOM_CLAUDE_ISOLATED=1` is the way back to today's behavior. The rest of decision 1 (the `edits` ceiling, the $5 cap, `git push`) stands as proposed.
-- **Decision 2, `userConfig`:** every setting the user may configure is configurable, and telemetry above all is configured only by the user and is **off by default**. RA-SET-006 ships `userConfig` options for the runner profile, its ceiling and each non-secret telemetry setting (mode, `file_dir`, endpoint, capture, runner telemetry), none with a default, so an empty option changes nothing. Headers stay out, because they are secrets.
+- **Decision 2, `userConfig`:** every setting the user may configure is configurable, and telemetry above all is configured only by the user and is **off by default**. RA-SET-006 ships `userConfig` options for the runner profile, its ceiling and the telemetry settings that aren't destinations (mode, capture, runner telemetry), none with a default, so an empty option changes nothing. Headers stay out, because they are secrets, and destinations stay out by decision 4.
 - **Canaries:** RA-SET-009 and SPEC-006's RA-TEL-007 may run on the owner's machine with Claude Code on a disposable local board, capped at $5 per slice, **after** their pull requests are merged.
 
-Still open: decision 3 (requiring Claude Code 2.1.271 for fixed-choice pickers; until then the options are free text and the supervisor validates them) and decision 4 as far as hosted destinations go.
+- **Decision 3, pickers:** the `userConfig` options stay free text, with no minimum Claude Code version. The supervisor validates every value and refuses a bad one with a named reason.
+- **Decision 4, destinations:** a destination is never settable from Claude Code's `/config`. The telemetry endpoint and file directory come only from the operator's own files under `~/.config/boundroom/`, `BOUNDROOM_*` variables or flags the user gives in a request, so the plugin ships no `userConfig` option for them.
 
 
 1. **The runner profile's details,** proposed in [A safer default](#a-safer-default-for-the-claude-code-runner): `parent` as the default after the canary; the default ceiling of `edits` unless isolation is declared, which means a bypass-mode parent's runner gets `edits`; `bounded` as the fallback for an unknown parent; the $5 per-slice cap; allowing `git push`; and `v0.4.0` for the switch.
