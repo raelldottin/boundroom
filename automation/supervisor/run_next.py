@@ -19,7 +19,15 @@ if str(REPO_ROOT) not in sys.path:
 
 from automation.context import memory
 from automation.context.build_context import build_context_bundle
-from automation.supervisor import board_backend, kanban_projection, kanban_writer, local_board, policy, telemetry_settings
+from automation.supervisor import (
+    board_backend,
+    kanban_projection,
+    kanban_writer,
+    local_board,
+    policy,
+    settings,
+    telemetry_settings,
+)
 
 # Time a Kanban claim outlives the agent's handoff timeout, for the validation replay and the record.
 CLAIM_MARGIN_SECONDS = 30 * 60
@@ -164,14 +172,23 @@ def main() -> int:
         print(f"stop: queue already has in_progress slice {active['slice_id']}", file=sys.stderr)
         return 2
 
-    agent_command_template = args.agent_cmd or queue_data["policy"]["agent_command_template"]
+    # Read through the settings registry (SPEC-008), which reports where each value came from.
+    setting_sources = settings.Sources(
+        entry_point="run_next", flags=vars(args), environ=os.environ, repository=settings.repository_values(queue_data["policy"])
+    )
+    agent_command_template = settings.resolve("agent_command", setting_sources).value
     if not args.dry_run and not agent_command_template.strip():
         print(
             "stop: no agent command template configured. Pass --agent-cmd or set policy.agent_command_template.", file=sys.stderr
         )
         return 2
 
-    autonomous_limit = 1 if args.single_slice else args.autonomous_limit or queue_data["policy"]["consecutive_autonomous_limit"]
+    # A limit of 0 has always fallen back to the policy's, so it still does.
+    autonomous_limit = (
+        1
+        if args.single_slice
+        else settings.resolve("autonomous_limit", setting_sources).value or queue_data["policy"]["consecutive_autonomous_limit"]
+    )
     completed_runs = 0
 
     while True:
