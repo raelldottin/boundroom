@@ -46,6 +46,7 @@ Each skill first finds the synced copy at `<repository>/automation/`. If there i
 | `boundroom-run-next` | Runs the documented command `python3 automation/supervisor/run_next.py --single-slice <user flags>`, then reports the handoff path and the stop reason. If the synced copy doesn't know `--single-slice`, it stops and says the copy is too old. | what `run_next` writes, under its own gates |
 | `boundroom-evaluate-handoff` | Runs `automation/supervisor/evaluate_handoff.py` on a handoff the user names, for a `queued` slice whose work was finished outside `run_next`. It cannot re-check a `done` slice. | nothing with `--dry-run`; without it, an accept marks the slice `done` |
 | `boundroom-sync` | In a consumer repository, runs `Tools/boundroom-sync.sh` against a released tag or pinned commit, with `--check` first | only after the user says go, and then only through a branch and a pull request in that consumer |
+| `boundroom-settings` | Runs `automation/supervisor/settings_view.py`: the quick view, or `--all`, `--json` or `--explain <id>`, and repeats its warnings. Added by [SPEC-008](plugin-settings.md) RA-SET-005. | nothing |
 
 ## Rules the plugin must keep
 

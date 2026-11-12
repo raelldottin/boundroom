@@ -52,10 +52,11 @@ def test_both_marketplaces_list_the_plugin_directory():
     assert [(p["name"], p["source"]) for p in codex] == [("boundroom", {"source": "local", "path": f"./{PLUGIN}"})]
 
 
-def test_the_four_skills_ship():
+def test_the_five_skills_ship():
     assert [path.parent.name for path in SKILLS] == [
         "boundroom-evaluate-handoff",
         "boundroom-run-next",
+        "boundroom-settings",
         "boundroom-status",
         "boundroom-sync",
     ]

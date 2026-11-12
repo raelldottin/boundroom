@@ -63,7 +63,7 @@ Use three statuses consistently: **SHIPPED** means code or a release exists; **P
 4. **Reversible adoption.** Consumer source, current queue, histories, pins and backups remain reconstructable. New integrations initially run read-only or in shadow mode and are enabled per consumer by a reviewed change.
 5. **Open, portable, local-first production target.** No required proprietary hosted model, hidden telemetry, proprietary orchestration service, or Docker Desktop-only deployment. Optional commercial development tools and benchmark providers remain explicitly separate.
 6. **No invisible writes.** Human approval, clean Git state, exact ref, PR review and a verifiable audit trail are part of the product experience—not deployment details to hide.
-7. **Compatibility beats a second implementation.** Keep existing release pins, schema contracts, Hermes-native interfaces and the four shared skills; do not add a second scheduler, persistence tier or agent framework without a new architectural decision.
+7. **Compatibility beats a second implementation.** Keep existing release pins, schema contracts, Hermes-native interfaces and the shared skills; do not add a second scheduler, persistence tier or agent framework without a new architectural decision.
 8. **Knowledge cannot authorize action.** The Discord Knowledge Loop may read approved evidence and post permission-checked answers, but it has no path to the supervisor, shell, GitHub write APIs, Kanban mutations or next-slice dispatch. Enforce this in process/credential permissions and negative tests, not just prompts.
 
 ## 4. Release horizons and milestone map
