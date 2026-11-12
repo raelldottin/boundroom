@@ -815,9 +815,13 @@ def resolve(setting_id: str, sources: Sources) -> Resolution:
     candidates: list[tuple[str, Any]] = []
     legacy_in_effect: Optional[str] = None
 
+    seen_options: set[str] = set()
     for flag in setting.flags:
         if sources.entry_point is not None and flag.entry_point != sources.entry_point:
             continue
+        if flag.options[0] in seen_options:  # the same flag on two entry points is one source
+            continue
+        seen_options.add(flag.options[0])
         value = sources.flags.get(_dest(flag.options[0]))
         chain.append(Step("flag", flag.options[0], _is_set(value), value if _is_set(value) else None))
         if _is_set(value):
