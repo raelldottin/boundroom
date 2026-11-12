@@ -42,6 +42,7 @@ nav:
   - Swarm Wiki Compiler Pin: architecture/swarm-wiki-compiler.md
   - Agent Plugin Specification: architecture/agent-plugin.md
   - Rename to Boundroom: architecture/boundroom-rename.md
+  - Traceable Agent Runs with Logfire (proposed): architecture/agent-telemetry.md
   - Plugin Settings You Can See (proposed): architecture/plugin-settings.md
   - Discord Knowledge Loop Specification: architecture/discord-knowledge-loop.md
   - Knowledge Loop on Discord or Slack (proposed): architecture/knowledge-loop-platforms.md
