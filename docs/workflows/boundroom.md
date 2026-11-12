@@ -43,7 +43,7 @@ The rule that replaces it: the canonical source's inventory decides the content 
 
 These assets are reusable or intended to become reusable with light parameterization:
 
-- `automation/supervisor/`: queue selection, policy checks, validation ownership, diff-budget checks, and fresh-run launching.
+- `automation/supervisor/`: queue selection, policy checks, validation ownership, diff-budget checks, fresh-run launching, and the read-only handoff review summary.
 - `automation/context/build_context.py`: compact slice context bundle generation.
 - `automation/prompts/`: base, slice, and review prompt fragments.
 - `automation/schemas/`: the Pydantic contract models (`models.py`) and the JSON Schemas generated from them.
@@ -231,6 +231,22 @@ A future repository should consume `boundroom` as a reusable package or template
 - Make targets that map to that repository's build and test commands
 
 New repositories must start from examples or templates, not Owlory's live queue, handoffs, proofs, or SecondBrain history.
+
+## Reviewing a Handoff
+
+After a slice, `automation/supervisor/handoff_summary.py` prints a short review summary, so a reviewer doesn't have to read the raw JSON:
+
+```bash
+python3 automation/supervisor/handoff_summary.py \
+  --handoff automation/handoffs/<artifact>.json \
+  --report report.json
+```
+
+`--report` takes the supervisor's report saved as a file: the decision report `run_next.py` prints after the slice, or the output of `evaluate_handoff.py`. `evaluate_handoff.py` prints only its report, so you can redirect it to a file. `run_next.py` also passes the agent's own output through to stdout, so copy its final JSON object into the file instead. Add `--json` for tools.
+
+The summary keeps two sources apart. The handoff holds the agent's own claims, and the summary never presents them as verified. The report is the supervisor's independent evidence: its decision and reason, the files it saw outside scope, its validation replays, and missing proofs. Without a report, the summary says the handoff is **not independently verified**. Only `evaluate_handoff.py`'s report records the base and head commits. With `run_next.py`'s report, the head commit is the agent's claimed `verified_commit_sha` and is labelled as a claim.
+
+The summary ends with a safe next action taken from the report, such as a person reviewing and approving, fixing a named failing validation, or "no action: queue stop". It never says to run the next slice. The tool reads its two inputs and nothing else. It changes no file, runs no subprocess, escapes terminal control characters in agent-written text, and truncates long lists with a count. An unreadable or malformed input exits with status 2.
 
 ## Clean GitHub Stop Contract
 
