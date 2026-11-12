@@ -101,6 +101,23 @@ def test_single_slice_runs_one_and_leaves_the_second_queued(queue, monkeypatch, 
     assert json.loads(capsys.readouterr().out)["autonomous_run_limit"] == 1
 
 
+def test_a_failing_agent_under_single_slice_fails_one_and_leaves_the_second_queued(queue, monkeypatch, capsys, tmp_path):
+    """The failure path of the one-slice smoke (RA-PROD-104): one run, one failed slice, nothing more."""
+    path, log = queue
+    agent = tmp_path / "agent.py"
+    failing = (
+        f"echo {{slice_id}} >> {shlex.quote(str(log))} && "
+        f"{shlex.quote(sys.executable)} {shlex.quote(str(agent))} {{handoff_file}} {{slice_id}} 3"
+    )
+
+    assert supervise(monkeypatch, "--single-slice", "--agent-cmd", failing) != 0
+
+    assert runs(log) == [FIRST]
+    assert statuses(path) == {FIRST: "failed", SECOND: "queued"}
+    report = json.loads(capsys.readouterr().out)
+    assert (report["slice_id"], report["queue_status"], report["autonomous_run_limit"]) == (FIRST, "failed", 1)
+
+
 @pytest.mark.parametrize(
     "flags",
     [
