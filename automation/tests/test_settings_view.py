@@ -101,6 +101,25 @@ class GoldenTests(ViewCase):
             self.assertEqual(64, settings_view.main(["--explain", "nope"], environ={}, repo_root=self.repo))
 
 
+class ReferencePageTests(ViewCase):
+    """PS-9: the reference page matches the registry, and the check catches drift."""
+
+    def test_ps9_the_checked_in_page_matches_the_registry(self) -> None:
+        self.assertEqual(settings_view.reference_page(), settings_view.REFERENCE_PAGE.read_text(encoding="utf-8"))
+
+    def test_ps9_the_check_fails_on_a_stale_page_and_writes_nothing(self) -> None:
+        stale = self.tmp / "settings.md"
+        stale.write_text("# stale\n", encoding="utf-8")
+        with mock.patch.object(settings_view, "REFERENCE_PAGE", stale), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(1, settings_view.main(["--docs", "--check"], environ={}, repo_root=self.repo))
+        self.assertEqual("# stale\n", stale.read_text(encoding="utf-8"))
+
+    def test_every_setting_has_a_row(self) -> None:
+        page = settings_view.reference_page()
+        for setting in settings.SETTINGS:
+            self.assertIn(f"| `{setting.id}` |", page)
+
+
 class SecretsTests(ViewCase):
     """PS-5: plant a marker in every secret and URL, then scan every view."""
 
