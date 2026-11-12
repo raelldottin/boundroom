@@ -278,6 +278,27 @@ def slice_settings(
     return settings
 
 
+def runner_notes(settings: Mapping[str, Any]) -> str:
+    """The runner prompt's "What you may run" section, from the same settings file (SPEC-008)."""
+    lines = [
+        "## What you may run",
+        "",
+        "This run allows only these calls. Anything else is denied, not asked about.",
+        "",
+        *(f"- `{rule}`" for rule in settings["permissions"]["allow"]),
+        "",
+        "Run `git add`, `git commit` and `git push` as separate commands. Give the commit message as "
+        '`-m "..."` with a plain quoted string. A command joined with `&&` or `;`, or one using `$(...)`, '
+        "a heredoc or a redirect, is matched as a whole and may be denied.",
+    ]
+    if "sandbox" in settings:
+        lines.append(
+            "Those three git commands run outside this run's sandbox only in that plain form. Inside it, "
+            "`.git` can't be written, so a commit fails."
+        )
+    return "\n".join(lines) + "\n"
+
+
 @contextmanager
 def runner_environment(
     slice_record: Mapping[str, Any],

@@ -209,6 +209,18 @@ class SliceSettingsTests(TempCase):
         self.assertIn("Bash(git rev-list:*)", settings["permissions"]["allow"])
         self.assertIn("Edit(.git/**)", settings["permissions"]["deny"])  # the file tools still can't touch .git
 
+    def test_the_prompt_lists_what_the_runner_may_run_and_how_to_commit(self) -> None:
+        # The third canary: a chained `git add && git commit && git push` stayed in the sandbox and
+        # didn't commit, while the same commands run one at a time did.
+        settings = rp.slice_settings(SLICE, POLICY, choose("bounded"), "automation/handoffs/h.json")
+        notes = rp.runner_notes(settings)
+        self.assertTrue(notes.startswith("## What you may run\n"))
+        for rule in settings["permissions"]["allow"]:
+            self.assertIn(f"- `{rule}`", notes)
+        self.assertIn("as separate commands", notes)
+        self.assertIn("outside this run's sandbox", notes)
+        self.assertNotIn("sandbox", rp.runner_notes(rp.slice_settings(SLICE, POLICY, choose("edits"))))
+
     def test_ps14_bounded_fails_closed_without_its_sandbox(self) -> None:
         sandbox = rp.slice_settings(SLICE, POLICY, choose("bounded"))["sandbox"]
         self.assertEqual(

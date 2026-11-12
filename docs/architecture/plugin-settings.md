@@ -244,7 +244,7 @@ The supervisor writes a per-slice settings file **outside the repository** (in t
   - The network allowlist is empty.
   - `git push` is listed in `excludedCommands`: Claude Code's sandbox proxy doesn't carry plain SSH, and the push still needs its allow rule.
   - `git add *` and `git commit *` are listed in `excludedCommands` too. The sandbox turns the `.git/**` deny rule into a write block, so inside it a commit can't create `.git/index.lock`. An entry without a wildcard matches only the bare command, hence the ` *`. Outside the sandbox, the allow rules still limit these commands to the slice's paths, and the file tools still can't touch `.git`. An excluded command is not a sandbox boundary: `git commit` runs the consumer's own hooks unsandboxed, which the runner can't edit because `.git/**` is denied to it.
-- **The runner prompt** gains a short "What you may run" list generated from the same file, so the agent doesn't spend turns on calls that will be denied.
+- **The runner prompt** ends with a "What you may run" section generated from the same file, so the agent doesn't spend turns on calls that will be denied. It also says to run `git add`, `git commit` and `git push` as separate commands with a plain `-m "..."` message: a command joined with `&&`, or one using `$(...)`, a heredoc or a redirect, is matched as a whole, so it stays in the sandbox and can't commit. The RA-TEL-007 canary found this.
 
 A denied call isn't a supervisor error. If the agent can't finish within its allowlist, its handoff reports the blocker, and the slice fails or blocks through the existing gates. That's the safe outcome.
 

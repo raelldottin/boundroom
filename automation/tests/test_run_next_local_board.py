@@ -151,3 +151,18 @@ def test_the_projection_command_reads_a_local_board(no_hermes, capsys, tmp_path)
     assert [s["slice_id"] for s in output["queue"]["slices"]] == [board.slice_id(board.tasks[0])]
     assert output["provenance"][board.slice_id(board.tasks[0])]["backend"] == "local"
     assert output["revision"] == board.local.snapshot().revision
+
+
+def test_a_runner_profile_adds_what_the_runner_may_run_to_the_prompt(consumer, agent, no_hermes, monkeypatch, capsys, tmp_path):
+    # SPEC-008: the prompt carries the same allowlist the settings file gives the runner.
+    def prompt_for(name: str, extra: tuple[str, ...]) -> str:
+        board = Board(tmp_path / name)
+        copy = tmp_path / f"{name}-prompt.md"
+        command = f"cp {{prompt_file}} {shlex.quote(str(copy))}"  # no handoff, so the slice fails; only the prompt matters
+        supervise(monkeypatch, board, agent, extra=(*extra, "--agent-cmd", command))
+        capsys.readouterr()
+        return copy.read_text(encoding="utf-8")
+
+    profiled = prompt_for("edits", ("--runner-profile", "edits"))
+    assert "## What you may run" in profiled and "- `Edit(src/loop.py)`" in profiled
+    assert "## What you may run" not in prompt_for("plain", ())

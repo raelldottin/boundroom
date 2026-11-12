@@ -470,6 +470,14 @@ def run_agent(
     prompt_text = render_prompt(
         repo_root=repo_root, slice_record=slice_record, context_bundle=context_bundle, handoff_path=handoff_path
     )
+    try:
+        handoff = handoff_path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:  # a --handoff-dir outside the repository
+        handoff = str(handoff_path.resolve())
+    if profile is not None and profile.effective != "custom":
+        # The same rules the settings file gives the runner, so it doesn't spend turns on denied calls (SPEC-008).
+        settings = runner_profile.slice_settings(slice_record, queue_data["policy"], profile, handoff)
+        prompt_text = f"{prompt_text.rstrip()}\n\n{runner_profile.runner_notes(settings)}"
 
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as prompt_handle:
         prompt_handle.write(prompt_text)
@@ -497,10 +505,6 @@ def run_agent(
             result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds, env=environ)
             return result.returncode
         # The profile builds on that environment, so its own variables win (SPEC-008).
-        try:
-            handoff = handoff_path.resolve().relative_to(repo_root.resolve()).as_posix()
-        except ValueError:  # a --handoff-dir outside the repository
-            handoff = str(handoff_path.resolve())
         with runner_profile.runner_environment(
             slice_record, queue_data["policy"], profile, environ or os.environ, handoff=handoff
         ) as env:
