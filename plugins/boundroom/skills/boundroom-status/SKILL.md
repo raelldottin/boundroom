@@ -32,6 +32,16 @@ python3 automation/supervisor/run_next.py --dry-run --include-blocked
 
 `--dry-run` selects and packages the next slice without launching an agent or changing the queue. Report the slice it selected, or that none is eligible. If none is eligible, also report the blocked or deferred slices and their recommended unblockers.
 
+## Settings warnings
+
+If `automation/supervisor/settings_view.py` exists, run:
+
+```bash
+python3 automation/supervisor/settings_view.py
+```
+
+Report only its `Warnings` section, word for word, or that there are none. For the full settings, point the user to `boundroom-settings`. If the file doesn't exist, skip this section; the synced copy predates the settings views.
+
 ## Board against queue (only if the user names a board)
 
 If the user gives a Kanban board directory and an approval overlay, compare them with the JSON queue. The board can be a local board or a Hermes board; the overlay's `backend` says which, and the command reads either:

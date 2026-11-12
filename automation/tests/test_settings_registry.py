@@ -23,8 +23,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RUN_AGENT = REPO_ROOT / "automation/supervisor/run_agent.sh"
 SYNC_TOOL = REPO_ROOT / "Tools/boundroom-sync.sh"
 ENV_NAME = re.compile(r"\b(?:BOUNDROOM|REPO_AUTOMATION|OWLORY)_[A-Z0-9_]*[A-Z0-9]\b")
-# Flags in skill text that belong to other tools, not to Boundroom's entry points.
-OTHER_TOOLS_FLAGS = {"--help", "--match-head-commit"}
+# Flags in skill text that belong to other tools, not to Boundroom's entry points. The settings
+# view's own flags choose a view; they aren't settings.
+OTHER_TOOLS_FLAGS = {"--help", "--match-head-commit", "--all", "--json", "--explain"}
 
 
 def knowledge_service(path: Path) -> bool:
