@@ -25,6 +25,7 @@ from automation.supervisor import (
     kanban_writer,
     local_board,
     policy,
+    runner_profile,
     settings,
     telemetry_settings,
 )
@@ -69,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hermes", default="hermes", help="Command that runs the Hermes CLI, for writes to a Hermes board.")
     parser.add_argument("--memory-config", help="Operator-reviewed Hindsight project-to-bank map (JSON) to recall from.")
     parser.add_argument("--memory-project", help="Project whose granted bank each context bundle recalls from.")
+    parser.add_argument(
+        "--runner-profile",
+        choices=runner_profile.PROFILES,
+        help="Claude Code runner profile (SPEC-008). Unset keeps BOUNDROOM_CLAUDE_PERMISSION_MODE's behavior.",
+    )
     telemetry_settings.add_flags(parser)
     return parser
 
@@ -145,6 +151,20 @@ def board_for(args: argparse.Namespace, repo_root: Path) -> board_backend.BoardB
 
 def main() -> int:
     args = parse_args()
+    try:
+        # No worker may start the next slice (SPEC-008 PS-20): by variable, and by the run lock for
+        # a runner that unset the variable.
+        runner_profile.refuse_if_nested(os.environ, "run_next")
+        if args.dry_run:
+            return _run(args)
+        with runner_profile.run_lock(os.environ):
+            return _run(args)
+    except runner_profile.ProfileRefused as error:
+        print(f"stop: {error}", file=sys.stderr)
+        return EX_CONFIG
+
+
+def _run(args: argparse.Namespace) -> int:
     if args.single_slice and args.autonomous_limit is not None:
         # argparse keeps only the last of repeated flags, so any value at all is refused, 1 included.
         print("stop: --single-slice runs one slice and refuses --autonomous-limit.", file=sys.stderr)
@@ -171,6 +191,10 @@ def main() -> int:
         print(f"stop: {telemetry.refusal}", file=sys.stderr)
         return EX_CONFIG
     telemetry_report = telemetry.report()
+    profile = None
+    if runner_profile.configured(vars(args), os.environ):
+        profile = runner_profile.choose(vars(args), os.environ, runner_profile.parent_launch_mode())
+    profile_record = profile.record() if profile else None
 
     active = policy.active_slice(queue_data)
     if active is not None:
@@ -247,6 +271,8 @@ def main() -> int:
                 "context_documents": [doc["path"] for doc in context_bundle["documents"]],
                 "telemetry": telemetry_report,
             }
+            if profile_record:
+                report["runner_profile"] = profile_record
             if args.include_blocked:
                 report["blocked_slices"] = [
                     {
@@ -276,6 +302,7 @@ def main() -> int:
                 completed_runs=completed_runs,
                 autonomous_limit=autonomous_limit,
                 telemetry=telemetry_report,
+                runner_profile=profile_record,
             )
             print(json.dumps(report, indent=2))
             return exit_code
@@ -288,6 +315,7 @@ def main() -> int:
                 context_bundle=context_bundle,
                 handoff_path=handoff_path,
                 command_template=agent_command_template,
+                profile=profile,
             )
         except Exception as error:  # pragma: no cover - last-resort queue recovery
             return fail(f"Supervisor error while running slice: {error}")
@@ -348,6 +376,7 @@ def main() -> int:
                     completed_runs=completed_runs,
                     autonomous_limit=autonomous_limit,
                     telemetry=telemetry_report,
+                    runner_profile=profile_record,
                 ),
                 indent=2,
             )
@@ -358,7 +387,13 @@ def main() -> int:
 
 
 def run_agent(
-    repo_root: Path, queue_data: dict, slice_record: dict, context_bundle: dict, handoff_path: Path, command_template: str
+    repo_root: Path,
+    queue_data: dict,
+    slice_record: dict,
+    context_bundle: dict,
+    handoff_path: Path,
+    command_template: str,
+    profile: Optional[runner_profile.RunnerProfile] = None,
 ) -> int:
     timeout_seconds = queue_data["policy"]["handoff_timeout_seconds"]
     prompt_text = render_prompt(
@@ -385,8 +420,12 @@ def run_agent(
     )
 
     try:
-        result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds)
-        return result.returncode
+        if profile is None:
+            result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds)
+            return result.returncode
+        with runner_profile.runner_environment(slice_record, queue_data["policy"], profile, os.environ) as env:
+            result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds, env=env)
+            return result.returncode
     finally:
         prompt_path.unlink(missing_ok=True)
         context_path.unlink(missing_ok=True)
@@ -485,8 +524,9 @@ def make_decision_report(
     completed_runs: int,
     autonomous_limit: int,
     telemetry: Optional[dict] = None,
+    runner_profile: Optional[dict] = None,
 ) -> dict:
-    return _with_telemetry(telemetry) | {
+    return _with_telemetry(telemetry, runner_profile) | {
         "slice_id": slice_record["slice_id"],
         "queue_status": decision.queue_status,
         "decision": decision.decision,
@@ -505,15 +545,21 @@ def make_decision_report(
     }
 
 
-def _with_telemetry(telemetry: Optional[dict]) -> dict:
-    """The decision report's ``telemetry`` block (SPEC-006), present once a run has resolved it."""
-    return {} if telemetry is None else {"telemetry": telemetry}
+def _with_telemetry(telemetry: Optional[dict], runner_profile: Optional[dict] = None) -> dict:
+    """The ``telemetry`` block (SPEC-006) and, when a profile was chosen, the ``runner_profile`` block (SPEC-008)."""
+    blocks = {} if telemetry is None else {"telemetry": telemetry}
+    return blocks if runner_profile is None else blocks | {"runner_profile": runner_profile}
 
 
 def make_failure_report(
-    slice_record: dict, reason: str, completed_runs: int, autonomous_limit: int, telemetry: Optional[dict] = None
+    slice_record: dict,
+    reason: str,
+    completed_runs: int,
+    autonomous_limit: int,
+    telemetry: Optional[dict] = None,
+    runner_profile: Optional[dict] = None,
 ) -> dict:
-    return _with_telemetry(telemetry) | {
+    return _with_telemetry(telemetry, runner_profile) | {
         "slice_id": slice_record["slice_id"],
         "queue_status": "failed",
         "decision": "stop_failed",
