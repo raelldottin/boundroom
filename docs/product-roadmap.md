@@ -180,6 +180,25 @@ Propose a stable 1.0 only when the maintainer accepts: product boundaries and su
 
 **Exit evidence:** end-to-end synthetic pipeline produces cited answers and correct refusals; source edits/deletions are reflected; before/after retrieval results show correct and denied cases; no code path can dispatch a slice or modify a board. A later real-guild canary, schedule activation, external API access or model spend needs its own scoped approval. No Discord connection is made merely by accepting this roadmap.
 
+## 4a. Where the work can run (2026-11-10)
+
+The agent works on the owner's machine, which is a company computer. **Of the agent harnesses and services this roadmap uses, only Claude Code is approved there.** Codex is explicitly not allowed. The agent records the work that needs something else as **deferred to an approved machine**, rather than stalling on it. Running deferred work later still needs the approvals AGENTS.md requires, such as a person's approval for spending, cutovers and schedules.
+
+| Work | Needs | On the owner's machine |
+| --- | --- | --- |
+| H0, H1, RA-BD-001 to 003, RA-BD-005's in-repo side, release preparation | Claude Code and the existing developer tools (git, gh, Python, uv) | **Proceeds.** Merges and release tags still need a person's approval. |
+| RA-BD-004 Claude Code canary | Claude Code | **Done** (2026-11-10) |
+| RA-BD-004 Codex canary | Codex | Deferred |
+| H2 Hindsight: local inference, reflect, a real project bank, egress denial | a Hindsight server, PostgreSQL, local model weights | Deferred |
+| H2 Kanban: Hermes gateway races and goal mode | Hermes | Deferred. The local board doesn't need Hermes. |
+| H3 to H5 | H2's evidence | Deferred behind H2 |
+| K: live capture, Discord or Slack answers, schedules ([SPEC-007](architecture/knowledge-loop-platforms.md)) | a Discord or Slack bot, its credentials, workspace approval, Hindsight | Deferred. Contracts and hermetic fixtures proceed. |
+| [SPEC-006](architecture/agent-telemetry.md) telemetry: hermetic slices and the `file`-mode canary | Claude Code, and the Logfire Python package as a pinned optional dependency | **Proceeds.** Sending to any `otlp` destination waits on the owner's data-handling decision. |
+| [SPEC-008](architecture/plugin-settings.md) settings and Claude runner profiles, including the RA-SET-009 canary | Claude Code | **Proceeds** |
+| R: ProgramBench runs | Hermes and a hosted model provider | Deferred |
+
+When an approved machine or hosted environment exists, record it here and run the deferred work unchanged. Nothing deferred here counts as accepted.
+
 ## 5. Dependency graph and critical path
 
 | Workstream | Depends on | Blocks |
