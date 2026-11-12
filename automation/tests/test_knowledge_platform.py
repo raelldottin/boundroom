@@ -59,6 +59,7 @@ KNOWLEDGE_MODULES = (
     "automation.knowledge.slack_client",
     "automation.knowledge.slack_inbound",
     "automation.knowledge.slack_adapter",
+    "automation.knowledge.isolation",
 )
 
 INTERFACE: frozenset[Role] = frozenset({"interface"})
