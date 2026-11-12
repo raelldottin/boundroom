@@ -1,0 +1,192 @@
+# SPEC-008: Plugin settings you can see
+
+Status: **proposed** in the pull request that adds it. Merging that pull request, after a person's approving review, accepts the design. Each delivery slice below is still its own pull request with its own approval. Nothing here is implemented.
+
+Owner request recorded here (2026-11-12): give the user a quick or an extensive look at every option the Boundroom plugin can be configured with, and decide which options and settings should be surfaced to the user.
+
+## Problem
+
+The plugin's skills drive the synced supervisor, and the supervisor reads its settings from six places. No single place lists them, says which value is in effect, or says where that value came from:
+
+| Where | Count today | Examples |
+| --- | --- | --- |
+| Command-line flags | `run_next.py` 13, `evaluate_handoff.py` 6, `kanban_projection.py` 3, `Tools/boundroom-sync.sh` 11 | `--single-slice`, `--board-backend`, `--allow-unverified-source` |
+| Environment variables read by `run_agent.sh` | 10 settings, plus legacy `REPO_AUTOMATION_*` and `OWLORY_*` aliases | `BOUNDROOM_AGENT_RUNNER`, `BOUNDROOM_CLAUDE_PERMISSION_MODE` |
+| Queue policy (`automation/queue/slices.json`) | 4 fields | `consecutive_autonomous_limit`, `agent_command_template` |
+| Kanban overlay | `backend`, `board` and the policy again | `"backend": "local"` |
+| Memory configuration | endpoint, credential variable, timeout, 8 budgets, project grants | `api_key_env`, `endpoint` |
+| Proposed: [SPEC-006](https://github.com/raelldottin/boundroom/pull/196) telemetry and [SPEC-007](https://github.com/raelldottin/boundroom/pull/197) knowledge platforms | about 15 more | `BOUNDROOM_TELEMETRY`, `platforms` |
+
+Some of these matter a great deal and are invisible today. The clearest case: when the runner is Claude Code, `run_agent.sh` passes `--permission-mode "${BOUNDROOM_CLAUDE_PERMISSION_MODE:-bypassPermissions}"`. Every supervised Claude Code session runs with permission checks bypassed unless the user knows to set that variable, and nothing tells them.
+
+## Decision (proposed)
+
+1. **One registry declares every setting.** `automation/supervisor/settings.py` holds one entry per setting. The entry records its id, type, default, allowed values, every source it can come from, its surfacing class, whether it's a secret, and a one-line description. Code reads settings through the registry's resolver, so a new flag or variable can't exist without an entry. Tests enforce that.
+2. **Two read-only views, generated from the registry:**
+   - **Quick** (`boundroom settings`): the dozen settings a user should know about, plus anything not at its default and any warnings.
+   - **Extensive** (`boundroom settings --all`, `--json`, `--explain <id>`): every setting with its effective value, its source and its full precedence chain.
+
+   Neither view writes, connects to the network, or prints a secret.
+3. **A fixed rubric decides what surfaces.** It isn't a judgment call per setting. The rubric is in [Surfacing rules](#surfacing-rules), and its result for every setting known today is in [Classification](#classification).
+4. **The plugin gets a fifth skill, `boundroom-settings`,** which runs the synced supervisor's settings command. As [SPEC-002](agent-plugin.md) requires, it's text only. `boundroom-status` prints the quick view's warnings and points to the skill.
+5. **Claude Code's `userConfig` is an optional convenience for a short allowlist, not the source of truth.** Codex and Hermes have no equivalent the spec can rely on, so the supervisor's own sources stay authoritative. A `userConfig` option is just another way of supplying a value the registry already defines.
+6. **The registry generates a reference page** at `docs/reference/settings.md`, and CI fails when it's out of date.
+
+## Sources and precedence
+
+These are the same for every setting. A setting's registry entry lists which of them it accepts.
+
+1. **Kill switches**, where a setting has one, such as SPEC-006's `--no-telemetry`. They always win.
+2. **Command-line flags.** The plugin's skills pass these, including values from Claude Code `userConfig`.
+3. **`BOUNDROOM_*` environment variables.** A legacy alias is read only when its new name is unset, as SPEC-005 decided.
+4. **The operator's files** under `~/.config/boundroom/`. SPEC-006's `telemetry.json` and SPEC-007's `knowledge.json` live there.
+5. **The repository's policy:** the queue policy, the Kanban overlay and the memory configuration.
+6. **The registry's default.**
+
+**Who may set what.** Each entry declares what the repository may do with it: `any`, `narrow-only` or `never`. `narrow-only` means the repository can lower or turn off the setting but not raise or redirect it, as SPEC-006 and SPEC-007 already require for telemetry and platforms. A repository value that breaks its rule is refused with a named reason, and both views show the refusal.
+
+## Surfacing rules
+
+Each question below is asked in order. The first "yes" decides the class.
+
+| # | Question | Class | How it's shown |
+| --- | --- | --- | --- |
+| 1 | Is it a credential, or a reference to one? | **secret** | Never the value. Only *set* or *not set*, and the name of the variable or secret reference that holds it. Never a `userConfig` option. |
+| 2 | Is it set by the supervisor for the agent, or is it a test or diagnostic hook, rather than something a user configures? | **internal** | Extensive view only, under "Set by Boundroom, not by you", for transparency. Not configurable through the plugin. |
+| 3 | Does it change what the agent may do, how much it runs unattended, what code runs, or where data leaves the machine? | **security** | Always in the quick view, with its value, its source and whether it's the default. A risky value gets a warning. |
+| 4 | Does a user have to set it, or recognize it, to use a skill? | **essential** | In the quick view when the skill that uses it applies. For example, board settings appear when an overlay is configured. |
+| 5 | Is it reachable from the plugin at all? | **advanced** if yes; **outside the plugin** if no | Extensive view only. Settings outside the plugin, such as the benchmark's, are grouped separately. |
+
+**Also in the quick view, whatever the class:**
+- any setting not at its default;
+- any legacy alias in effect, with the new name to use;
+- any repository value that was refused;
+- any secret that a configured feature needs but that isn't set.
+
+**What qualifies for Claude Code `userConfig`.** Only a setting that meets all of these:
+- its class is **security** or **essential**;
+- it's per-user, not per-repository;
+- it's not a secret;
+- passing it through skill text is safe, because Claude Code substitutes only non-sensitive values into skills;
+- the same setting is reachable without Claude Code, so Codex and Hermes users aren't left without it.
+
+## Classification
+
+Every setting known today. The registry is built from this table in RA-SET-001, and its completeness tests catch anything missed here.
+
+### Surfaced in the quick view
+
+| Setting | Source | Class | Why it surfaces |
+| --- | --- | --- | --- |
+| Runner (`BOUNDROOM_AGENT_RUNNER`) | env | security | Decides which agent executes the slice |
+| Claude Code permission mode (`BOUNDROOM_CLAUDE_PERMISSION_MODE`) | env | security | **Defaults to `bypassPermissions`.** The quick view always shows it, with a warning while it's the default. Whether to change the default is an open decision. |
+| One slice or several (`--single-slice`, `--autonomous-limit`, policy `consecutive_autonomous_limit`) | flag, policy | security | How much runs unattended. As AGENTS.md says, the policy value is a default a caller can override, so both views show which one won. |
+| Agent command (`--agent-cmd`, policy `agent_command_template`) | flag, policy | security | What actually runs. Shown as *default* or *custom*, with the custom command printed. |
+| Supervisor-owned paths (policy `supervisor_owned_paths`) | policy | security | The files no slice may change |
+| Work source (`--queue`, or `--board`, `--kanban-overlay`, `--board-backend`) | flag, overlay | essential | Where the next slice comes from, and which backend |
+| Memory endpoint (`endpoint` in the memory configuration) | memory config | security | Data leaves the machine when it's set |
+| Memory credential (`api_key_env`) | memory config | secret | Shown as the variable's name, and set or not set |
+| Sync provenance (`--pin`, `--expect-remote`) | flag | security | What a consumer receives, and from where |
+| Unverified sync (`--allow-unverified-source`) | flag | security | Always a warning when set. AGENTS.md forbids agents from using it. |
+| Template re-baselining (`--force-templates`) | flag | security | It overwrites a consumer's local template changes |
+| Telemetry and knowledge platforms, once SPEC-006 and SPEC-007 land | various | security | Off, or the destination host and the enabled platforms |
+
+### Extensive view only
+
+| Settings | Class |
+| --- | --- |
+| `--handoff-dir`, `--include-blocked`, `--dry-run`, `--hermes`, `--memory-config`, `--memory-project`; `evaluate_handoff.py`'s `--slice-id`, `--handoff`, `--base-sha`, `--head-sha`, `--queue`, `--dry-run`; the projection's `--board-dir`, `--overlay`, `--shadow-queue`; sync's `--check`, `--sync`, `--target`, `--source`, `--manifest`, `--quality-command`, `--runtime-python` | advanced. A skill's own required arguments are shown with that skill, not in the quick view. |
+| `BOUNDROOM_CLAUDE_BIN`, `BOUNDROOM_CODEX_BIN`, `BOUNDROOM_HERMES_BIN`, `BOUNDROOM_HERMES_TRANSPORT`, `BOUNDROOM_HERMES_MAX_TURNS`, `BOUNDROOM_HERMES_PYTHON`, `BOUNDROOM_HERMES_USAGE_DIR`, policy `handoff_timeout_seconds`, memory `timeout_seconds`, memory budgets, memory project grants | advanced |
+| `BOUNDROOM_HERMES_SANDBOX_IMAGE` | security, but shown only when the runner is Hermes |
+| `BOUNDROOM_SUPERVISOR_CONTEXT_FILE`, `_HANDOFF_FILE`, `_SLICE_ID` and their legacy names | internal: exported to the agent |
+| `BOUNDROOM_SANDBOX_PROBE_COMMAND`, `_PROBE_BARRIER`, `_PROBE_BARRIER_SECONDS`, `BOUNDROOM_UNLISTED_SENTINEL` | internal: test and diagnostic hooks |
+| `REPO_AUTOMATION_*` and `OWLORY_*` aliases | legacy aliases. Warned about in the quick view when in effect. |
+| The effectiveness benchmark's flags and settings | outside the plugin |
+
+**Not settings at all:** slice records, overlay approvals and handoffs are work items and records. The settings views don't list them.
+
+### Proposed Claude Code `userConfig`
+
+Applying the rule above, one setting qualifies today, and two more once SPEC-006 lands:
+
+| Option | Maps to | When |
+| --- | --- | --- |
+| `claude_permission_mode` | `BOUNDROOM_CLAUDE_PERMISSION_MODE` | RA-SET-006 |
+| `telemetry` (`off` and nothing else at first) | SPEC-006's kill switch | After SPEC-006's RA-TEL-001 |
+| `telemetry_endpoint` | SPEC-006's `endpoint` | After SPEC-006, and only if the owner wants destinations settable from Claude Code. Headers stay out, because they're secrets. |
+
+No `userConfig` option has a `default`, so leaving one empty changes nothing and the supervisor's own sources apply. Fixed-choice `options` need Claude Code 2.1.271 or later. The spec avoids them unless the owner accepts that minimum version.
+
+## The views
+
+**Quick view.** About 15 lines, grouped and ending with warnings:
+
+```text
+Boundroom 0.3.0 settings (quick view)          run `boundroom settings --all` for everything
+  runner             claude                      env BOUNDROOM_AGENT_RUNNER
+  permission mode    bypassPermissions  default  ! permission checks are bypassed for the agent
+  slices per run     1                           flag --single-slice
+  agent command      default
+  work source        local board ~/.boards/demo  overlay ./automation/overlay.json
+  memory             off
+  telemetry          off                         default
+Warnings
+  ! REPO_AUTOMATION_AGENT_RUNNER is set; use BOUNDROOM_AGENT_RUNNER
+```
+
+**Extensive view.** Every setting, grouped by area (runner, work source, policy, sync, memory, telemetry, knowledge, internal, outside the plugin). Each row shows the id, effective value, source, default, allowed values, class and the repository rule. `--json` gives the same data for tools. `--explain <id>` shows one setting's full precedence chain: each source, whether it was set, and which won and why.
+
+**Shared rules for both views:**
+- Read-only: no network, no writes, no lock or board access beyond what reading the overlay needs.
+- Secrets appear only as *set* or *not set* plus their reference name.
+- URL paths, query strings and headers are never printed.
+- An unreadable or invalid source is reported in the view, not fatal.
+
+## Requirements
+
+| Id | Requirement | Acceptance test |
+| --- | --- | --- |
+| PS-1 | Every flag of every plugin-driven entry point is in the registry | Builds each argument parser and compares its options with the registry. This needs `run_next.py`, `evaluate_handoff.py` and the projection to expose `build_parser()`. |
+| PS-2 | Every `BOUNDROOM_*`, `REPO_AUTOMATION_*` and `OWLORY_*` variable the code reads is in the registry | Scans `automation/` and `Tools/` for the variable names |
+| PS-3 | Every field of the policy, overlay and memory models is in the registry, or marked as a work item | Walks the pydantic models' fields |
+| PS-4 | Every flag a skill's text mentions is in the registry, and every `userConfig` key maps to a setting that qualifies | Scans `plugins/boundroom/` |
+| PS-5 | The views never print a secret | Plants marker values in every secret, then scans the quick, extensive, `--json` and `--explain` output |
+| PS-6 | The views are read-only | Sockets blocked, and the file system compared before and after |
+| PS-7 | Source and precedence are reported correctly | For each setting, every combination of sources yields the expected value and the source that won |
+| PS-8 | A repository value that breaks its rule is refused and shown | Tests for each `narrow-only` and `never` setting |
+| PS-9 | The reference page matches the registry | `boundroom settings --docs --check` in `make reusable-check` |
+| PS-10 | Defaults are unchanged | The registry's defaults equal today's behavior, so introducing it changes nothing a user sees except the new views |
+
+## Effects on other specs and rules
+
+- **[SPEC-002](agent-plugin.md):** a fifth skill and, in RA-SET-006, a `userConfig` block in the Claude Code manifest. Both are skills and manifests, with no hook, MCP server or background process. A plugin version bump ships with a release a person approves.
+- **[SPEC-005](boundroom-rename.md):** legacy aliases become registry entries, so removing them later is a registry change with a known blast radius.
+- **SPEC-006 and SPEC-007:** their settings join the registry when they're implemented. Their repository rules become `narrow-only` entries.
+- **Performance (AGENTS.md):** the resolver replaces scattered `os.environ` and argument reads with one lookup per setting. It adds no file or network work to a slice beyond the files the supervisor already reads. The views run only on request.
+
+## Delivery slices
+
+Each slice is one pull request by the agent, approved by a person.
+
+| Slice | Delivers | Acceptance |
+| --- | --- | --- |
+| RA-SET-001 | The registry with every setting in [Classification](#classification), `build_parser()` for the three entry points, and the completeness tests | PS-1 to PS-4 and PS-10. No behavior change. |
+| RA-SET-002 | The resolver: effective value, source and precedence chain, including legacy aliases and the repository rules. Entry points read through it. | PS-7, PS-8 and PS-10 |
+| RA-SET-003 | The views: `settings`, `--all`, `--json` and `--explain`, with redaction | PS-5 and PS-6, plus golden-output tests for the quick view |
+| RA-SET-004 | The generated reference page and its CI check | PS-9 |
+| RA-SET-005 | The `boundroom-settings` skill, and quick-view warnings in `boundroom-status`, as text only | PS-4. The skill contains no code. |
+| RA-SET-006 | The `userConfig` block for `claude_permission_mode`, after the owner decides below | PS-4. `claude plugin validate` passes. |
+| RA-SET-007 | SPEC-006 and SPEC-007 settings, as each lands | PS-1 to PS-9 for the new entries |
+
+## Alternatives considered
+
+- **Document the settings by hand.** That's what exists now, spread across six places, and nothing keeps it current. A registry with completeness tests can't drift.
+- **Make `userConfig` the source of truth.** It exists only in Claude Code, and its values reach the supervisor only through skill text. Codex, Hermes and plain shell users would be left out.
+- **Surface everything.** Sixty rows is the extensive view's job. The quick view is useful only if it's short.
+
+## Open decisions for the owner
+
+1. **The Claude Code permission mode default.** Keep `bypassPermissions`, which the supervisor's gates were measured with, or change it. Changing it alters how every supervised Claude Code session behaves, so it would be its own pull request.
+2. **Which `userConfig` options to ship:** `claude_permission_mode` now, and the telemetry options after SPEC-006.
+3. **Whether to require Claude Code 2.1.271** for fixed-choice `options` pickers.
+4. **Whether destinations,** such as a telemetry endpoint, should ever be settable from Claude Code's `/config`, or only from the operator's files.
