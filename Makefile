@@ -13,4 +13,5 @@ reusable-check:
 	$(UV) run ruff format --check .
 	$(UV) run ty check automation Tools
 	$(UV) run python -m automation.schemas.generate --check
+	$(UV) run python automation/supervisor/settings_view.py --docs --check
 	$(UV) run python -m pytest automation/tests -q
