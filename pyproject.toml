@@ -36,7 +36,9 @@ package = false
 pythonpath = ["."]
 testpaths = ["automation/tests"]
 python_files = ["test_*.py"]
-addopts = "-ra"
+# Logfire, a dev dependency for the telemetry exporter, installs a pytest plugin that reads the
+# environment on every test call; the knowledge tests count every environment read (SPEC-007 CP-1).
+addopts = "-ra -p no:logfire"
 
 [tool.coverage.run]
 source = ["automation"]
