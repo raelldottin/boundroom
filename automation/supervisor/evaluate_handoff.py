@@ -29,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from automation.supervisor import policy, telemetry_settings
+from automation.supervisor import policy, runner_profile, telemetry_settings
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +504,10 @@ def report_to_dict(report: EvaluationReport) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
+    nested = runner_profile.nested_run(os.environ)
+    if nested and not args.dry_run:
+        print(f"stop: evaluate_handoff without --dry-run refused inside a supervised slice ({nested} is set)", file=sys.stderr)
+        return 78
     repo_root = REPO_ROOT
     queue_path = repo_root / args.queue
     repository_telemetry = policy.load_queue(queue_path)["policy"].get("telemetry") if queue_path.exists() else None

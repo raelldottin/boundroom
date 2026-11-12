@@ -29,6 +29,7 @@ import contextlib
 import getpass
 import hashlib
 import json
+import os
 import secrets
 import sqlite3
 import sys
@@ -485,8 +486,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Set by run_agent.sh for every runner; the board's write commands refuse while one is set. Named
+# here rather than imported from runner_profile, so the board keeps no supervisor dependency.
+NESTED_RUN_ENV = ("BOUNDROOM_SUPERVISOR_SLICE_ID", "REPO_AUTOMATION_SUPERVISOR_SLICE_ID", "OWLORY_SUPERVISOR_SLICE_ID")
+READ_ONLY_COMMANDS = frozenset({"list", "show", "snapshot"})
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    nested = next((name for name in NESTED_RUN_ENV if os.environ.get(name)), None)
+    if nested and args.command not in READ_ONLY_COMMANDS:
+        # A runner must not change the board it is running from (SPEC-008 PS-20).
+        print(f"stop: board {args.command} refused inside a supervised slice ({nested} is set)", file=sys.stderr)
+        return 78
     actor = args.actor or getpass.getuser()
     expected = args.expect_revision
     try:

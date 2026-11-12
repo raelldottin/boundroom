@@ -268,6 +268,20 @@ case "$agent_runner" in
       echo "Claude Code CLI not found. Set BOUNDROOM_CLAUDE_BIN or install claude." >&2
       exit 69
     fi
+    if [[ -n "${BOUNDROOM_CLAUDE_RUNNER_SETTINGS:-}" ]]; then
+      # A runner profile chosen by the supervisor (SPEC-008): its mode, its per-slice settings file
+      # (or the operator's own, for custom, whose file sets the mode) and a budget cap.
+      profile_args=(--settings "$BOUNDROOM_CLAUDE_RUNNER_SETTINGS" --max-budget-usd "${BOUNDROOM_CLAUDE_RUNNER_BUDGET_USD:-5}")
+      if [[ -n "${BOUNDROOM_CLAUDE_RUNNER_MODE:-}" ]]; then
+        profile_args+=(--permission-mode "$BOUNDROOM_CLAUDE_RUNNER_MODE")
+      fi
+      exec "$claude_bin" --print \
+        --input-format text \
+        --no-session-persistence \
+        "${profile_args[@]}" \
+        --add-dir "$repo_root" \
+        < "$prompt_file"
+    fi
     exec "$claude_bin" --print \
       --input-format text \
       --no-session-persistence \

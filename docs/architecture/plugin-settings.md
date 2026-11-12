@@ -1,6 +1,6 @@
 # SPEC-008: Plugin settings you can see
 
-Status: **accepted (raelldottin/boundroom#198, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request with its own approval. RA-SET-001, the registry (`automation/supervisor/settings.py`) and its completeness tests, and RA-SET-002, its resolver, are implemented. `run_next.py` reads the agent command and the autonomous limit through the resolver. The other slices aren't yet.
+Status: **accepted (raelldottin/boundroom#198, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request with its own approval. RA-SET-001, the registry (`automation/supervisor/settings.py`) and its completeness tests, RA-SET-002, its resolver, and RA-SET-008, the Claude runner profiles with the ceiling, the per-slice settings file, the `runner_profile` record and the nested-run guard (`automation/supervisor/runner_profile.py`), are implemented. Profiles apply only when one is chosen; without one, the runner still starts in `bypassPermissions` until RA-SET-010. The other slices aren't yet.
 
 Owner request recorded here (2026-11-12): give the user a quick or an extensive look at every option the Boundroom plugin can be configured with, and decide which options and settings should be surfaced to the user.
 
@@ -203,6 +203,8 @@ A worked example: this specification was written in a desktop session launched w
 
 Profiles are ordered by what runs without anyone's approval: `bounded` (and the `dontAsk` mapping), then `edits`, then `unbounded`. The effective profile is the lower of the requested or resolved profile and the ceiling. `custom` is the operator's own settings file, and isn't capped, because the operator wrote it.
 
+**As built (RA-SET-008):** asking for `unbounded` with neither `BOUNDROOM_CLAUDE_ISOLATED=1` nor an explicit ceiling is refused before the claim (PS-13). With an explicit lower ceiling, it is lowered like any other request (PS-18). The flag and the variables are implemented; the `userConfig`, operator-file and repository sources below follow in RA-SET-006 and with the operator decisions.
+
 **Where the settings come from,** in the usual order:
 1. the flag `--runner-profile`;
 2. `BOUNDROOM_CLAUDE_PROFILE` and `BOUNDROOM_CLAUDE_PROFILE_CEILING`;
@@ -221,6 +223,7 @@ Matching the parent can give a runner wide permissions. So the rule that no work
 - **The mechanism:**
   - `run_next.py`, `evaluate_handoff.py` without `--dry-run`, and the board's write commands refuse to start when `BOUNDROOM_SUPERVISOR_SLICE_ID`, or one of its legacy names, is set. `run_agent.sh` already exports it to every runner.
   - The outer run also holds an exclusive run lock outside the repository, and a nested start refuses while that lock is held.
+- **As built (RA-SET-008):** the run lock is one per user, at `$XDG_STATE_HOME/boundroom/run.lock` (default `~/.local/state`), so it also refuses a second, unrelated supervised run started by the same user while the first is running. `run_next.py --dry-run` takes no lock, but the variable check refuses it inside a slice like any other start. The board's `list`, `show` and `snapshot` stay available inside a slice.
 - **Its limit, stated plainly:** an `unbounded` runner can unset a variable or remove a lock file. That is why the default ceiling admits `unbounded` only on a declared isolated machine.
 
 ### The slice allowlist
