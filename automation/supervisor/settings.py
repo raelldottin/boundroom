@@ -14,12 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Optional
 
-EntryPoint = Literal["run_next", "evaluate_handoff", "kanban_projection", "sync"]
+EntryPoint = Literal["run_next", "evaluate_handoff", "kanban_projection", "operator_status", "sync"]
 SettingClass = Literal["secret", "internal", "security", "essential", "advanced", "outside"]
 RepositoryRule = Literal["any", "narrow-only", "never"]
-Area = Literal["runner", "work source", "policy", "sync", "memory", "telemetry", "evaluate", "projection", "internal"]
+Area = Literal["runner", "work source", "policy", "sync", "memory", "telemetry", "evaluate", "projection", "status", "internal"]
 
-ENTRY_POINTS: tuple[EntryPoint, ...] = ("run_next", "evaluate_handoff", "kanban_projection", "sync")
+ENTRY_POINTS: tuple[EntryPoint, ...] = ("run_next", "evaluate_handoff", "kanban_projection", "operator_status", "sync")
 CLASSES: tuple[SettingClass, ...] = ("secret", "internal", "security", "essential", "advanced", "outside")
 REPOSITORY_RULES: tuple[RepositoryRule, ...] = ("any", "narrow-only", "never")
 
@@ -181,7 +181,7 @@ SETTINGS: tuple[Setting, ...] = (
         "essential",
         "The JSON queue slices come from, when no board is given.",
         default="automation/queue/slices.json",
-        flags=(_flag("run_next", "--queue"), _flag("evaluate_handoff", "--queue")),
+        flags=(_flag("run_next", "--queue"), _flag("evaluate_handoff", "--queue"), _flag("operator_status", "--queue")),
     ),
     Setting(
         "board",
@@ -473,14 +473,14 @@ SETTINGS: tuple[Setting, ...] = (
         "projection",
         "advanced",
         "The board directory to project.",
-        flags=(_flag("kanban_projection", "--board-dir"),),
+        flags=(_flag("kanban_projection", "--board-dir"), _flag("operator_status", "--board-dir")),
     ),
     Setting(
         "projection_overlay",
         "projection",
         "advanced",
         "The approval overlay to project with.",
-        flags=(_flag("kanban_projection", "--overlay"),),
+        flags=(_flag("kanban_projection", "--overlay"), _flag("operator_status", "--overlay")),
     ),
     Setting(
         "projection_shadow_queue",
@@ -488,6 +488,15 @@ SETTINGS: tuple[Setting, ...] = (
         "advanced",
         "A JSON queue to compare the projection with.",
         flags=(_flag("kanban_projection", "--shadow-queue"),),
+    ),
+    # --- operator_status -------------------------------------------------------------------------
+    Setting(
+        "status_json",
+        "status",
+        "advanced",
+        "Print the operator status as one versioned JSON object instead of a summary.",
+        default=False,
+        flags=(_flag("operator_status", "--json"),),
     ),
     # --- sync (Tools/boundroom-sync.sh) ---------------------------------------------------------
     Setting(
