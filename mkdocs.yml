@@ -53,6 +53,7 @@ nav:
   - Technical Roadmap (October 2026): roadmap.md
   - CodSpeed Removal Roadmap: codspeed-removal.md
   - Workflow: workflows/boundroom.md
+  - Upgrading and rolling back: workflows/upgrading.md
   - Effectiveness Benchmark: workflows/effectiveness-benchmark.md
 
 markdown_extensions:

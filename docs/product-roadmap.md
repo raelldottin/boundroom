@@ -102,7 +102,7 @@ Horizon names are **planning increments**, not committed dates or promises of a 
 4. **Review:** handoff shows changed paths, evidence references, independent validation replay, blocked conditions, base/head commit identities and a safe next action.
 5. **Upgrade or revert:** a consumer can inspect current versus desired pin, reproduce the check, roll back to the previous tag and demonstrate a clean Git state.
 
-**Proposed backlog:** RA-PROD-101 operator status contract; 102 multi-harness install/update matrix; 103 consumer lock and pin UX; 104 one-slice success/failure smoke fixture; 105 handoff diagnostic summary; 106 version skew and migration guidance.
+**Proposed backlog:** RA-PROD-101 operator status contract; 102 multi-harness install/update matrix; 103 consumer lock and pin UX; 104 one-slice success/failure smoke fixture; 105 handoff diagnostic summary; 106 version skew and migration guidance. RA-PROD-106 is written up as [Upgrading, version skew and rolling back](workflows/upgrading.md) (docs only; no tool changes).
 
 **Exit evidence:** repeatable fresh-home installs in Claude Code, Codex and Hermes; at least one opted-in consumer with both a successful *bounded* slice and a failure-path proof; manifest-owned sync is the only writer; no default-branch mutation by an agent; exact commands and transcripts attached to a PR. An empty-queue stop alone does not satisfy this gate.
 
