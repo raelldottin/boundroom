@@ -1,6 +1,6 @@
 # SPEC-006: Traceable agent runs with Logfire and OpenTelemetry
 
-Status: **proposed** in the pull request that adds it. Merging that pull request, after a person's approving review, accepts the design. Each delivery slice below is still its own pull request and needs its own approval. Nothing here is implemented yet.
+Status: **accepted (raelldottin/boundroom#196, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request and needs its own approval. Nothing here is implemented yet.
 
 Owner request recorded here (2026-11-11): use Logfire to make every agent interaction auditable and traceable, in every lane the plugin can start, with the user able to configure it.
 

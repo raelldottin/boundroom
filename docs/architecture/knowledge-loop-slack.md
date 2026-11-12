@@ -1,6 +1,6 @@
 # SPEC-007, part 2: Slack limits, retries and data rules
 
-Status: **proposed** with [SPEC-007](knowledge-loop-platforms.md), in the same pull request. It specifies how the Slack adapter stays within Slack's rate limits, handles Slack's delivery retries, and meets Slack's terms for data it handles. Nothing here is implemented.
+Status: **accepted** with [SPEC-007](knowledge-loop-platforms.md), in the same pull request (raelldottin/boundroom#197, merged 2026-11-12). It specifies how the Slack adapter stays within Slack's rate limits, handles Slack's delivery retries, and meets Slack's terms for data it handles. Nothing here is implemented.
 
 Owner request recorded here (2026-11-12): read Slack's API terms, and design idempotence, backoff and retry timers for Slack's rate limits and restrictions, where those are enough.
 

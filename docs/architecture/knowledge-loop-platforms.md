@@ -1,6 +1,6 @@
 # SPEC-007: Knowledge loop on Discord, Slack or both
 
-Status: **proposed** in the pull request that adds it. Merging that pull request, after a person's approving review, accepts the design and amends [SPEC-003](discord-knowledge-loop.md). Each delivery slice below is still its own pull request with its own approval. Nothing here is implemented: the knowledge loop has no code yet.
+Status: **accepted (raelldottin/boundroom#197, merged 2026-11-12 after the owner's approval).** It amends [SPEC-003](discord-knowledge-loop.md). Each delivery slice below is still its own pull request with its own approval. Nothing here is implemented: the knowledge loop has no code yet.
 
 Owner decision recorded here (2026-11-12): **the knowledge loop must work with Discord, with Slack, or with both.** This reverses SPEC-003's "Discord replaces Slack" and its "No Slack support" non-goal. Everything else in SPEC-003 stands: the five stages (Capture, Organize, Ask, Share, Evaluate), the strict trust boundary, the use of Hindsight and the Swarm Wiki, and the rollout gates.
 
@@ -76,7 +76,7 @@ Evidence records add `platform` and `workspace` to the provenance SPEC-003 alrea
   - the share destinations;
   - the retention rules;
   - the names of the environment variables or secret references holding its tokens, never the tokens themselves.
-- **No defaults that connect.** As with telemetry ([SPEC-006](https://github.com/raelldottin/boundroom/pull/196), proposed), there is no built-in workspace, channel or service address. A platform with no workspace or credentials isn't enabled.
+- **No defaults that connect.** As with telemetry ([SPEC-006](agent-telemetry.md)), there is no built-in workspace, channel or service address. A platform with no workspace or credentials isn't enabled.
 - **The repository can't enable a platform.** A repository may only narrow the knowledge service's scope, for example by removing channels. It can't add a platform, a workspace, a channel or a credential.
 - **Identity links are explicit.** A link between a Discord user and a Slack user is an operator-maintained record, never inferred from matching names or email addresses.
 
@@ -107,7 +107,7 @@ Each requirement has an acceptance test that runs without network access, agains
   - Its slices RA-KNOW-001 to 005 run over the `ChatPlatform` interface.
 - **AGENTS.md:** the knowledge loop section names both platforms, and its rules apply to a Slack request exactly as to a Discord one.
 - **[Product roadmap](../product-roadmap.md):** the "Already decided" line no longer says Discord replaces Slack.
-- **[SPEC-006](https://github.com/raelldottin/boundroom/pull/196), proposed:** if the knowledge service later emits telemetry, it follows SPEC-006's user-owned destination rules. Nothing here requires it.
+- **[SPEC-006](agent-telemetry.md):** if the knowledge service later emits telemetry, it follows SPEC-006's user-owned destination rules. Nothing here requires it.
 
 ## Delivery slices
 
