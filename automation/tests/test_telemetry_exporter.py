@@ -163,6 +163,14 @@ class SdkConfigurationTests(ExporterCase):
                     with self.subTest(path=str(path.relative_to(REPO_ROOT))):
                         self.assertIsNone(VENDOR_HOSTS.search(path.read_text(encoding="utf-8", errors="ignore")))
 
+    def test_ud8_skill_text_names_no_telemetry_endpoint_host_or_token(self) -> None:
+        allowed = {"https://github.com/raelldottin/boundroom.git"}
+        for skill in (REPO_ROOT / "plugins/boundroom/skills").glob("*/SKILL.md"):
+            text = skill.read_text(encoding="utf-8")
+            with self.subTest(skill=skill.parent.name):
+                self.assertEqual(set(), set(re.findall(r"https?://[^\s)`\"']+", text)) - allowed)
+                self.assertNotRegex(text, r"(?i)bearer\s+\S|authorization=")
+
     def test_the_bounded_flush_says_when_it_dropped_spans(self) -> None:
         handle = telemetry.Telemetry(settings=self.file_settings(), run_id="r")
         handle._processor = mock.Mock(**{"force_flush.return_value": False})

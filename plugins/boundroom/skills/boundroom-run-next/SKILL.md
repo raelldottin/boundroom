@@ -25,6 +25,8 @@ You may append these flags when the user asks for them: `--dry-run`, `--include-
 
 A Kanban board can be a local board, which needs no Hermes, or a Hermes board. The overlay's `backend` says which, and the supervisor refuses a `--board-backend` that disagrees. Report that refusal; don't change the flag to get past it.
 
+Telemetry is off unless the user turns it on. Add a telemetry flag (`--telemetry`, `--telemetry-file-dir`, `--telemetry-endpoint`, `--telemetry-capture`, `--telemetry-runner`, `--telemetry-required` or `--no-telemetry`) only when the user asked for telemetry in this request, with exactly the values they gave. Never choose a destination for them, and never put a header or token on the command line: those come only from the user's own environment or `~/.config/boundroom/telemetry.json`.
+
 Never add `--autonomous-limit`, in any form. With `--single-slice`, the supervisor refuses it with exit 64 and runs nothing. Don't work around that refusal; report it.
 
 ## After it returns

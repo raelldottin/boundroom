@@ -310,6 +310,17 @@ The points below describe where the harness is heading. None of them changes wha
   - *Future requirement, not current behavior:* native sub-agent activity must not bypass the supervisor's execution controls. Implementing it requires its own design, authorization and testing.
 - **The benchmark is unchanged.** Every effectiveness-benchmark lane continues to run on an explicitly selected runner: `.github/workflows/effectiveness-benchmark.yml` sets `BOUNDROOM_AGENT_RUNNER: hermes`, and each lane session (one per phase for the multi-phase lanes) runs as a separate, fresh Hermes process.
 
+## Telemetry (optional)
+
+[SPEC-006](../architecture/agent-telemetry.md) lets a run be traced to a destination the user chooses. It is **off by default**: with no setting anywhere, nothing is imported, written or sent.
+
+- It turns on only with both a mode and a destination: `--telemetry file --telemetry-file-dir <absolute dir outside the repository>`, or `--telemetry otlp --telemetry-endpoint <your https endpoint>`. The same settings can come from `BOUNDROOM_TELEMETRY_*` variables or `~/.config/boundroom/telemetry.json`.
+- `--no-telemetry` or `BOUNDROOM_TELEMETRY=off` turns it off whatever anything else says.
+- A repository's queue policy may hold a `telemetry` block that only reduces: turn it off, lower capture or runner telemetry, or name the environment. It can't choose a destination or turn telemetry on.
+- `OTEL_*` and `LOGFIRE_*` variables set for other tools are ignored.
+- The SDK is the optional `boundroom[telemetry]` extra; without it, telemetry stays off with a warning, or the run refuses to start when `--telemetry-required` is set.
+- Every report carries a `telemetry` block naming the mode, the destination's scheme and host only, and which source turned it on.
+
 ## Bootstrap Status
 
 As of 2026-05-21, `/Users/raelldottin/Documents/Personal/repo-automation` is initialized as a Git repository on `main`. The bootstrap commit is `6ab871bbf957df24e648b02ef002c0efa2d7c609`. Exact publication commits are recorded in Owlory handoffs so this manifest-synced workflow doc does not have to change for every external commit.
