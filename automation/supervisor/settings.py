@@ -268,6 +268,13 @@ SETTINGS: tuple[Setting, ...] = (
         flags=(_flag("run_next", "--handoff-dir"),),
     ),
     Setting(
+        "report_file",
+        "work source",
+        "advanced",
+        "Also append each report as one JSON line to this file, outside the repository.",
+        flags=(_flag("run_next", "--report-file"),),
+    ),
+    Setting(
         "include_blocked",
         "work source",
         "advanced",
