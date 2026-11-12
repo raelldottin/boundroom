@@ -82,6 +82,15 @@ def _policy_fields(field: str) -> tuple[str, ...]:
     return tuple(f"{source}.{field}" for source in _POLICY)
 
 
+# The telemetry flags are one shared set (``telemetry_settings.add_flags``): every entry point that
+# traces a lane takes all of them, so a user turns telemetry on or off the same way everywhere.
+TELEMETRY_ENTRY_POINTS: tuple[EntryPoint, ...] = ("run_next", "evaluate_handoff", "sync")
+
+
+def _telemetry_flag(option: str) -> tuple[Flag, ...]:
+    return tuple(_flag(entry_point, option) for entry_point in TELEMETRY_ENTRY_POINTS)
+
+
 SETTINGS: tuple[Setting, ...] = (
     # --- runner (run_agent.sh) ---------------------------------------------------------------
     Setting(
@@ -391,7 +400,7 @@ SETTINGS: tuple[Setting, ...] = (
         "security",
         "Turn telemetry off whatever any other source says; BOUNDROOM_TELEMETRY=off does the same.",
         default=False,
-        flags=(_flag("run_next", "--no-telemetry"), _flag("evaluate_handoff", "--no-telemetry")),
+        flags=_telemetry_flag("--no-telemetry"),
     ),
     Setting(
         "telemetry_mode",
@@ -400,7 +409,7 @@ SETTINGS: tuple[Setting, ...] = (
         "off, file or otlp. Telemetry is on only with a mode and a destination.",
         default="off",
         choices=("off", "file", "otlp"),
-        flags=(_flag("run_next", "--telemetry"), _flag("evaluate_handoff", "--telemetry")),
+        flags=_telemetry_flag("--telemetry"),
         env="BOUNDROOM_TELEMETRY",
         repository_fields=_policy_fields("telemetry.mode"),
         repository_rule="narrow-only",
@@ -414,10 +423,7 @@ SETTINGS: tuple[Setting, ...] = (
             "telemetry",
             "security",
             description,
-            flags=(
-                _flag("run_next", f"--telemetry-{name.replace('_', '-')}"),
-                _flag("evaluate_handoff", f"--telemetry-{name.replace('_', '-')}"),
-            ),
+            flags=_telemetry_flag(f"--telemetry-{name.replace('_', '-')}"),
             env=f"BOUNDROOM_TELEMETRY_{name.upper()}",
             operator_file=f"telemetry.json:{name}",
         )
@@ -442,7 +448,7 @@ SETTINGS: tuple[Setting, ...] = (
         "metadata, or content as well.",
         default="metadata",
         choices=("metadata", "content"),
-        flags=(_flag("run_next", "--telemetry-capture"), _flag("evaluate_handoff", "--telemetry-capture")),
+        flags=_telemetry_flag("--telemetry-capture"),
         env="BOUNDROOM_TELEMETRY_CAPTURE",
         repository_fields=_policy_fields("telemetry.capture"),
         repository_rule="narrow-only",
@@ -455,7 +461,7 @@ SETTINGS: tuple[Setting, ...] = (
         "Whether the runner's own telemetry joins the trace.",
         default="off",
         choices=("off", "metadata", "content"),
-        flags=(_flag("run_next", "--telemetry-runner"), _flag("evaluate_handoff", "--telemetry-runner")),
+        flags=_telemetry_flag("--telemetry-runner"),
         env="BOUNDROOM_TELEMETRY_RUNNER",
         repository_fields=_policy_fields("telemetry.runner"),
         repository_rule="narrow-only",
@@ -467,7 +473,7 @@ SETTINGS: tuple[Setting, ...] = (
         "advanced",
         "Refuse to start a run whose telemetry can't be enabled.",
         default=False,
-        flags=(_flag("run_next", "--telemetry-required"), _flag("evaluate_handoff", "--telemetry-required")),
+        flags=_telemetry_flag("--telemetry-required"),
         env="BOUNDROOM_TELEMETRY_REQUIRED",
         operator_file="telemetry.json:required",
     ),

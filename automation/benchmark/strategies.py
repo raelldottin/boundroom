@@ -31,6 +31,7 @@ from typing import Any, Mapping, Optional, Protocol
 from automation.supervisor import run_next
 
 from . import jspace as jspace_module
+from . import tracing
 from .cleanroom import WORKSPACE_DIR
 from .instances import TaskSpec
 from . import last_build
@@ -93,6 +94,14 @@ RESEARCH_ARTIFACT = "research.json"
 PLAN_ARTIFACT = "plan.json"
 RESEARCH_COMPACT_ARTIFACT = "research.compact.json"
 PLAN_COMPACT_ARTIFACT = "plan.compact.json"
+# The artifact each phase owes the next, for the digest on its telemetry span. Implement owes
+# none: what it produces is the submission, digested on the cell.
+PHASE_ARTIFACTS = {
+    "research": RESEARCH_ARTIFACT,
+    "research_compact": RESEARCH_COMPACT_ARTIFACT,
+    "plan": PLAN_ARTIFACT,
+    "plan_compact": PLAN_COMPACT_ARTIFACT,
+}
 
 # How plan is handed research: by path, not by value. Plan failed 5 of 5 runs on GLM-5.3
 # (z-ai/glm-5.3 on NVIDIA NIM, Hermes b6a87db). Run 38877265488 completed its first plan
@@ -290,6 +299,10 @@ class ExecutionContext:
     # /workspace. Empty means local execution, where the agent stands in the workspace
     # itself and nothing needs translating. Set from ``agent_workspace_for``.
     agent_workspace: str = ""
+    # The experiment's telemetry handle, the same one for every lane (SPEC-006). It only
+    # records spans around each session: nothing from it reaches the prompt, the context file,
+    # the command, the agent's environment or the workspace. None is off.
+    telemetry: Any = None
 
 
 class ExecutionStrategy(Protocol):
@@ -783,9 +796,25 @@ def run_phase(
     )
 
     budget = max(remaining_seconds, 1)
-    started = time.monotonic()
-    returncode = ctx.runner(command, ctx.workspace, ctx.env, budget)
-    elapsed = time.monotonic() - started
+    tracer = ctx.telemetry
+    with tracing.span(tracer, "boundroom.benchmark.phase", phase=phase, budget_seconds=budget) as phase_span:
+        with tracing.span(
+            tracer,
+            "boundroom.agent_session",
+            slice_id=f"{ctx.task.public_id}:{phase}",
+            runner=ctx.env.get("BOUNDROOM_AGENT_RUNNER"),
+            budget_seconds=budget,
+        ) as session:
+            # Timed inside both spans, so the phase's charge is exactly the session's, as before.
+            started = time.monotonic()
+            returncode = ctx.runner(command, ctx.workspace, ctx.env, budget)
+            elapsed = time.monotonic() - started
+            tracing.annotate(tracer, session, exit_code=returncode, duration_seconds=round(elapsed, 3))
+        if tracing.enabled(tracer):
+            # Read, never written, and only when traced: the next phase sees the same bytes.
+            artifact = PHASE_ARTIFACTS.get(phase)
+            digest = tracing.file_sha256(Path(ctx.workspace) / RPI_DIR / artifact) if artifact else None
+            tracing.annotate(tracer, phase_span, returncode=returncode, artifact_sha256=digest)
     # A killed session is cut off at its budget; anything past that is the shutdown grace
     # the runner allows it to flush in, which the treatment did not get to spend.
     worked = min(elapsed, budget) if returncode == AGENT_TIMEOUT_RETURNCODE else elapsed

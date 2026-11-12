@@ -79,13 +79,25 @@ class Telemetry:
         return flushed
 
 
-def configure(settings: TelemetrySettings, *, repo_root: Path, run_id: str, service_version: str = "") -> Telemetry:
-    """Build the run's telemetry handle. Raises TelemetryRefused only when ``required`` is set."""
+def configure(
+    settings: TelemetrySettings,
+    *,
+    repo_root: Path,
+    run_id: str,
+    service_version: str = "",
+    outside: Sequence[Path] = (),
+) -> Telemetry:
+    """Build the run's telemetry handle. Raises TelemetryRefused only when ``required`` is set.
+
+    ``outside`` names more checkouts ``file_dir`` must stay out of. The sync tool writes into a
+    consumer but reads a canonical source that must stay clean for its provenance check, so a
+    spans file in either would break the next run.
+    """
     handle = Telemetry(settings=settings, run_id=run_id)
     if not settings.enabled:
         return handle
     try:
-        processor, data_dir = _exporter(settings, repo_root, run_id)
+        processor, data_dir = _exporter(settings, (repo_root, *outside), run_id)
         if settings.required:
             _startup_check(settings)
         logfire = _import_logfire()
@@ -144,7 +156,7 @@ def _inside(path: Path, root: Path) -> bool:
         return False
 
 
-def _exporter(settings: TelemetrySettings, repo_root: Path, run_id: str) -> tuple[Any, str]:
+def _exporter(settings: TelemetrySettings, roots: Sequence[Path], run_id: str) -> tuple[Any, str]:
     """The span processor for the user's destination, and a Logfire data_dir outside the repository."""
     try:
         from opentelemetry.sdk.trace.export import BatchSpanProcessor  # noqa: PLC0415
@@ -154,7 +166,7 @@ def _exporter(settings: TelemetrySettings, repo_root: Path, run_id: str) -> tupl
         file_dir = Path(str(settings.file_dir))
         if not file_dir.is_absolute():
             raise _Unavailable(f"telemetry: file_dir must be an absolute path, not {file_dir}")
-        if _inside(file_dir, repo_root):
+        if any(_inside(file_dir, root) for root in roots):
             # A write there would dirty the worktree and break the clean stop.
             raise _Unavailable("telemetry: file_dir must be outside the repository")
         return BatchSpanProcessor(json_lines_exporter(file_dir / f"{run_id}.spans.jsonl")), str(file_dir / ".logfire")
