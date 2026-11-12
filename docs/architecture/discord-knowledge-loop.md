@@ -1,10 +1,10 @@
 # SPEC-003: Discord knowledge loop (planned, not deployed)
 
-**Status:** design and roadmap proposal, 2026-11-09. **Epic:** [RA-KNOW-000](https://github.com/raelldottin/boundroom/issues/173). **Depends on:** [SPEC-001](control-plane.md), [Hindsight interface](memory-interface.md), [Swarm Wiki compiler pin](swarm-wiki-compiler.md), and [product roadmap](../product-roadmap.md).
+**Status:** design and roadmap proposal, 2026-11-09. **Amended by [SPEC-007](knowledge-loop-platforms.md) (proposed 2026-11-12):** the loop works with Discord, Slack or both, through one platform interface. Where this page says Discord, read *each enabled chat platform*, with SPEC-007's platform rules. **Epic:** [RA-KNOW-000](https://github.com/raelldottin/boundroom/issues/173). **Depends on:** [SPEC-001](control-plane.md), [Hindsight interface](memory-interface.md), [Swarm Wiki compiler pin](swarm-wiki-compiler.md), and [product roadmap](../product-roadmap.md).
 
 ## Decision and product boundary
 
-Introduce a separately deployed, **opt-in Discord knowledge service** with five responsibilities: **Capture → Organize → Ask → Share → Evaluate**. Discord replaces Slack as the user-facing conversation interface. The knowledge service does not own work execution, a queue, a supervisor agent, or canonical Kanban state.
+Introduce a separately deployed, **opt-in Discord knowledge service** with five responsibilities: **Capture → Organize → Ask → Share → Evaluate**. Discord was the planned user-facing conversation interface; [SPEC-007](knowledge-loop-platforms.md) makes it Discord, Slack or both. The knowledge service does not own work execution, a queue, a supervisor agent, or canonical Kanban state.
 
 ```text
   opted-in Discord channels, documents, PR reviews, approved transcripts
@@ -90,6 +90,6 @@ Scheduling is explicitly restricted to knowledge maintenance. No overnight code-
 
 ## 7. Non-goals
 
-No Slack support; no implicit archival of all Discord history; no private-attachment scraping; no silent transcription; no public knowledge dump; no new task store or parallel agent scheduler; no automatic governance edits, PR creation, repository writes or Kanban status updates; no semantic claim that Hindsight reflect output is independent source evidence; no assumption that a wiki test proves an operational Discord service.
+No implicit archival of all Discord history; no private-attachment scraping; no silent transcription; no public knowledge dump; no new task store or parallel agent scheduler; no automatic governance edits, PR creation, repository writes or Kanban status updates; no semantic claim that Hindsight reflect output is independent source evidence; no assumption that a wiki test proves an operational Discord service.
 
 **Implementation state:** as of this specification, Boundroom has Hindsight retain/recall/reflect/snapshot code, bounded memory context and a synthetically tested Swarm Wiki compiler. The full Discord loop, its schedules and retrieval evaluations are **proposed and not implemented**. Review every implementation slice independently through the existing `AGENTS.md` GitOps gates.
