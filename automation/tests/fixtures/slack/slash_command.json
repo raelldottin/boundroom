@@ -1,0 +1,20 @@
+{
+  "envelope_id": "synthetic-envelope-command-1",
+  "type": "slash_commands",
+  "accepts_response_payload": true,
+  "payload": {
+    "token": "synthetic-verification-token",
+    "team_id": "T0SYNTH0001",
+    "team_domain": "synthetic",
+    "channel_id": "C0SYNTH0001",
+    "channel_name": "synthetic-channel",
+    "user_id": "U0SYNTH0001",
+    "user_name": "synthetic-user",
+    "command": "/ask",
+    "text": "synthetic question about the release process",
+    "api_app_id": "A0SYNTH0001",
+    "is_enterprise_install": "false",
+    "response_url": "https://hooks.slack.invalid/commands/synthetic",
+    "trigger_id": "synthetic-trigger-1"
+  }
+}
