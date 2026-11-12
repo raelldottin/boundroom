@@ -188,10 +188,10 @@ A new setting, `BOUNDROOM_CLAUDE_PROFILE`, chooses one of five profiles. `BOUNDR
 | --- | --- | --- |
 | `bypassPermissions` or `--dangerously-skip-permissions` | `unbounded` | The same mode |
 | `acceptEdits` | `edits` | The same mode. The slice allowlist pre-approves the commands the parent's user would have been asked about, because no one is there to ask. |
-| `default` (Manual) or `dontAsk` | `dontAsk` with the slice allowlist, and the sandbox if the parent's settings enable it | The headless equivalent of "ask first": every action is either approved in advance, by the person who approved the slice, or denied |
-| `auto` | `auto`, if the runner's Claude Code accepts it in `-p` (checked in RA-SET-009). Otherwise `edits`, with the reason recorded. | The same mode, where available |
+| `default` or `manual` (Manual; Claude Code 2.1 says `manual`) or `dontAsk` | `dontAsk` with the slice allowlist, and the sandbox if the parent's settings enable it | The headless equivalent of "ask first": every action is either approved in advance, by the person who approved the slice, or denied |
+| `auto` | `edits`, with the reason recorded. RA-SET-009 found that `-p` accepts `auto`, but no profile runs `auto` yet; adding one is a separate change. | The same mode, once a profile runs it |
 | `plan` | Nothing. The run is refused before the claim. | Plan mode means no edits, so starting a slice would contradict it. |
-| No Claude Code parent (a shell, Codex or Hermes, a forced `BOUNDROOM_AGENT_RUNNER=claude`), or flags that can't be read | The fallback profile, `bounded` by default | Nothing to match |
+| No Claude Code parent (a shell, Codex or Hermes, a forced `BOUNDROOM_AGENT_RUNNER=claude`), flags that can't be read, or a mode this code doesn't know | The fallback profile, `bounded`, with the sandbox | Nothing to match |
 
 A worked example: this specification was written in a desktop session launched with `--permission-mode=bypassPermissions`. Under `parent`, its runner resolves to `unbounded`, and the default ceiling then lowers it to `edits`, with a warning saying so, unless the operator declares isolation.
 
@@ -228,14 +228,14 @@ Matching the parent can give a runner wide permissions. So the rule that no work
 
 ### The slice allowlist
 
-The supervisor writes a per-slice settings file **outside the repository** (in the run's temporary directory) and passes it with `--settings`. Claude Code ignores an untrusted project's own `.claude/settings.json`, as the canary found, so this file is the only source of permissions. It's built from the slice record, not from anything the agent wrote:
+The supervisor writes a per-slice settings file **outside the repository** (in the run's temporary directory) and passes it with `--settings`. Claude Code ignores an untrusted project's own `.claude/settings.json`, as the canary found, so this file is the only source of permissions. It's built from the slice record, the policy and the handoff path the supervisor chose, not from anything the agent wrote:
 
 - **Allow:**
-  - `Edit` and `Write` for each of the slice's `allowed_paths`;
+  - `Edit` for each of the slice's `allowed_paths`, and for the slice's handoff file. Claude Code applies only `Edit` rules to its file tools, and `Edit` covers every one of them, so there are no `Write` rules;
   - `Bash` for each of the slice's `required_validations`, exactly as written;
-  - `git status`, `git diff`, `git add` for the allowed paths, `git commit`, and `git push` to the current branch's upstream. The runner prompt requires committing and pushing before a clean stop.
+  - `git status`, `git diff`, `git rev-list`, `git add` for the allowed paths, `git commit`, and `git push` to the current branch's upstream. The runner prompt requires committing and pushing before a clean stop.
 - **Deny, which wins over allow:**
-  - `Edit` and `Write` for the policy's `supervisor_owned_paths`, `.git/**` and `.claude/**`;
+  - `Edit` for the policy's `supervisor_owned_paths`, `.git/**` and `.claude/**`;
   - `Read` for `~/.ssh/**`, `~/.aws/**` and `~/.config/**`;
   - `WebFetch` and `WebSearch`.
 - **Reads** inside the repository need no rule.
@@ -243,7 +243,8 @@ The supervisor writes a per-slice settings file **outside the repository** (in t
   - Writes are limited to the repository and the per-user temp directory.
   - The network allowlist is empty.
   - `git push` is listed in `excludedCommands`: Claude Code's sandbox proxy doesn't carry plain SSH, and the push still needs its allow rule.
-- **The runner prompt** gains a short "What you may run" list generated from the same file, so the agent doesn't spend turns on calls that will be denied.
+  - `git add *` and `git commit *` are listed in `excludedCommands` too. The sandbox turns the `.git/**` deny rule into a write block, so inside it a commit can't create `.git/index.lock`. An entry without a wildcard matches only the bare command, hence the ` *`. Outside the sandbox, the allow rules still limit these commands to the slice's paths, and the file tools still can't touch `.git`. An excluded command is not a sandbox boundary: `git commit` runs the consumer's own hooks unsandboxed, which the runner can't edit because `.git/**` is denied to it.
+- **The runner prompt** ends with a "What you may run" section generated from the same file, so the agent doesn't spend turns on calls that will be denied. It also says to run `git add`, `git commit` and `git push` as separate commands with a plain `-m "..."` message: a command joined with `&&`, or one using `$(...)`, a heredoc or a redirect, is matched as a whole, so it stays in the sandbox and can't commit. The RA-TEL-007 canary found this.
 
 A denied call isn't a supervisor error. If the agent can't finish within its allowlist, its handoff reports the blocker, and the slice fails or blocks through the existing gates. That's the safe outcome.
 
@@ -254,6 +255,33 @@ A denied call isn't a supervisor error. If the agent can't finish within its all
 3. **RA-SET-010:** switch the default to `parent` with the default ceiling, in a minor release (`v0.4.0`), with release notes naming `BOUNDROOM_CLAUDE_PROFILE=unbounded` and `BOUNDROOM_CLAUDE_ISOLATED=1` as the way back.
 
 The switch is reversible: `unbounded` stays available for isolated environments, and the previous default can be restored by one setting.
+
+### RA-SET-009 result (2026-11-12)
+
+The canaries ran on the owner's machine with Claude Code only, capped at $5 per runner and $1 per launching parent. Each used a disposable consumer synced from a pinned commit, a local board with one task ("append one line to `NOTES.md`"), and a local bare remote, so the runner could push. They ran alongside SPEC-006's RA-TEL-007.
+
+**Calls that were denied but needed, and the fixes:**
+
+1. **The handoff.** The runner had no rule for its own handoff file, so no slice could pass. Fix: an `Edit` rule for the handoff path the supervisor chose for that slice.
+2. **`Write` rules.** Claude Code warned that `Write(path)` rules aren't matched by file permission checks, and that `Edit` rules cover every file tool. Fix: `Edit` rules only.
+3. **`git commit` in the sandbox.** The `.git/**` deny rule became a sandbox write block, so a commit couldn't create `.git/index.lock`. Listing `git commit` in `excludedCommands` didn't help: an entry without a wildcard matches only the bare command. Fix: `git add *` and `git commit *`.
+4. **Chained commands.** A runner that chained `git add && git commit && git push` still couldn't commit, because a compound command stays in the sandbox unless every part matches. The same commands run one at a time, in a direct probe with the same settings file, committed and pushed. Fix: the runner prompt's "What you may run" section, which also says to run them separately.
+5. **The upstream check.** `git rev-list` (the prompt's clean-stop check) was denied. Fix: an allow rule.
+
+**Results, on the fixed build (commit `dbbcde6`, plus the resolver change below):**
+
+| Case | Resolved to | Outcome |
+| --- | --- | --- |
+| `bounded` | `bounded`, `dontAsk`, sandbox on | Reached review. Committed and pushed, clean tree |
+| `edits` | `edits`, `acceptEdits` | Reached review. Committed and pushed |
+| `parent` under `bypassPermissions` | `unbounded`, lowered by the default ceiling to `edits` | Reached review. Committed and pushed |
+| `parent` under `acceptEdits` | `edits` | Reached review. Committed and pushed |
+| `parent` under Manual | `bounded` (see below) | Reached review. Committed and pushed |
+| `auto` in `-p` | n/a | `claude -p --permission-mode auto` ran shell commands without prompting |
+
+**A resolver fix from the Manual case.** Claude Code 2.1 reports Manual mode as `manual`, which the resolver didn't know, so it fell back to `bounded` without the sandbox. `manual` now resolves like `default`. A mode the code doesn't know now gets the fallback with the sandbox, as PS-17 says for an unknown parent.
+
+**Runner commits carry the machine's Git identity (owner's decision, 2026-11-12).** A runner's commits in a consumer use whatever Git identity the machine has, which on the owner's machine is the owner's name. The owner chose to keep it that way, so Boundroom sets no author or committer for the runner. The slice id, the handoff and the board record are what show that a commit came from a supervised run.
 
 **The benchmark is unaffected.** Its lanes set `BOUNDROOM_AGENT_RUNNER: hermes`, and the Claude profile applies only to the Claude runner.
 

@@ -72,6 +72,35 @@ def test_a_traced_slice_has_the_full_tree_joined_to_its_records(consumer, agent,
     assert "bundle_text" not in text and "handoff_text" not in text  # metadata by default
 
 
+def test_a_failed_slice_records_its_board_write_and_no_absolute_path(consumer, agent, no_hermes, monkeypatch, capsys, tmp_path):
+    # The RA-TEL-007 canary: a slice that failed had no board.record span, and its decision reason
+    # carried the handoff's absolute path, which names the person whose machine it is.
+    board = local.Board(tmp_path, tasks=1)
+    file_dir = tmp_path / "spans"
+    flags = ("--telemetry", "file", "--telemetry-file-dir", str(file_dir))
+    # An agent that exits 0 without writing its handoff: the reason names the handoff's path.
+    assert local.supervise(monkeypatch, board, agent, extra=(*flags, "--agent-cmd", "true")) == 2
+    assert "Missing handoff artifact" in json.loads(capsys.readouterr().out)["reason"]
+
+    records = spans(file_dir)
+    (root,) = [record for record in records if record["name"] == "boundroom.run"]
+    children = sorted((r for r in records if r["parent_span_id"] == root["span_id"]), key=lambda r: r["start_time_unix_nano"])
+    assert [r["name"] for r in children][-2:] == ["boundroom.decision", "boundroom.board.record"]
+    (decision,) = [r for r in records if r["name"] == "boundroom.decision"]
+    assert decision["attributes"]["reason"].startswith("Missing handoff artifact")
+    assert "automation/handoffs/" in decision["attributes"]["reason"]
+    text = next(file_dir.glob("*.spans.jsonl")).read_text(encoding="utf-8")
+    assert str(consumer.resolve()) not in text
+
+
+def test_without_root_cuts_the_repository_path_out_of_a_reason(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    reason = f"Missing handoff artifact at {root.resolve()}/automation/handoffs/h.json"
+    assert telemetry.without_root(reason, root) == "Missing handoff artifact at automation/handoffs/h.json"
+    assert telemetry.without_root(None, root) is None
+
+
 def test_an_exporter_failure_changes_neither_the_verdict_nor_the_exit_code(
     consumer, agent, no_hermes, monkeypatch, capsys, tmp_path
 ):

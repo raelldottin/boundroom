@@ -199,8 +199,9 @@ The agent works on the owner's machine, which is a company computer. **Of the ag
 | H2 Kanban: Hermes gateway races and goal mode | Hermes | Deferred. The local board doesn't need Hermes. |
 | H3 to H5 | H2's evidence | Deferred behind H2 |
 | K: live capture, Discord or Slack answers, schedules ([SPEC-007](architecture/knowledge-loop-platforms.md)) | a Discord or Slack bot, its credentials, workspace approval, Hindsight | Deferred. Contracts and hermetic fixtures proceed. |
-| [SPEC-006](architecture/agent-telemetry.md) telemetry: hermetic slices and the `file`-mode canary | Claude Code, and the Logfire Python package as a pinned optional dependency | **Proceeds.** Sending to any `otlp` destination waits on the owner's data-handling decision. |
-| [SPEC-008](architecture/plugin-settings.md) settings and Claude runner profiles, including the RA-SET-009 canary | Claude Code | **Proceeds** |
+| [SPEC-006](architecture/agent-telemetry.md) telemetry: hermetic slices and the `file`-mode canary | Claude Code, and the Logfire Python package as a pinned optional dependency | **The `file`-mode canary ran** (2026-11-12, [RA-TEL-007 result](architecture/agent-telemetry.md#ra-tel-007-result-2026-11-12)). On the company computer telemetry stays in `file` mode (the owner's decision, 2026-11-12). |
+| [SPEC-008](architecture/plugin-settings.md) settings and Claude runner profiles, including the RA-SET-009 canary | Claude Code | **The RA-SET-009 canary ran** (2026-11-12, [result](architecture/plugin-settings.md#ra-set-009-result-2026-11-12)). The rest proceeds. |
+| SPEC-006's `otlp` canary, and RA-TEL-007's runner-spans criterion | an OTLP destination the owner runs or approves, on a machine allowed to send traces | Deferred. The company computer is `file` mode only. |
 | R: ProgramBench runs | Hermes and a hosted model provider | Deferred |
 
 When an approved machine or hosted environment exists, record it here and run the deferred work unchanged. Nothing deferred here counts as accepted.

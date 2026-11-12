@@ -109,6 +109,17 @@ class ChoiceTests(unittest.TestCase):
         self.assertEqual(("bounded", True), (profile.effective, profile.sandbox))
         self.assertIn("fallback", " ".join(profile.reasons))
 
+    def test_a_mode_this_code_does_not_know_also_gets_the_sandbox(self) -> None:
+        profile = choose("parent", "someFutureMode")
+        self.assertEqual(("bounded", True), (profile.effective, profile.sandbox))
+
+    def test_claude_code_21_manual_mode_resolves_like_default(self) -> None:
+        # The RA-SET-009 canary: a Manual parent reported "manual", which fell through to the fallback.
+        for mode in ("manual", "default"):
+            profile = choose("parent", mode)
+            self.assertEqual(("bounded", "dontAsk", False), (profile.effective, profile.mode, profile.sandbox))
+            self.assertIn(f"the parent runs {mode}", " ".join(profile.reasons))
+
     def test_ps18_the_effective_profile_is_the_lower_of_request_and_ceiling(self) -> None:
         for requested, ceiling in itertools.product(("bounded", "edits", "unbounded"), rp.CEILINGS):
             with self.subTest(requested=requested, ceiling=ceiling):
@@ -166,7 +177,7 @@ class SliceSettingsTests(TempCase):
         self.assertEqual(first, rp.slice_settings(json.loads(json.dumps(SLICE)), dict(POLICY), profile))
         allow = first["permissions"]["allow"]
         self.assertIn("Edit(src/**)", allow)
-        self.assertIn("Write(docs/guide.md)", allow)
+        self.assertIn("Edit(docs/guide.md)", allow)
         self.assertIn("Bash(make test)", allow)
         self.assertIn("Bash(git push)", allow)
         self.assertEqual("acceptEdits", first["permissions"]["defaultMode"])
@@ -175,13 +186,51 @@ class SliceSettingsTests(TempCase):
         deny = rp.slice_settings({**SLICE, "allowed_paths": ["**"]}, POLICY, choose("edits"))["permissions"]["deny"]
         for rule in (
             "Edit(AGENTS.md)",
-            "Write(automation/queue/**)",
+            "Edit(automation/queue/**)",
             "Edit(.git/**)",
-            "Write(.claude/**)",
+            "Edit(.claude/**)",
             "Read(~/.ssh/**)",
             "WebFetch",
         ):
             self.assertIn(rule, deny)
+
+    def test_only_edit_rules_name_files_because_claude_code_ignores_write_rules(self) -> None:
+        # The RA-SET-009 canary: Claude Code warned that Write(path) rules are not matched by file
+        # permission checks, and that Edit rules cover every file-editing tool.
+        permissions = rp.slice_settings(SLICE, POLICY, choose("bounded"))["permissions"]
+        self.assertFalse([rule for rule in permissions["allow"] + permissions["deny"] if rule.startswith("Write(")])
+
+    def test_the_runner_may_write_its_handoff_and_nothing_else_outside_its_paths(self) -> None:
+        # The RA-SET-009 canary: a bounded runner couldn't write its handoff, so no slice could pass.
+        handoff = "automation/handoffs/20261112T000000Z-S-1.json"
+        allow = rp.slice_settings(SLICE, POLICY, choose("bounded"), handoff)["permissions"]["allow"]
+        self.assertIn(f"Edit({handoff})", allow)
+        self.assertNotIn("Edit(automation/handoffs/**)", allow)
+        self.assertNotIn(f"Edit({handoff})", rp.slice_settings(SLICE, POLICY, choose("bounded"))["permissions"]["allow"])
+        with rp.runner_environment(SLICE, POLICY, choose("bounded"), {}, handoff=handoff) as env:
+            written = json.loads(Path(env[rp.RUNNER_SETTINGS_ENV]).read_text(encoding="utf-8"))
+        self.assertIn(f"Edit({handoff})", written["permissions"]["allow"])
+
+    def test_a_bounded_runner_can_commit_and_check_its_upstream(self) -> None:
+        # The RA-SET-009 canary: the sandbox turned the .git deny rule into a write block, so
+        # `git commit` failed, and `git rev-list` (the prompt's clean-stop check) was denied.
+        settings = rp.slice_settings(SLICE, POLICY, choose("bounded"))
+        # Without " *" an entry matches only the bare command, which is why the second canary still failed.
+        self.assertEqual(["git add *", "git commit *", "git push"], settings["sandbox"]["excludedCommands"])
+        self.assertIn("Bash(git rev-list:*)", settings["permissions"]["allow"])
+        self.assertIn("Edit(.git/**)", settings["permissions"]["deny"])  # the file tools still can't touch .git
+
+    def test_the_prompt_lists_what_the_runner_may_run_and_how_to_commit(self) -> None:
+        # The third canary: a chained `git add && git commit && git push` stayed in the sandbox and
+        # didn't commit, while the same commands run one at a time did.
+        settings = rp.slice_settings(SLICE, POLICY, choose("bounded"), "automation/handoffs/h.json")
+        notes = rp.runner_notes(settings)
+        self.assertTrue(notes.startswith("## What you may run\n"))
+        for rule in settings["permissions"]["allow"]:
+            self.assertIn(f"- `{rule}`", notes)
+        self.assertIn("as separate commands", notes)
+        self.assertIn("outside this run's sandbox", notes)
+        self.assertNotIn("sandbox", rp.runner_notes(rp.slice_settings(SLICE, POLICY, choose("edits"))))
 
     def test_ps14_bounded_fails_closed_without_its_sandbox(self) -> None:
         sandbox = rp.slice_settings(SLICE, POLICY, choose("bounded"))["sandbox"]

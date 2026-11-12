@@ -176,7 +176,8 @@ def choose(flags: Mapping[str, Any], environ: Mapping[str, str], parent_mode: Op
     sandbox = False
     if requested == "parent":
         resolved = _resolve_parent(parent_mode, reasons)
-        sandbox = resolved == "bounded" and parent_mode is None
+        # The fallback, for no parent or a mode this code doesn't know, is bounded with the sandbox (PS-17).
+        sandbox = resolved == "bounded" and (parent_mode is None or parent_mode not in KNOWN_PARENT_MODES)
     else:
         resolved = requested
         sandbox = requested == "bounded"
@@ -214,6 +215,9 @@ def choose(flags: Mapping[str, Any], environ: Mapping[str, str], parent_mode: Op
     )
 
 
+KNOWN_PARENT_MODES = ("plan", "bypassPermissions", "acceptEdits", "default", "manual", "dontAsk", "auto")
+
+
 def _resolve_parent(parent_mode: Optional[str], reasons: list[str]) -> str:
     if parent_mode is None:
         reasons.append("no Claude Code parent, or its flags couldn't be read: the fallback profile, bounded")
@@ -226,11 +230,12 @@ def _resolve_parent(parent_mode: Optional[str], reasons: list[str]) -> str:
     if parent_mode == "acceptEdits":
         reasons.append("the parent runs acceptEdits")
         return "edits"
-    if parent_mode in ("default", "dontAsk"):
+    if parent_mode in ("default", "manual", "dontAsk"):
+        # Claude Code 2.1 calls Manual mode "manual" on its command line; earlier versions said "default".
         reasons.append(f"the parent runs {parent_mode}: headless, so every action is pre-approved or denied")
         return "bounded"
     if parent_mode == "auto":
-        reasons.append("the parent runs auto; whether -p accepts it is unverified until RA-SET-009, so edits")
+        reasons.append("the parent runs auto; -p accepts it (RA-SET-009), but no profile runs auto yet, so edits")
         return "edits"
     reasons.append(f"the parent's mode {parent_mode!r} isn't known: the fallback profile, bounded")
     return "bounded"
@@ -239,19 +244,26 @@ def _resolve_parent(parent_mode: Optional[str], reasons: list[str]) -> str:
 # --- the slice allowlist --------------------------------------------------------------------------
 
 
-def slice_settings(slice_record: Mapping[str, Any], policy: Mapping[str, Any], profile: RunnerProfile) -> dict[str, Any]:
-    """The per-slice ``--settings`` file: a pure function of the slice record and policy (PS-11).
+def slice_settings(
+    slice_record: Mapping[str, Any], policy: Mapping[str, Any], profile: RunnerProfile, handoff: Optional[str] = None
+) -> dict[str, Any]:
+    """The per-slice ``--settings`` file: a pure function of the slice record, the policy and the
+    handoff path the supervisor chose (PS-11). Nothing an agent or a repository file writes adds a rule.
 
     Deny rules win over allow rules in Claude Code, so the supervisor-owned paths, ``.git`` and
-    ``.claude`` stay denied even inside an allowed path (PS-12).
+    ``.claude`` stay denied even inside an allowed path (PS-12). Claude Code applies only ``Edit``
+    rules to its file tools, and ``Edit`` covers every one of them, so there are no ``Write`` rules.
     """
     allowed = list(slice_record["allowed_paths"])
-    allow = [f"{tool}({path})" for path in allowed for tool in ("Edit", "Write")]
+    allow = [f"Edit({path})" for path in allowed]
+    if handoff:
+        # The handoff is the one file every slice must write, wherever its allowed paths are.
+        allow.append(f"Edit({handoff})")
     allow += [f"Bash({command})" for command in slice_record.get("required_validations", [])]
-    allow += ["Bash(git status)", "Bash(git diff:*)", "Bash(git commit:*)", "Bash(git push)"]
+    allow += ["Bash(git status)", "Bash(git diff:*)", "Bash(git rev-list:*)", "Bash(git commit:*)", "Bash(git push)"]
     allow += [f"Bash(git add {path})" for path in allowed]
     owned = list(policy.get("supervisor_owned_paths", []))
-    deny = [f"{tool}({path})" for path in (*owned, ".git/**", ".claude/**") for tool in ("Edit", "Write")]
+    deny = [f"Edit({path})" for path in (*owned, ".git/**", ".claude/**")]
     deny += ["Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/**)", "WebFetch", "WebSearch"]
     permissions: dict[str, Any] = {"allow": allow, "deny": deny}
     if profile.mode:
@@ -262,15 +274,43 @@ def slice_settings(slice_record: Mapping[str, Any], policy: Mapping[str, Any], p
             "enabled": True,
             "failIfUnavailable": True,
             "allowUnsandboxedCommands": False,
-            "excludedCommands": ["git push"],
+            # The sandbox turns the .git deny rule into a write block, so git add and commit run
+            # outside it; the allowlist above still limits them to the slice's paths (RA-SET-009).
+            # An entry without a wildcard matches only the bare command, so these carry " *".
+            "excludedCommands": ["git add *", "git commit *", "git push"],
             "network": {"allowedDomains": []},
         }
     return settings
 
 
+def runner_notes(settings: Mapping[str, Any]) -> str:
+    """The runner prompt's "What you may run" section, from the same settings file (SPEC-008)."""
+    lines = [
+        "## What you may run",
+        "",
+        "This run allows only these calls. Anything else is denied, not asked about.",
+        "",
+        *(f"- `{rule}`" for rule in settings["permissions"]["allow"]),
+        "",
+        "Run `git add`, `git commit` and `git push` as separate commands. Give the commit message as "
+        '`-m "..."` with a plain quoted string. A command joined with `&&` or `;`, or one using `$(...)`, '
+        "a heredoc or a redirect, is matched as a whole and may be denied.",
+    ]
+    if "sandbox" in settings:
+        lines.append(
+            "Those three git commands run outside this run's sandbox only in that plain form. Inside it, "
+            "`.git` can't be written, so a commit fails."
+        )
+    return "\n".join(lines) + "\n"
+
+
 @contextmanager
 def runner_environment(
-    slice_record: Mapping[str, Any], policy: Mapping[str, Any], profile: RunnerProfile, environ: Mapping[str, str]
+    slice_record: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    profile: RunnerProfile,
+    environ: Mapping[str, str],
+    handoff: Optional[str] = None,
 ) -> Generator[dict[str, str], None, None]:
     """The runner's environment, with the slice settings file in a temporary directory.
 
@@ -286,7 +326,7 @@ def runner_environment(
             env.pop(RUNNER_MODE_ENV, None)
         else:
             path = directory / "settings.json"
-            path.write_text(json.dumps(slice_settings(slice_record, policy, profile), indent=2) + "\n", encoding="utf-8")
+            path.write_text(json.dumps(slice_settings(slice_record, policy, profile, handoff), indent=2) + "\n", encoding="utf-8")
             env[RUNNER_SETTINGS_ENV] = str(path)
             env[RUNNER_MODE_ENV] = str(profile.mode)
         yield env
