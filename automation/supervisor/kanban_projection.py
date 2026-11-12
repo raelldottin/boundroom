@@ -384,14 +384,19 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The command line, shared with the settings registry's completeness tests (SPEC-008)."""
     parser = argparse.ArgumentParser(description="Print a read-only Kanban board projection. Writes nothing.")
     parser.add_argument(
         "--board-dir", type=Path, required=True, help="The board directory: ~/.hermes/kanban/boards/<slug>, or a local board's"
     )
     parser.add_argument("--overlay", type=Path, required=True, help="Boundroom approval overlay JSON")
     parser.add_argument("--shadow-queue", type=Path, help="JSON queue to compare the projection with (read only)")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
     try:
         overlay = load_overlay(args.overlay)
         result = project(read_snapshot(args.board_dir, overlay.backend), overlay)

@@ -464,7 +464,8 @@ def _fail(
 # ---------------------------------------------------------------------------
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
+    """The command line, shared with the settings registry's completeness tests (SPEC-008)."""
     parser = argparse.ArgumentParser(description="Evaluate a pre-existing handoff artifact against a named slice.")
     parser.add_argument("--slice-id", required=True, help="The slice to evaluate.")
     parser.add_argument("--handoff", required=True, help="Path to the handoff JSON artifact.")
@@ -472,7 +473,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--head-sha", required=True, help="Git SHA of the verified implementation.")
     parser.add_argument("--queue", default="automation/queue/slices.json", help="Path to the queue JSON.")
     parser.add_argument("--dry-run", action="store_true", help="Emit the decision without mutating the queue.")
-    return parser.parse_args()
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    return build_parser().parse_args()
 
 
 def report_to_dict(report: EvaluationReport) -> dict[str, Any]:

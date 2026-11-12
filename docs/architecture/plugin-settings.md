@@ -1,6 +1,6 @@
 # SPEC-008: Plugin settings you can see
 
-Status: **accepted (raelldottin/boundroom#198, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request with its own approval. Nothing here is implemented.
+Status: **accepted (raelldottin/boundroom#198, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request with its own approval. RA-SET-001, the registry (`automation/supervisor/settings.py`) and its completeness tests, is implemented. The other slices aren't yet.
 
 Owner request recorded here (2026-11-12): give the user a quick or an extensive look at every option the Boundroom plugin can be configured with, and decide which options and settings should be surfaced to the user.
 

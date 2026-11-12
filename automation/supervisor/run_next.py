@@ -25,7 +25,8 @@ CLAIM_MARGIN_SECONDS = 30 * 60
 EX_USAGE = 64  # sysexits.h; the runner wrapper uses the same code for a bad runner value
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
+    """The command line, shared with the settings registry's completeness tests (SPEC-008)."""
     parser = argparse.ArgumentParser(description="Run the next eligible queued slice under the automation supervisor.")
     parser.add_argument("--queue", default="automation/queue/slices.json", help="Path to the live queue JSON file.")
     parser.add_argument("--handoff-dir", default="automation/handoffs", help="Directory where handoff artifacts are expected.")
@@ -58,7 +59,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hermes", default="hermes", help="Command that runs the Hermes CLI, for writes to a Hermes board.")
     parser.add_argument("--memory-config", help="Operator-reviewed Hindsight project-to-bank map (JSON) to recall from.")
     parser.add_argument("--memory-project", help="Project whose granted bank each context bundle recalls from.")
-    return parser.parse_args()
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    return build_parser().parse_args()
 
 
 class JsonQueue:

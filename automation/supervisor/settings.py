@@ -1,0 +1,540 @@
+"""Every setting the Boundroom supervisor reads, declared once (SPEC-008, RA-SET-001).
+
+Each entry records where a setting can come from (flags, environment variables, the repository's
+policy files), its default, its surfacing class and what the repository may do with it. The
+registry describes today's behavior and changes none of it: entry points still read their own
+flags and variables. The resolver (RA-SET-002) and the views (RA-SET-003) are built on it.
+
+``automation/tests/test_settings_registry.py`` keeps it complete: every parser option, every
+variable the code reads, every policy-model field and every flag a skill mentions must be here.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Literal, Optional
+
+EntryPoint = Literal["run_next", "evaluate_handoff", "kanban_projection", "sync"]
+SettingClass = Literal["secret", "internal", "security", "essential", "advanced", "outside"]
+RepositoryRule = Literal["any", "narrow-only", "never"]
+Area = Literal["runner", "work source", "policy", "sync", "memory", "evaluate", "projection", "internal"]
+
+ENTRY_POINTS: tuple[EntryPoint, ...] = ("run_next", "evaluate_handoff", "kanban_projection", "sync")
+CLASSES: tuple[SettingClass, ...] = ("secret", "internal", "security", "essential", "advanced", "outside")
+REPOSITORY_RULES: tuple[RepositoryRule, ...] = ("any", "narrow-only", "never")
+
+# A value that is computed at run time rather than fixed, such as the interpreter running a tool.
+COMPUTED = "<computed>"
+
+
+@dataclass(frozen=True)
+class Flag:
+    entry_point: EntryPoint
+    options: tuple[str, ...]  # every spelling, such as ("--kanban-board", "--board")
+
+
+@dataclass(frozen=True)
+class Setting:
+    id: str
+    area: Area
+    klass: SettingClass
+    description: str
+    default: Any = None
+    choices: Optional[tuple[str, ...]] = None
+    flags: tuple[Flag, ...] = ()
+    env: Optional[str] = None
+    # Older names still read when ``env`` is unset (SPEC-005), newest first.
+    legacy_env: tuple[str, ...] = ()
+    # Dotted paths into the repository's files: ``queue.policy.<field>``, ``overlay.<field>``,
+    # ``overlay.policy.<field>`` or ``memory.<field>``.
+    repository_fields: tuple[str, ...] = ()
+    repository_rule: RepositoryRule = "never"
+    # Shown in the quick view only when this other setting has this value.
+    only_when: Optional[tuple[str, str]] = None
+
+    @property
+    def secret(self) -> bool:
+        return self.klass == "secret"
+
+    @property
+    def env_names(self) -> tuple[str, ...]:
+        return ((self.env,) if self.env else ()) + self.legacy_env
+
+
+def _flag(entry_point: EntryPoint, *options: str) -> Flag:
+    return Flag(entry_point, options)
+
+
+def _legacy(suffix: str) -> tuple[str, ...]:
+    return (f"REPO_AUTOMATION_{suffix}",)
+
+
+_POLICY = ("queue.policy", "overlay.policy")
+
+
+def _policy_fields(field: str) -> tuple[str, ...]:
+    return tuple(f"{source}.{field}" for source in _POLICY)
+
+
+SETTINGS: tuple[Setting, ...] = (
+    # --- runner (run_agent.sh) ---------------------------------------------------------------
+    Setting(
+        "runner",
+        "runner",
+        "security",
+        "Which agent harness runs the slice; auto means the one the call came from.",
+        default="auto",
+        choices=("auto", "codex", "claude", "hermes"),
+        env="BOUNDROOM_AGENT_RUNNER",
+        legacy_env=_legacy("AGENT_RUNNER"),
+    ),
+    Setting(
+        "claude_permission_mode",
+        "runner",
+        "security",
+        "The permission mode a Claude Code runner starts in.",
+        default="bypassPermissions",
+        env="BOUNDROOM_CLAUDE_PERMISSION_MODE",
+        legacy_env=_legacy("CLAUDE_PERMISSION_MODE"),
+    ),
+    Setting(
+        "codex_bin",
+        "runner",
+        "advanced",
+        "The Codex executable.",
+        default="codex",
+        env="BOUNDROOM_CODEX_BIN",
+        legacy_env=_legacy("CODEX_BIN") + ("OWLORY_CODEX_BIN",),
+    ),
+    Setting(
+        "claude_bin",
+        "runner",
+        "advanced",
+        "The Claude Code executable.",
+        default="claude",
+        env="BOUNDROOM_CLAUDE_BIN",
+        legacy_env=_legacy("CLAUDE_BIN"),
+    ),
+    Setting(
+        "hermes_bin",
+        "runner",
+        "advanced",
+        "The Hermes executable.",
+        default="hermes",
+        env="BOUNDROOM_HERMES_BIN",
+        legacy_env=_legacy("HERMES_BIN"),
+    ),
+    Setting(
+        "hermes_transport",
+        "runner",
+        "advanced",
+        "How run_agent.sh talks to Hermes.",
+        default="oneshot",
+        choices=("oneshot", "stream-json"),
+        env="BOUNDROOM_HERMES_TRANSPORT",
+        legacy_env=_legacy("HERMES_TRANSPORT"),
+    ),
+    Setting(
+        "hermes_max_turns",
+        "runner",
+        "advanced",
+        "A turn limit for a Hermes session; honoured on the stream-json transport only.",
+        env="BOUNDROOM_HERMES_MAX_TURNS",
+        legacy_env=_legacy("HERMES_MAX_TURNS"),
+    ),
+    Setting(
+        "hermes_python",
+        "runner",
+        "advanced",
+        "The Hermes interpreter for the sandbox probe; defaults to the one beside the Hermes executable.",
+        default=COMPUTED,
+        env="BOUNDROOM_HERMES_PYTHON",
+        legacy_env=_legacy("HERMES_PYTHON"),
+    ),
+    Setting(
+        "hermes_usage_dir",
+        "runner",
+        "advanced",
+        "Where a Hermes session's usage and controls report is written.",
+        env="BOUNDROOM_HERMES_USAGE_DIR",
+        legacy_env=_legacy("HERMES_USAGE_DIR"),
+    ),
+    Setting(
+        "hermes_sandbox_image",
+        "runner",
+        "security",
+        "The container image Hermes runs its tools in.",
+        env="BOUNDROOM_HERMES_SANDBOX_IMAGE",
+        legacy_env=_legacy("HERMES_SANDBOX_IMAGE"),
+        only_when=("runner", "hermes"),
+    ),
+    # --- work source --------------------------------------------------------------------------
+    Setting(
+        "queue",
+        "work source",
+        "essential",
+        "The JSON queue slices come from, when no board is given.",
+        default="automation/queue/slices.json",
+        flags=(_flag("run_next", "--queue"), _flag("evaluate_handoff", "--queue")),
+    ),
+    Setting(
+        "board",
+        "work source",
+        "essential",
+        "The Kanban board directory slices come from, instead of the queue.",
+        flags=(_flag("run_next", "--kanban-board", "--board"),),
+        repository_fields=("overlay.board",),
+        repository_rule="any",
+    ),
+    Setting(
+        "kanban_overlay",
+        "work source",
+        "essential",
+        "The approval overlay for the board.",
+        flags=(_flag("run_next", "--kanban-overlay"),),
+    ),
+    Setting(
+        "board_backend",
+        "work source",
+        "essential",
+        "The board's kind; defaults to the overlay's backend and must match it.",
+        default="hermes",
+        choices=("hermes", "local"),
+        flags=(_flag("run_next", "--board-backend"),),
+        repository_fields=("overlay.backend",),
+        repository_rule="any",
+    ),
+    Setting(
+        "hermes_command",
+        "work source",
+        "advanced",
+        "The command that runs the Hermes CLI, for writes to a Hermes board.",
+        default="hermes",
+        flags=(_flag("run_next", "--hermes"),),
+    ),
+    Setting(
+        "handoff_dir",
+        "work source",
+        "advanced",
+        "Where handoff artifacts are expected.",
+        default="automation/handoffs",
+        flags=(_flag("run_next", "--handoff-dir"),),
+    ),
+    Setting(
+        "include_blocked",
+        "work source",
+        "advanced",
+        "Report blocked and deferred slices when none is eligible.",
+        default=False,
+        flags=(_flag("run_next", "--include-blocked"),),
+    ),
+    Setting(
+        "dry_run",
+        "work source",
+        "advanced",
+        "Decide without launching an agent or changing the queue.",
+        default=False,
+        flags=(_flag("run_next", "--dry-run"), _flag("evaluate_handoff", "--dry-run")),
+    ),
+    # --- policy -------------------------------------------------------------------------------
+    Setting(
+        "single_slice",
+        "policy",
+        "security",
+        "Run at most one slice, refusing any autonomous limit.",
+        default=False,
+        flags=(_flag("run_next", "--single-slice"),),
+    ),
+    Setting(
+        "autonomous_limit",
+        "policy",
+        "security",
+        "How many slices may run back to back unattended; the policy value is a default a caller can override.",
+        flags=(_flag("run_next", "--autonomous-limit"),),
+        repository_fields=_policy_fields("consecutive_autonomous_limit"),
+        repository_rule="any",
+    ),
+    Setting(
+        "agent_command",
+        "policy",
+        "security",
+        "The shell command template that launches the agent.",
+        flags=(_flag("run_next", "--agent-cmd"),),
+        repository_fields=_policy_fields("agent_command_template"),
+        repository_rule="any",
+    ),
+    Setting(
+        "supervisor_owned_paths",
+        "policy",
+        "security",
+        "Files no slice may change.",
+        repository_fields=_policy_fields("supervisor_owned_paths"),
+        repository_rule="any",
+    ),
+    Setting(
+        "handoff_timeout_seconds",
+        "policy",
+        "advanced",
+        "How long the supervisor waits for an agent's handoff.",
+        repository_fields=_policy_fields("handoff_timeout_seconds"),
+        repository_rule="any",
+    ),
+    # --- memory ---------------------------------------------------------------------------------
+    Setting(
+        "memory_config",
+        "memory",
+        "advanced",
+        "The operator-reviewed Hindsight project-to-bank map to recall from.",
+        flags=(_flag("run_next", "--memory-config"),),
+    ),
+    Setting(
+        "memory_project",
+        "memory",
+        "advanced",
+        "The project whose granted bank each context bundle recalls from.",
+        flags=(_flag("run_next", "--memory-project"),),
+    ),
+    Setting(
+        "memory_endpoint",
+        "memory",
+        "security",
+        "The Hindsight server; data leaves the machine when it is set.",
+        repository_fields=("memory.endpoint",),
+        repository_rule="any",
+    ),
+    Setting(
+        "memory_api_key_env",
+        "memory",
+        "secret",
+        "The variable holding the Hindsight credential. Only its name and whether it is set are shown.",
+        repository_fields=("memory.api_key_env",),
+        repository_rule="any",
+    ),
+    Setting(
+        "memory_timeout_seconds",
+        "memory",
+        "advanced",
+        "The Hindsight request timeout.",
+        repository_fields=("memory.timeout_seconds",),
+        repository_rule="any",
+    ),
+    *(
+        Setting(
+            f"memory_budget_{name}",
+            "memory",
+            "advanced",
+            f"Memory budget: {name.replace('_', ' ')}.",
+            repository_fields=(f"memory.budgets.{name}",),
+            repository_rule="any",
+        )
+        for name in (
+            "max_request_bytes",
+            "max_response_bytes",
+            "recall_max_tokens",
+            "reflect_max_tokens",
+            "max_results",
+            "max_result_chars",
+            "max_total_chars",
+            "max_snapshot_memories",
+        )
+    ),
+    Setting(
+        "memory_projects",
+        "memory",
+        "advanced",
+        "Which bank each project may use, and for which operations.",
+        repository_fields=("memory.projects",),
+        repository_rule="any",
+    ),
+    # --- evaluate_handoff ------------------------------------------------------------------------
+    Setting(
+        "evaluate_slice_id", "evaluate", "advanced", "The slice to evaluate.", flags=(_flag("evaluate_handoff", "--slice-id"),)
+    ),
+    Setting(
+        "evaluate_handoff", "evaluate", "advanced", "The handoff to evaluate.", flags=(_flag("evaluate_handoff", "--handoff"),)
+    ),
+    Setting(
+        "evaluate_base_sha", "evaluate", "advanced", "Git SHA before the work.", flags=(_flag("evaluate_handoff", "--base-sha"),)
+    ),
+    Setting(
+        "evaluate_head_sha",
+        "evaluate",
+        "advanced",
+        "Git SHA of the verified work.",
+        flags=(_flag("evaluate_handoff", "--head-sha"),),
+    ),
+    # --- kanban_projection -----------------------------------------------------------------------
+    Setting(
+        "projection_board_dir",
+        "projection",
+        "advanced",
+        "The board directory to project.",
+        flags=(_flag("kanban_projection", "--board-dir"),),
+    ),
+    Setting(
+        "projection_overlay",
+        "projection",
+        "advanced",
+        "The approval overlay to project with.",
+        flags=(_flag("kanban_projection", "--overlay"),),
+    ),
+    Setting(
+        "projection_shadow_queue",
+        "projection",
+        "advanced",
+        "A JSON queue to compare the projection with.",
+        flags=(_flag("kanban_projection", "--shadow-queue"),),
+    ),
+    # --- sync (Tools/boundroom-sync.sh) ---------------------------------------------------------
+    Setting(
+        "sync_check", "sync", "advanced", "Report drift without changing files.", default=False, flags=(_flag("sync", "--check"),)
+    ),
+    Setting(
+        "sync_sync",
+        "sync",
+        "advanced",
+        "Update the consumer to match the manifest.",
+        default=False,
+        flags=(_flag("sync", "--sync"),),
+    ),
+    Setting("sync_target", "sync", "advanced", "The consumer folder to write into.", flags=(_flag("sync", "--target"),)),
+    Setting(
+        "sync_source",
+        "sync",
+        "advanced",
+        "The canonical source checkout; defaults to the one running the tool.",
+        default=COMPUTED,
+        flags=(_flag("sync", "--source"),),
+    ),
+    Setting("sync_manifest", "sync", "advanced", "The manifest to sync from.", flags=(_flag("sync", "--manifest"),)),
+    Setting("sync_pin", "sync", "security", "The full commit the source must be at.", flags=(_flag("sync", "--pin"),)),
+    Setting(
+        "sync_expect_remote",
+        "sync",
+        "security",
+        "The URL the source's origin must match.",
+        flags=(_flag("sync", "--expect-remote"),),
+    ),
+    Setting(
+        "sync_quality_command",
+        "sync",
+        "advanced",
+        "The quality gate the source must pass.",
+        default="make reusable-check",
+        flags=(_flag("sync", "--quality-command"),),
+    ),
+    Setting(
+        "sync_runtime_python",
+        "sync",
+        "advanced",
+        "The consumer's interpreter, checked against the manifest's runtime dependencies.",
+        default=COMPUTED,
+        flags=(_flag("sync", "--runtime-python"),),
+    ),
+    Setting(
+        "sync_allow_unverified_source",
+        "sync",
+        "security",
+        "Development only: skip the source checks. AGENTS.md forbids agents from using it.",
+        default=False,
+        flags=(_flag("sync", "--allow-unverified-source"),),
+    ),
+    Setting(
+        "sync_force_templates",
+        "sync",
+        "security",
+        "Overwrite a consumer's local changes to template files.",
+        default=False,
+        flags=(_flag("sync", "--force-templates"),),
+    ),
+    # --- set by Boundroom, not by you ---------------------------------------------------------
+    Setting(
+        "supervisor_context_file",
+        "internal",
+        "internal",
+        "Exported to the agent: its context bundle.",
+        env="BOUNDROOM_SUPERVISOR_CONTEXT_FILE",
+        legacy_env=_legacy("SUPERVISOR_CONTEXT_FILE") + ("OWLORY_SUPERVISOR_CONTEXT_FILE",),
+    ),
+    Setting(
+        "supervisor_handoff_file",
+        "internal",
+        "internal",
+        "Exported to the agent: where it writes its handoff.",
+        env="BOUNDROOM_SUPERVISOR_HANDOFF_FILE",
+        legacy_env=_legacy("SUPERVISOR_HANDOFF_FILE") + ("OWLORY_SUPERVISOR_HANDOFF_FILE",),
+    ),
+    Setting(
+        "supervisor_slice_id",
+        "internal",
+        "internal",
+        "Exported to the agent: the slice it is running.",
+        env="BOUNDROOM_SUPERVISOR_SLICE_ID",
+        legacy_env=_legacy("SUPERVISOR_SLICE_ID") + ("OWLORY_SUPERVISOR_SLICE_ID",),
+    ),
+    Setting(
+        "sandbox_probe_command",
+        "internal",
+        "internal",
+        "Diagnostic: the command the sandbox probe runs.",
+        default="pwd && test -x ./executable && test -d .git",
+        env="BOUNDROOM_SANDBOX_PROBE_COMMAND",
+        legacy_env=_legacy("SANDBOX_PROBE_COMMAND"),
+    ),
+    Setting(
+        "sandbox_probe_barrier",
+        "internal",
+        "internal",
+        "Diagnostic: the sandbox probe's barrier directory.",
+        default="",
+        env="BOUNDROOM_SANDBOX_PROBE_BARRIER",
+    ),
+    Setting(
+        "sandbox_probe_barrier_seconds",
+        "internal",
+        "internal",
+        "Diagnostic: how long the sandbox probe waits at its barrier.",
+        default="15",
+        env="BOUNDROOM_SANDBOX_PROBE_BARRIER_SECONDS",
+    ),
+    Setting(
+        "unlisted_sentinel",
+        "internal",
+        "internal",
+        "Test hook: a variable the benchmark must not pass to an agent.",
+        env="BOUNDROOM_UNLISTED_SENTINEL",
+    ),
+)
+
+# Fields of the repository's files that are not settings, and why.
+NOT_SETTINGS: dict[str, str] = {
+    "queue.version": "schema version",
+    "queue.slices": "work items",
+    "overlay.version": "schema version",
+    "overlay.policy": "a container; its fields are listed one by one",
+    "overlay.approved": "work items",
+    "memory.version": "schema version",
+    "memory.budgets": "a container; its fields are listed one by one",
+}
+
+BY_ID: dict[str, Setting] = {setting.id: setting for setting in SETTINGS}
+
+
+def flags_for(entry_point: EntryPoint) -> dict[str, Setting]:
+    """Every option spelling an entry point accepts, mapped to its setting."""
+    return {
+        option: setting
+        for setting in SETTINGS
+        for flag in setting.flags
+        if flag.entry_point == entry_point
+        for option in flag.options
+    }
+
+
+def env_names() -> dict[str, Setting]:
+    """Every variable name, new or legacy, mapped to its setting."""
+    return {name: setting for setting in SETTINGS for name in setting.env_names}
+
+
+def repository_fields() -> dict[str, Setting]:
+    return {field: setting for setting in SETTINGS for field in setting.repository_fields}
