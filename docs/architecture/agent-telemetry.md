@@ -4,6 +4,8 @@ Status: **proposed** in the pull request that adds it. Merging that pull request
 
 Owner request recorded here (2026-11-11): use Logfire to make every agent interaction auditable and traceable, in every lane the plugin can start, with the user able to configure it.
 
+Second owner requirement (2026-11-12): **the user must be able to turn telemetry off or point it at their own backend. No hosted destination is ever built into the plugin or the supervisor. A destination exists only when the user names it and turns it on. By default, both telemetry and any backend are off.** [User-owned destinations](#user-owned-destinations) sets this out as testable requirements, and it overrides anything else in this spec that reads otherwise.
+
 ## Problem
 
 Today a supervised run leaves its record in separate places: the queue or board events, the handoff JSON, the decision report on stdout, the runner's session files (`<stem>.log`, `.stream.jsonl`, `.usage.json`, `.controls.json`), git, and for the benchmark, `run.json` and `lane-comparison.json` in each cell. Each is accurate, but nothing joins them. Answering "what did the agent do in this slice, how long did each step take, and which gate stopped it" means reading five files by hand. Across lanes, repeats and repositories, it doesn't scale.
@@ -20,8 +22,8 @@ Today a supervised run leaves its record in separate places: the queue or board 
 
 ## Decision (proposed)
 
-1. **OpenTelemetry is the contract; Logfire is the SDK and one optional destination.** The supervisor emits OpenTelemetry spans through the Logfire Python SDK (MIT-licensed). Where the spans go is the user's choice: nowhere, a local file, any OTLP endpoint, or Pydantic's hosted Logfire. Nothing in Boundroom requires the hosted service, which keeps the [roadmap's](../product-roadmap.md) "no mandatory hosted telemetry" target.
-2. **Off by default.** Telemetry does nothing until a person turns it on. A consumer that doesn't turn it on needs no new dependency and gets no new behavior.
+1. **OpenTelemetry is the contract; Logfire is the SDK.** The supervisor emits OpenTelemetry spans through the Logfire Python SDK (MIT-licensed). Where the spans go is entirely the user's choice: nowhere, a local directory they name, or an OTLP endpoint they name. A hosted service, including Pydantic's hosted Logfire, is just one more OTLP endpoint the user types in. Boundroom ships no destination of its own and never uses the SDK's built-in hosted address. This keeps the [roadmap's](../product-roadmap.md) "no mandatory hosted telemetry" target.
+2. **Off by default, on only by the user's choice.** Telemetry does nothing until a person turns it on *and* names a destination. A consumer that doesn't needs no new dependency and gets no new behavior. A kill switch turns it off regardless of any other setting.
 3. **Telemetry is an index, not the audit record.** The authoritative record stays where it is: git, the handoff, the decision report and board events. A trace points at those records by id and digest, and each record carries its trace id back. A trace is never verification evidence and never an input to a gate, in the same way [AGENTS.md](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md) treats wiki and memory summaries.
 4. **Telemetry can't change an outcome.** No verdict, exit code or board write depends on whether a span was exported. An export failure is reported on stderr and the run carries on. The one exception is opt-in: `required: true` makes the supervisor refuse to start a run whose exporter can't start, before anything is claimed.
 5. **The supervisor emits; the plugin only passes settings.** Under [SPEC-002](agent-plugin.md) the plugin is skills and manifests. The skills' text learns the new flags. No hook, MCP server, background process or bundled code is added to the plugin.
@@ -33,8 +35,10 @@ Today a supervised run leaves its record in separate places: the queue or board 
 
 | Setting | Values | Default | Meaning |
 | --- | --- | --- | --- |
-| `mode` | `off`, `file`, `otlp`, `logfire` | `off` | Where spans go. `file` writes JSON Lines under `file_dir`. `otlp` sends OTLP over HTTP/protobuf to the endpoint in the standard `OTEL_EXPORTER_OTLP_*` variables. `logfire` sends to the hosted Logfire project named by `LOGFIRE_TOKEN`. |
-| `file_dir` | a directory outside the repository | `~/.local/state/boundroom/telemetry` | `file` mode only. One file per run: `<run_id>.spans.jsonl`. |
+| `mode` | `off`, `file`, `otlp` | `off` | `off` emits nothing. `file` writes JSON Lines to the user's `file_dir`. `otlp` sends OTLP over HTTP/protobuf to the user's `endpoint`. There is no vendor mode. |
+| `file_dir` | an absolute directory outside the repository | **none** | Required in `file` mode. One file per run: `<run_id>.spans.jsonl`. |
+| `endpoint` | an `https://` URL, or `http://` only for `localhost`, `127.0.0.1` or `[::1]` | **none** | Required in `otlp` mode. The user's backend, such as a collector they run, an open-source backend or a hosted service's OTLP address. |
+| `headers` | `name=value` pairs | none | Optional, for `otlp`. Sent only to `endpoint`, typically an authorization token. Read from the environment or the operator file, never from the repository, and never printed. |
 | `capture` | `metadata`, `content` | `metadata` | `metadata`: ids, timings, outcomes, counts, exit codes, digests, and gate reason codes. `content` also records prompt, context-bundle and handoff text, after scrubbing. |
 | `runner` | `off`, `metadata`, `content` | `off` | Whether the runner's own telemetry joins the trace. See [Runner sessions](#runner-sessions). |
 | `required` | `true`, `false` | `false` | `true` refuses to start a run whose exporter fails its startup check. |
@@ -42,17 +46,36 @@ Today a supervised run leaves its record in separate places: the queue or board 
 
 ### Where each setting comes from
 
-From highest precedence to lowest:
+**The kill switch always wins:** `--no-telemetry` or `BOUNDROOM_TELEMETRY=off` turns telemetry off, whatever any source below says, including the operator's file. Below the kill switch, from highest precedence to lowest:
 
-1. `run_next.py` and `evaluate_handoff.py` flags: `--telemetry <mode>`, `--telemetry-capture`, `--telemetry-runner`, `--telemetry-required`.
-2. Environment variables: `BOUNDROOM_TELEMETRY`, `BOUNDROOM_TELEMETRY_FILE_DIR`, `BOUNDROOM_TELEMETRY_CAPTURE`, `BOUNDROOM_TELEMETRY_RUNNER`, `BOUNDROOM_TELEMETRY_REQUIRED`, `BOUNDROOM_TELEMETRY_ENVIRONMENT`. Destinations and credentials use the standard names: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` and `LOGFIRE_TOKEN`.
+1. `run_next.py` and `evaluate_handoff.py` flags: `--telemetry <mode>`, `--telemetry-file-dir`, `--telemetry-endpoint`, `--telemetry-capture`, `--telemetry-runner`, `--telemetry-required`. Headers have no flag, so a token never appears in a process list or shell history.
+2. Environment variables in Boundroom's own namespace: `BOUNDROOM_TELEMETRY`, `BOUNDROOM_TELEMETRY_FILE_DIR`, `BOUNDROOM_TELEMETRY_ENDPOINT`, `BOUNDROOM_TELEMETRY_HEADERS`, `BOUNDROOM_TELEMETRY_CAPTURE`, `BOUNDROOM_TELEMETRY_RUNNER`, `BOUNDROOM_TELEMETRY_REQUIRED`, `BOUNDROOM_TELEMETRY_ENVIRONMENT`.
 3. The operator's file, `~/.config/boundroom/telemetry.json`, validated by a pydantic model like the overlay.
 4. The repository's policy: an optional `telemetry` block in the queue policy or Kanban overlay.
-5. The default: `off`.
+5. The default: `off`, with no destination.
+
+**Standard variables set for other tools are ignored.** `OTEL_EXPORTER_OTLP_*`, `OTEL_TRACES_EXPORTER` and `LOGFIRE_*` in the user's shell don't configure Boundroom. A user who set them for another tool hasn't chosen Boundroom telemetry, so their mere presence must not send Boundroom's traces anywhere. See requirement UD-6.
 
 **The repository can reduce telemetry, never redirect or widen it.** The repository's block may only set `mode` to `off`, lower `capture` or `runner` to `metadata` or `off`, or name the `environment`. It can't turn telemetry on, choose a destination, or raise the capture level. A file a slice can edit must not decide where the agent's activity is sent. Claude Code makes the same choice: repository settings there can't enable telemetry or choose its destination.
 
-**The resolved settings are reported, without secrets.** The decision report gets a `telemetry` block (`mode`, `capture`, `runner`, `environment`, `trace_id`), and `boundroom-status` prints the settings that would apply. Endpoint headers and tokens are never printed.
+**The resolved settings are reported, without secrets.** The decision report gets a `telemetry` block (`mode`, the destination's scheme and host only, `capture`, `runner`, `environment`, `trace_id`, and which source turned it on). `boundroom-status` prints the settings that would apply, or `telemetry: off (default)`. Headers, tokens, URL paths and query strings are never printed.
+
+## User-owned destinations
+
+These requirements carry the 2026-11-12 owner requirement. Each has an acceptance test. When another part of this spec reads otherwise, these win.
+
+| Id | Requirement | Acceptance test |
+| --- | --- | --- |
+| UD-1 | **Off by default.** With no setting anywhere, Boundroom imports no telemetry SDK, opens no telemetry connection, writes no telemetry file and sets no telemetry variable for the runner. | A run with a clean environment and no operator file: `logfire` and `opentelemetry` aren't in `sys.modules`, sockets are blocked and unused, no file appears outside the run's normal records, and the runner's environment has no `OTEL_*`, `LOGFIRE_*` or `CLAUDE_CODE_ENABLE_TELEMETRY` that the parent didn't already have. |
+| UD-2 | **On only with both a mode and a destination.** `file` without `file_dir`, or `otlp` without `endpoint`, isn't enabled. | Each half alone leaves telemetry off with a stderr message naming the missing setting. With `required: true`, the run is refused before the claim. |
+| UD-3 | **No built-in destination.** No hosted or vendor address appears in the supervisor, the sync tool, the plugin or their defaults. The SDK is always configured with `send_to_logfire=False`, so its built-in hosted address is never used. | A test scans `automation/`, `Tools/` and `plugins/` for URLs in telemetry code and skill text, and for known telemetry vendor hosts, and fails on any. A test asserts `send_to_logfire=False` in every configuration path. |
+| UD-4 | **The only connection is to the user's endpoint.** With `otlp` on, the supervisor connects to `endpoint`'s host and nowhere else for telemetry. | An egress test points `endpoint` at a local sink, blocks everything else and checks that the spans arrive and nothing else was attempted. |
+| UD-5 | **A kill switch that always wins.** `--no-telemetry` or `BOUNDROOM_TELEMETRY=off` turns telemetry off whatever the operator file, repository or other flags say. | Precedence tests with every other source turned on. |
+| UD-6 | **Ambient settings don't enable anything.** `OTEL_EXPORTER_OTLP_*`, `OTEL_TRACES_EXPORTER` and `LOGFIRE_*` in the environment neither turn Boundroom telemetry on nor change its destination. When telemetry is on, the SDK is configured only from Boundroom's resolved settings. | With those variables pointing at a sink and Boundroom off, the sink receives nothing. With Boundroom on to a different endpoint, only that endpoint receives spans. |
+| UD-7 | **The repository can't choose or turn on a destination.** A repository `telemetry` block may only turn telemetry off or reduce it. A block naming `endpoint`, `file_dir` or `headers`, or setting `mode` to anything but `off`, is refused with a named reason. | Policy-load tests for each refused field. |
+| UD-8 | **The plugin never enables telemetry.** The skills pass telemetry flags only when the user asked for them in that request, and contain no endpoint, example host or token. | The UD-3 scan, plus a review checklist item on each skill change. |
+| UD-9 | **Runner telemetry follows the same rule.** Boundroom sets runner telemetry variables only when `runner` isn't `off` *and* Boundroom telemetry is on, and only to the user's own destination. A runner setting the user exported themselves passes through unchanged, and is never added to or redirected. Its names, not its values, are listed in the decision report. | Runner-environment tests for each combination. |
+| UD-10 | **Insecure transport only to the user's own machine.** An `http://` endpoint is accepted only for a loopback host. Otherwise it's `https://`. | Validation tests. |
 
 ## Trace model
 
@@ -117,7 +140,7 @@ boundroom.benchmark.experiment     run dir, lanes, repeats, instance count, repo
 - **The same settings for every lane in an experiment.** The settings are part of the execution context handed to every lane unchanged, and recorded in each cell's `run.json`.
 - **Nothing in the agent's prompt, context or workspace.** Telemetry never adds to what the agent sees. Phase artifacts and submissions are unchanged.
 - **Bounded overhead.** Spans export in a background batch, and the final flush has a timeout. The overhead per cell is measured in the RA-TEL-005 canary and reported against `LANE_CEILING_SECONDS`.
-- **Separate from live runs.** Benchmark spans use `environment: benchmark`, and in `otlp` or `logfire` mode a separate project or token. This keeps the AGENTS.md rule that benchmarks stay isolated from live control-plane integrations. Turning telemetry on for a benchmark run is a run-setting change, so it needs a person's approval like any other benchmark change.
+- **Separate from live runs.** Benchmark spans use `environment: benchmark`, and in `otlp` mode the user names a separate endpoint or token for benchmark runs. This keeps the AGENTS.md rule that benchmarks stay isolated from live control-plane integrations. Turning telemetry on for a benchmark run is a run-setting change, so it needs a person's approval like any other benchmark change.
 
 ## Failure handling
 
@@ -126,7 +149,7 @@ boundroom.benchmark.experiment     run dir, lanes, repeats, instance count, repo
 - **No files in the worktree.** `file_dir`, and Logfire's own `data_dir`, must be outside the repository. A path inside it is refused, the same rule `board_for` applies to a board directory, because a write there would dirty the worktree and break the clean stop.
 - **Bounded flush.** The final flush waits at most 5 seconds, then drops what's left and says so on stderr.
 
-The SDK is configured explicitly, never from its defaults: `send_to_logfire` is `True` only in `logfire` mode (it defaults to sending), and `console=False`, `fleet=False`, `inspect_arguments=False`, `data_dir` outside the repository, and `service_name="boundroom-supervisor"`. `service_version` is the Boundroom version and commit.
+The SDK is configured explicitly, never from its defaults or the ambient environment: `send_to_logfire=False` always (it defaults to sending to Pydantic's hosted service), spans go only to Boundroom's own exporter for the user's destination, and `console=False`, `fleet=False`, `inspect_arguments=False`, `data_dir` outside the repository, and `service_name="boundroom-supervisor"`. `service_version` is the Boundroom version and commit.
 
 ## Effects on other specs and rules
 
@@ -141,25 +164,26 @@ Each slice is one pull request by the agent, approved by a person, with tests in
 
 | Slice | Delivers | Acceptance |
 | --- | --- | --- |
-| RA-TEL-001 | The settings model and resolution order, flags, environment variables, the operator file, the repository's reduce-only block, and the `telemetry` block in the decision report. No SDK yet. | Precedence tests. A repository block that turns telemetry on, sets a destination or raises capture is refused with a named reason. Secrets are never printed. |
-| RA-TEL-002 | `automation/supervisor/telemetry.py`: a no-op by default, a lazy Logfire import, the JSON Lines exporter, hardened `configure()`, the `required` startup check and the bounded flush. `logfire` as an optional extra, pinned. | With `mode: off`: no import, no file and no network, checked with sockets blocked. Without the SDK: a warning, or a refusal with `required: true`. A `file_dir` inside the repository is refused. `fleet`, `send_to_logfire` and `data_dir` are asserted. |
+| RA-TEL-001 | The settings model and resolution order, flags, environment variables, the operator file, the repository's reduce-only block, and the `telemetry` block in the decision report. No SDK yet. | UD-2, UD-5, UD-7 and UD-10. Precedence tests. A repository block that turns telemetry on, sets a destination or raises capture is refused with a named reason. Headers and tokens are never printed. |
+| RA-TEL-002 | `automation/supervisor/telemetry.py`: a no-op by default, a lazy Logfire import, the JSON Lines exporter, hardened `configure()`, the `required` startup check and the bounded flush. `logfire` as an optional extra, pinned. | UD-1, UD-3, UD-4 and UD-6. With `mode: off`: no import, no file and no network, checked with sockets blocked. Without the SDK: a warning, or a refusal with `required: true`. A `file_dir` inside the repository is refused. `fleet`, `send_to_logfire=False` and `data_dir` are asserted. |
 | RA-TEL-003 | The supervised-lane span tree in `run_next.py`, `evaluate_handoff.py` and `policy.py`, plus `trace_id` in the decision report and handoff provenance. | An end-to-end run on a local board produces the full tree in `file` mode, in order, with digests that match the records. Planted secrets never appear in any span. A forced exporter failure leaves the verdict and exit code unchanged. |
-| RA-TEL-004 | Runner propagation in `run_agent.sh`: `TRACEPARENT`, resource attributes and the `runner` levels for Claude Code. | A fake runner sees the expected `TRACEPARENT` and attributes. `runner: off` sets no `CLAUDE_CODE_*` or `OTEL_*` telemetry variables. `OTEL_LOG_RAW_API_BODIES` is never set. |
+| RA-TEL-004 | Runner propagation in `run_agent.sh`: `TRACEPARENT`, resource attributes and the `runner` levels for Claude Code. | UD-9. A fake runner sees the expected `TRACEPARENT` and attributes. `runner: off` sets no `CLAUDE_CODE_*` or `OTEL_*` telemetry variables. `OTEL_LOG_RAW_API_BODIES` is never set. |
 | RA-TEL-005 | The sync and benchmark spans. | The benchmark gives every lane identical settings, recorded in `run.json`. The agent's prompt and workspace are byte-identical with telemetry on and off. Sync spans cover verify, plan and write. |
-| RA-TEL-006 | Plugin skill text, the workflow doc, and the control-map row. A plugin version bump ships with a release a person approves. | The SPEC-002 manifest-version check passes. The skills contain no code. |
+| RA-TEL-006 | Plugin skill text, the workflow doc, and the control-map row. A plugin version bump ships with a release a person approves. | UD-8 and the UD-3 scan. The SPEC-002 manifest-version check passes. The skills contain no code, no endpoint and no example host. |
 | RA-TEL-007 | Canary: one slice on a disposable local board with Claude Code as parent and runner, in `file` mode on the owner's machine. No new software and no network egress. | The trace tree is complete and joins the decision report through `trace_id`. The runner's spans nest under `agent_session` when `runner: metadata` with a file-backed exporter. Nothing sensitive appears in the files. Recorded in this spec. |
 
-Hosted Logfire and OTLP canaries come after the owner's decisions below.
+An `otlp` canary, against a destination the user names, comes after the owner's decisions below.
 
 ## Alternatives considered
 
-- **Plain OpenTelemetry SDK without Logfire.** It needs more code for the same result (configuration, scrubbing, a pydantic integration) and gives no hosted option. Because the contract is OpenTelemetry, switching later doesn't change the span model.
+- **Plain OpenTelemetry SDK without Logfire.** It needs more code for the same result, such as scrubbing and a pydantic integration. Because the contract is OpenTelemetry, and Boundroom never uses Logfire's hosted service directly, switching later doesn't change the span model or any setting.
+- **A built-in `logfire` mode** that sends to Pydantic's hosted service when a token is present. Rejected under UD-3: it builds a hosted destination into Boundroom, and an ambient `LOGFIRE_TOKEN` could turn it on without the user choosing Boundroom telemetry. A user who wants hosted Logfire names its OTLP address as their `endpoint`.
 - **A Claude Code hook in the plugin.** That would only see Claude Code sessions, not the supervisor's gates or other runners, and SPEC-002 forbids plugin hooks without a separate design decision.
 - **Parsing session files after the run.** It works without new dependencies and stays possible as a `file`-mode fallback, but it gives no live view and no runner correlation.
 
 ## Open decisions for the owner
 
-1. **Destination for live runs:** `file` only, an OTLP backend you run (open source, such as SigNoz, OpenObserve or Jaeger), or hosted Logfire. Logfire self-hosting is an Enterprise plan.
+1. **Which destinations you'll use for live runs.** Boundroom has no default, so this is your runtime choice, not a code change. The options are `file`, an OTLP backend you run (open source, such as SigNoz, OpenObserve or Jaeger), or a hosted service's OTLP address. Logfire self-hosting is an Enterprise plan.
 2. **Company machine.** On the company computer, only Claude Code is approved. `file` mode needs only the Python package. Sending agent activity from that machine to a hosted service, Logfire or otherwise, is a company data-handling decision, not the agent's.
 3. **Runner telemetry to a hosted destination,** given that Claude Code's events carry `user.email` and account ids.
 4. **Whether content capture is ever allowed** for a hosted destination, or only for `file`.
