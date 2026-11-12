@@ -202,6 +202,30 @@ def test_a_429_without_retry_after_waits_sixty_seconds() -> None:
     assert retry - first == pytest.approx(60.0)
 
 
+def test_a_budget_that_hands_back_the_wait_stops_at_the_first_429_with_retry_after() -> None:
+    # RA-KNOW-011's capture pages: the ChatPlatform contract returns a rate-limited page to the caller.
+    client, slack, _ = make([throttled("7")], jitter=0.0)
+    budget = RetryBudget(cap_seconds=300.0, max_attempts=8, wait_on_throttle=False)
+
+    with pytest.raises(SlackCallError) as raised:
+        client.call(HISTORY, budget=budget)
+
+    assert raised.value.error_class is ErrorClass.THROTTLED
+    assert raised.value.retry_after_seconds == 7.0
+    assert len(slack.times()) == 1
+    # The limiter is still armed, so the next call waits Retry-After before Slack sees it.
+    client.call(HISTORY, budget=budget)
+    first, second = slack.times()
+    assert second - first >= 7.0
+
+
+def test_only_a_throttled_error_carries_retry_after() -> None:
+    client, _, _ = make([slack_error("channel_not_found")])
+    with pytest.raises(SlackCallError) as raised:
+        client.call(HISTORY, budget=CAPTURE_BUDGET)
+    assert raised.value.retry_after_seconds is None
+
+
 def test_ratelimited_with_http_200_is_throttled_too() -> None:
     client, slack, _ = make([slack_error("ratelimited", headers={"retry-after": "3"})], jitter=0.0)
     client.call(HISTORY, budget=CAPTURE_BUDGET)

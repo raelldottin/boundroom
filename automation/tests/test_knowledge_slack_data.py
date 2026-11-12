@@ -593,7 +593,7 @@ def test_sd8_each_roles_listed_scopes_with_reasons_pass():
             {**INTERFACE_SCOPES, "channels:history": "capture"},
             "channels:history isn't needed by the interface role",
         ),
-        ({"interface", "source"}, {**SOURCE_SCOPES, "groups:history": "private channels"}, "groups:history isn't needed"),
+        ({"interface"}, {**INTERFACE_SCOPES, "groups:history": "private channels"}, "groups:history isn't needed"),
         ({"interface", "source"}, {**SOURCE_SCOPES, "im:history": "DMs"}, "im:history isn't needed"),
         ({"interface"}, {**INTERFACE_SCOPES, "chat:write": "  "}, "chat:write has no reason"),
     ],

@@ -1,17 +1,15 @@
-"""The Slack adapter in the ``interface`` role (SPEC-007, RA-KNOW-009).
+"""The Slack adapter in the ``interface`` role (SPEC-007, RA-KNOW-009), and the contract for both roles.
 
-``TestSlackContract`` holds the adapter to ``ChatPlatformContract``, with every socket call blocked
-for the whole run. The rest are the slice's own acceptance tests: CP-3 (interface without source
-captures nothing), CP-6 (exclusions hold) and CP-9 (messages are data), then the factory's token
-handling and the delivery rules the adapter inherits from RA-KNOW-012 and RA-KNOW-013.
+``TestSlackContract`` holds the adapter to ``ChatPlatformContract``, unchanged, with every socket
+call blocked for the whole run. Its capture tests run on the ``source`` role (RA-KNOW-011), which
+``test_knowledge_slack_source.py`` tests further. The rest are RA-KNOW-009's acceptance tests: CP-3
+(interface without source captures nothing), CP-6 (exclusions hold) and CP-9 (messages are data),
+then the factory's token handling and the delivery rules the adapter inherits from RA-KNOW-012 and
+RA-KNOW-013.
 
 ``SyntheticSlack`` is Slack's side: a Web API transport, Socket Mode connections and a small model
 of channels, members and messages, all in memory on a fake clock. It is built from the synthetic
 payloads in ``fixtures/slack/``, with made-up ids and no token, so nothing here calls Slack.
-
-The contract's capture tests need the ``source`` role, which is RA-KNOW-011 and waits on the
-owner's decision on Slack's API terms. The adapter refuses that role before reading a token, so
-those tests are overridden here to check the refusal itself.
 """
 
 from __future__ import annotations
@@ -20,7 +18,7 @@ import ast
 import json
 import socket
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -182,6 +180,14 @@ class SyntheticSlack:
         self.members: dict[str, set[str]] = {}
         self.messages: dict[tuple[str, str], dict[str, Any]] = {}
         self.scripted: dict[str, deque[SlackHttpResponse | Exception]] = {}
+        # The Events API subscriptions the app was set up with. Slack delivers only those.
+        self.subscriptions: frozenset[str] = frozenset()
+        # False while Slack is over its event delivery limit and drops what it would have sent.
+        self.live = True
+        # When set, history pages hold at most this many messages, whatever the limit asked for.
+        self.short_pages: Optional[int] = None
+        # What a test that starts the source role hands the adapter as its data rules.
+        self.rules: Optional[RecordingRules] = None
         self._throttle: Optional[float] = None
         self._seq = 0
 
@@ -228,21 +234,33 @@ class SyntheticSlack:
     def set_members(self, channel: str, users: list[str]) -> None:
         self.members[channel] = set(users)
 
-    def post(self, user: str, channel: str, text: str, *, thread: Optional[str] = None) -> SourceRef:
-        ts = self._ts()
+    def post(self, user: str, channel: str, text: str, *, thread: Optional[str] = None, at: Optional[float] = None) -> SourceRef:
+        """A message. With ``at``, one sent at that time, before anything was listening: no event is delivered."""
+        ts = self._ts(at)
         message: dict[str, Any] = {"type": "message", "user": user, "text": text, "ts": ts}
         if thread is not None:
             message["thread_ts"] = thread
+            parent = self.messages.get((channel, thread))
+            if parent is not None:
+                parent.update(thread_ts=thread, reply_count=parent.get("reply_count", 0) + 1, latest_reply=ts)
         self.messages[(channel, ts)] = message
+        if at is None:
+            self._message_event(channel, dict(message))
         return SourceRef(platform="slack", workspace=self.team, channel=channel, thread=thread, message=ts, revision="0")
 
     def edit(self, ref: SourceRef, text: str) -> SourceRef:
         edited = self._ts()
-        self.messages[(ref.channel, ref.message)].update(text=text, edited={"user": U1, "ts": edited})
+        message = self.messages[(ref.channel, ref.message)]
+        previous = dict(message)
+        message.update(text=text, edited={"user": U1, "ts": edited})
+        changed = {"type": "message", "subtype": "message_changed", "hidden": True, "channel": ref.channel}
+        self._message_event(ref.channel, {**changed, "ts": edited, "message": dict(message), "previous_message": previous})
         return ref.model_copy(update={"revision": edited})
 
     def delete(self, ref: SourceRef) -> None:
-        del self.messages[(ref.channel, ref.message)]
+        previous = self.messages.pop((ref.channel, ref.message))
+        deleted = {"type": "message", "subtype": "message_deleted", "hidden": True, "channel": ref.channel}
+        self._message_event(ref.channel, {**deleted, "ts": self._ts(), "deleted_ts": ref.message, "previous_message": previous})
 
     def throttle_next_history_request(self, retry_after_seconds: float) -> None:
         self._throttle = retry_after_seconds
@@ -253,6 +271,22 @@ class SyntheticSlack:
         live = [connection for connection in self.connections if not connection.closed]
         assert live, "nothing is connected to deliver to"
         live[0].inbox.append(json.dumps(data))
+
+    def event(self, event: dict[str, Any], **payload: Any) -> dict[str, Any]:
+        """An Events API envelope around ``event``, as Slack would send it now."""
+        data = fixture("events_api_message_deleted")
+        data["envelope_id"] = self._id("synthetic-envelope-event")
+        data["payload"].update(team_id=self.team, event_id=self._id("Ev0SYNTHEV"), event_time=int(self.clock.now), **payload)
+        data["payload"]["event"] = event
+        return data
+
+    def _message_event(self, channel: str, event: dict[str, Any]) -> None:
+        private = bool(self.conversations.get(channel, {}).get("is_private"))
+        subscription = "message.groups" if private else "message.channels"
+        if channel not in self.conversations or subscription not in self.subscriptions or not self.live:
+            return
+        if any(not connection.closed for connection in self.connections):
+            self.deliver(self.event({**event, "channel": channel, "channel_type": "group" if private else "channel"}))
 
     def script(self, method: str, *outcomes: SlackHttpResponse | Exception) -> None:
         self.scripted.setdefault(method, deque()).extend(outcomes)
@@ -323,17 +357,38 @@ class SyntheticSlack:
         if self._throttle is not None:
             wait, self._throttle = self._throttle, None
             return answer({"ok": False, "error": "ratelimited"}, status=429, headers={"Retry-After": str(int(wait))})
-        low, high = float(params.get("oldest", 0)), float(params.get("latest", 10**12))
-        found = [
-            message
-            for (where, ts), message in sorted(self.messages.items(), key=lambda item: float(item[0][1]))
-            if where == channel
-            and low <= float(ts) <= high
-            and (message.get("thread_ts") == thread if thread is not None else "thread_ts" not in message)
-        ]
-        if thread is not None and (channel, thread) in self.messages:
-            found.insert(0, self.messages[(channel, thread)])
-        return answer({"ok": True, "messages": found[: int(params.get("limit", 100))], "has_more": False})
+        low, high = ts_key(str(params.get("oldest", "0"))), ts_key(str(params.get("latest", "9999999999.999999")))
+        inclusive = bool(params.get("inclusive"))
+
+        def within(ts: str) -> bool:
+            return low <= ts_key(ts) <= high if inclusive else low < ts_key(ts) < high
+
+        if thread is None:
+            # A channel's history: its own messages and thread parents, newest first.
+            found = [
+                message
+                for (where, ts), message in sorted(self.messages.items(), key=lambda item: ts_key(item[0][1]), reverse=True)
+                if where == channel and within(ts) and message.get("thread_ts") in (None, ts)
+            ]
+        else:
+            # A thread: its parent first, then its replies, oldest first.
+            found = [
+                message
+                for (where, ts), message in sorted(self.messages.items(), key=lambda item: ts_key(item[0][1]))
+                if where == channel and within(ts) and message.get("thread_ts") == thread and ts != thread
+            ]
+            if (channel, thread) in self.messages:
+                found.insert(0, self.messages[(channel, thread)])
+        start = int(str(params.get("cursor") or "page_0").removeprefix("page_"))
+        size = int(params.get("limit", 100))
+        if self.short_pages is not None:
+            size = min(size, self.short_pages)
+        end = start + size
+        more = end < len(found)
+        body: dict[str, Any] = {"ok": True, "messages": found[start:end], "has_more": more}
+        if more:
+            body["response_metadata"] = {"next_cursor": f"page_{end}"}
+        return answer(body)
 
     def _chat_postEphemeral(self, params: dict[str, Any]) -> SlackHttpResponse:
         ts = self._record(params, "ephemeral")
@@ -366,9 +421,40 @@ class SyntheticSlack:
         self._seq += 1
         return f"{prefix}-{self._seq}"
 
-    def _ts(self) -> str:
+    def _ts(self, at: Optional[float] = None) -> str:
+        # Seconds from the clock, and the sequence as microseconds, so later messages sort later.
         self._seq += 1
-        return f"{int(START)}.{self._seq:06d}"
+        return f"{int(self.clock.now if at is None else at)}.{self._seq:06d}"
+
+
+def ts_key(ts: str) -> tuple[int, int]:
+    seconds, _, micros = ts.partition(".")
+    return int(seconds), int(micros.ljust(6, "0"))
+
+
+class RecordingRules:
+    """Stands in for RA-KNOW-014's ``DataRules``: records what capture hands it.
+
+    ``captured`` is what the test says a store holds. ``reconcile`` withdraws from it what ``DataRules``
+    would: captured messages of that channel sent in [since, until] that the fresh read didn't show.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+        self.reconciled: list[tuple[str, str, frozenset[str], float, float]] = []
+        self.captured: set[tuple[str, str]] = set()
+        self.withdrawn: set[tuple[str, str]] = set()
+
+    def on_event(self, workspace: str, event: Mapping[str, Any]) -> None:
+        self.events.append((workspace, dict(event)))
+        if event.get("subtype") == "message_deleted":
+            self.withdrawn.add((str(event["channel"]), str(event["deleted_ts"])))
+
+    def reconcile(self, workspace: str, channel: str, present: Collection[str], since: float, until: float) -> object:
+        self.reconciled.append((workspace, channel, frozenset(present), since, until))
+        gone = {(c, ts) for c, ts in self.captured if c == channel and since <= float(ts) <= until and ts not in present}
+        self.withdrawn |= gone
+        return sorted(gone)
 
 
 class RecordingEnviron(dict[str, str]):
@@ -421,7 +507,12 @@ def settings(roles: frozenset[Role] = INTERFACE, **overrides: Any) -> KnowledgeS
     return KnowledgeSettings(config=parse(KnowledgeConfig, {"platforms": [entry(roles, **overrides)]}))
 
 
-def factory(world: SyntheticSlack, chosen: KnowledgeSettings, environ: Optional[dict[str, str]] = None):
+def factory(
+    world: SyntheticSlack,
+    chosen: KnowledgeSettings,
+    environ: Optional[dict[str, str]] = None,
+    rules: Optional[RecordingRules] = None,
+):
     return slack_factory(
         chosen,
         world.web,
@@ -431,32 +522,26 @@ def factory(world: SyntheticSlack, chosen: KnowledgeSettings, environ: Optional[
         monotonic=world.clock,
         sleep=world.clock.sleep,
         random=lambda: 0.5,
+        rules=rules,
     )
 
 
 def start(
     roles: frozenset[Role] = INTERFACE, world: Optional[SyntheticSlack] = None, **overrides: Any
 ) -> tuple[SlackAdapter, SyntheticSlack]:
+    """Start the adapter in ``roles``. The source role gets ``RecordingRules`` as its data rules, at ``world.rules``."""
     world = world or SyntheticSlack()
+    world.subscriptions = event_subscriptions(roles)
+    if "source" in roles and world.rules is None:
+        world.rules = RecordingRules()
     chosen = settings(roles, **overrides)
-    (adapter,) = start_platforms(chosen.selections, {"slack": factory(world, chosen)})
+    (adapter,) = start_platforms(chosen.selections, {"slack": factory(world, chosen, rules=world.rules)})
     assert isinstance(adapter, SlackAdapter)
     return adapter, world
 
 
 def asked(adapter: SlackAdapter) -> list[Interaction]:
     return list(adapter.interactions())
-
-
-def refused_source(roles: frozenset[Role]) -> SyntheticSlack:
-    """Start the source role, which the adapter refuses before any token is read or anything connects."""
-    world = SyntheticSlack()
-    environ = RecordingEnviron(ENVIRON)
-    chosen = settings(roles)
-    with pytest.raises(PlatformSelectionError, match="RA-KNOW-011"):
-        start_platforms(chosen.selections, {"slack": factory(world, chosen, environ)})
-    assert (environ.read, world.opened, world.calls, world.connections) == ([], [], [], [])
-    return world
 
 
 def block_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -483,45 +568,16 @@ class TestSlackContract(ChatPlatformContract):
 
         return build
 
-    # The source role is RA-KNOW-011. These contract tests need it, so here they check its refusal.
 
-    @pytest.mark.parametrize("roles", [INTERFACE, SOURCE, BOTH], ids=["interface", "source", "both"])
-    def test_it_is_a_chat_platform_serving_exactly_its_selection(self, make, roles):
-        if "source" in roles:
-            refused_source(roles)
-        else:
-            ChatPlatformContract.test_it_is_a_chat_platform_serving_exactly_its_selection(self, make, roles)
-
-    def test_a_source_only_adapter_takes_no_questions_and_sends_nothing(self, make):
-        assert refused_source(SOURCE).sent == []
-
-    def test_capture_returns_messages_edits_and_deletions_after_the_cursor(self, make):
-        assert refused_source(SOURCE).history_requests == []
-
-    def test_a_rate_limited_page_is_incomplete_and_keeps_its_cursor(self, make):
-        assert refused_source(SOURCE).history_requests == []
-
-    def test_capture_stays_in_its_own_workspace(self, make):
-        # The role is checked before the workspace, so the interface-only adapter refuses on its role.
-        adapter = make(INTERFACE)
-        with pytest.raises(RoleNotEnabled):
-            adapter.platform.fetch_since(place(C1).model_copy(update={"workspace": "W0ELSEWHERE"}), None)
-        assert adapter.world.history_requests == []
-
-
-def test_the_contract_overrides_only_the_tests_that_need_the_source_role():
+def test_the_contract_runs_unchanged_for_slack_in_every_role():
+    # RA-KNOW-009 overrode the capture tests to check that the source role was refused. With
+    # RA-KNOW-011 every contract test runs as written, the source-role ones included.
     overridden = {
         name
         for name, value in vars(TestSlackContract).items()
         if name.startswith("test_") and name in vars(ChatPlatformContract) and value is not vars(ChatPlatformContract)[name]
     }
-    assert overridden == {
-        "test_it_is_a_chat_platform_serving_exactly_its_selection",
-        "test_a_source_only_adapter_takes_no_questions_and_sends_nothing",
-        "test_capture_returns_messages_edits_and_deletions_after_the_cursor",
-        "test_a_rate_limited_page_is_incomplete_and_keeps_its_cursor",
-        "test_capture_stays_in_its_own_workspace",
-    }
+    assert overridden == set()
 
 
 def test_the_fixtures_are_synthetic_and_hold_no_token():
@@ -548,29 +604,10 @@ def test_cp3_the_app_asks_slack_for_no_history_scope_and_no_message_event():
     assert not any(scope.endswith(":history") for scope in scopes)
     assert event_subscriptions(INTERFACE) == frozenset({"app_mention"})
     assert APP_TOKEN_SCOPES == frozenset({"connections:write"})
+    # The history scopes and message events come only with the source role (RA-KNOW-011).
     for roles in (SOURCE, BOTH):
-        with pytest.raises(PlatformSelectionError, match="RA-KNOW-011"):
-            bot_scopes(roles)
-        with pytest.raises(PlatformSelectionError, match="RA-KNOW-011"):
-            event_subscriptions(roles)
-
-
-@pytest.mark.parametrize("roles", [SOURCE, BOTH], ids=["source", "both"])
-def test_cp3_the_source_role_is_refused_before_any_token_is_read_even_when_configured(roles):
-    # The configuration allows it (terms decision and internal app recorded); the adapter still doesn't build it.
-    assert settings(roles).selections[0].roles == roles
-    refused_source(roles)
-
-
-def test_cp3_the_adapter_itself_refuses_the_source_role():
-    world = SyntheticSlack()
-    config = settings(BOTH).config.platforms[0]
-    client = sa.SlackClient(TEAM, world.web(SecretStr(BOT_MARKER)), clock=world.clock, sleep=world.clock.sleep)
-    receiver = sa.SocketModeReceiver(TEAM, lambda: world.open_socket("wss://wss-synthetic.slack.invalid/x"), clock=world.clock)
-
-    with pytest.raises(PlatformSelectionError, match="RA-KNOW-011"):
-        SlackAdapter(config, client, receiver, clock=world.clock)
-    assert (world.calls, world.connections) == ([], [])
+        assert HISTORY_SCOPES <= bot_scopes(roles)
+        assert {"message.channels", "message.groups"} <= event_subscriptions(roles)
 
 
 def test_cp3_fetch_since_is_refused_by_the_role_check_before_any_call():

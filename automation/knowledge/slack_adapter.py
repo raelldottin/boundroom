@@ -1,4 +1,6 @@
-"""The Slack adapter behind ``ChatPlatform``, in the ``interface`` role (SPEC-007, RA-KNOW-009).
+"""The Slack adapter behind ``ChatPlatform`` (SPEC-007), in the ``interface`` and ``source`` roles.
+
+RA-KNOW-009 built the ``interface`` role and RA-KNOW-011 the ``source`` role.
 
 ``docs/architecture/knowledge-loop-platforms.md`` specifies it ("How each platform maps", the Slack
 column), and ``docs/architecture/knowledge-loop-slack.md`` sets its limits, retries and data rules.
@@ -15,11 +17,24 @@ transport. The adapter never holds either token.
 
 What the adapter guarantees, beyond the ``ChatPlatform`` contract:
 
-- **Interface only (CP-3).** The ``source`` role is RA-KNOW-011, which waits on the owner's reading
-  of Slack's API terms (SPEC-007 decision 5). The factory refuses a selection that includes it before
-  reading any token, even when the configuration records that decision, so ``fetch_since`` is always
-  refused by the contract's role check. ``bot_scopes`` asks for no history scope and
-  ``event_subscriptions`` for no message event, and a message event delivered anyway is dropped.
+- **Least privilege by role (CP-3).** ``bot_scopes`` asks for a history scope, and
+  ``event_subscriptions`` for a message event, only for the ``source`` role. An interface-only adapter
+  never reads a page of history, and drops a message event delivered anyway.
+- **Capture waits on the terms decision (CP-7).** The owner decided on 2026-11-12 (PR #228) that an
+  internal app may keep a derived index of its own workspace's messages, and a distributed app may
+  not. So the ``source`` role is built only for an entry that declares ``app: "internal"`` and records
+  ``slack_terms_decision``, which the configuration already requires, and only with the data rules to
+  hand deletions to. Anything else is refused before a token is read.
+- **Capture reads only allowlisted channels (CP-6, SD-9).** A public channel, or a private channel
+  allowlisted by its own id. Never a DM, a group DM or a Slack Connect channel, allowlisted or not.
+  Capture is incremental, a page of 200 at a time, with no workspace-wide read or export.
+- **Edits and deletions propagate (CP-8, SD-2).** Message, edit and deletion events are captured as
+  they arrive. A deletion is handed to the data rules at once, as well as returned on a page, and
+  ``can_see`` asks Slack for the message at call time, so a deleted message or an edited message's
+  old revision is never confirmed. A span whose events Slack dropped (``app_rate_limited``) is read
+  again from history, and captured messages missing from it are reconciled away.
+- **Retention (SD-11).** Evidence older than the shorter of the operator's ``retention_days`` and the
+  workspace's ``workspace_retention_days`` is neither read from history nor held for capture.
 - **Exclusions hold (CP-6).** A question is answered, and a share posted, only in a channel the
   operator allowlisted, checked again with ``conversations.info`` at reply time. DMs and group DMs
   are never answered. A private channel is answered only when its own id is allowlisted. A Slack
@@ -39,6 +54,14 @@ What the adapter guarantees, beyond the ``ChatPlatform`` contract:
 
 A message's revision is ``"0"`` until it is edited, then its ``edited.ts``. Slack has no revision
 number, and the edit's timestamp is the one value every copy of the message agrees on.
+
+How capture reads a channel. Slack has no event log to resume, so the adapter keeps one: a journal of
+the message events delivered since it started, as the Discord adapter does. History before the
+journal began comes from ``conversations.history``, and thread replies from
+``conversations.replies``, between the cursor's watermark (or the retention horizon) and the
+journal's start. A cursor names the journal it counts in. One from an earlier journal, after a
+restart, reads history again from its watermark, less a five-minute overlap for deliveries Slack was
+still retrying. Pages that overlap are harmless, because a captured message is an upsert.
 """
 
 from __future__ import annotations
@@ -46,14 +69,15 @@ from __future__ import annotations
 import logging
 import random as _random
 import re
+import secrets
 import time
 from collections import Counter, deque
-from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterator, Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any, Literal, Optional, Protocol, TypeVar
+from typing import Annotated, Any, Literal, NoReturn, Optional, Protocol, TypeVar
 
-from pydantic import BaseModel, ConfigDict, SecretStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from automation.knowledge import config as knowledge_config
 from automation.knowledge.config import KnowledgeSettings, PlatformConfig, ShareDestination
@@ -61,6 +85,7 @@ from automation.knowledge.platform import (
     Answer,
     ApprovalReceipt,
     Audience,
+    CaptureEvent,
     CapturePage,
     ChatPlatform,
     Delivery,
@@ -83,7 +108,9 @@ from automation.knowledge.platform import (
     require_role,
 )
 from automation.knowledge.slack_client import (
+    CAPTURE_BUDGET,
     QUESTION_BUDGET,
+    RETRY_AFTER_MISSING_SECONDS,
     ErrorClass,
     MethodSpec,
     RetryBudget,
@@ -92,8 +119,10 @@ from automation.knowledge.slack_client import (
     Transport,
 )
 from automation.knowledge.slack_inbound import (
+    RATE_LIMIT_NOTICE_SECONDS,
     STALE_QUESTION_SECONDS,
     ConnectionOpenFailed,
+    Gap,
     InboundError,
     InboundWork,
     SocketConnection,
@@ -107,12 +136,28 @@ log = logging.getLogger(__name__)
 # members and type: channels:read for public channels and groups:read for an allowlisted private one.
 # Neither reads a message.
 INTERFACE_SCOPES: frozenset[str] = frozenset({"commands", "app_mentions:read", "chat:write", "channels:read", "groups:read"})
-# Requested only by the source role, which this adapter doesn't build.
-HISTORY_SCOPES: frozenset[str] = frozenset({"channels:history", "groups:history", "im:history", "mpim:history"})
+# Requested only by the source role: history in public channels, and in private channels the operator
+# allowlisted by id. No im:history or mpim:history, because DMs and group DMs are never captured.
+HISTORY_SCOPES: frozenset[str] = frozenset({"channels:history", "groups:history"})
+# Capture checks a channel's type before reading it, and can_see its members, with the read scopes.
+SOURCE_SCOPES: frozenset[str] = HISTORY_SCOPES | {"channels:read", "groups:read"}
+# Each scope's reason, for the app's description (SD-8).
+SCOPE_REASONS: Mapping[str, str] = {
+    "commands": "Receive the /ask command people ask questions with",
+    "app_mentions:read": "Receive questions asked by mentioning the app",
+    "chat:write": "Post each answer where its question was asked, and shares a person approved",
+    "channels:read": "Check an allowlisted public channel's type and members before answering in it or citing it",
+    "groups:read": "Check a private channel allowlisted by id: its type and members, before answering in it or citing it",
+    "channels:history": "Capture messages, edits and deletions from the public channels the operator allowlisted",
+    "groups:history": "Capture messages, edits and deletions from the private channels the operator allowlisted by id",
+}
 # Socket Mode's app-level token needs only this.
 APP_TOKEN_SCOPES: frozenset[str] = frozenset({"connections:write"})
 # Asking arrives as an app_mention event or a slash command. Slash commands need no subscription.
 INTERFACE_EVENTS: frozenset[str] = frozenset({"app_mention"})
+# New messages, edits and deletions in public and private channels the app is in, and the two events
+# that start SD-1's purge. No message.im or message.mpim.
+SOURCE_EVENTS: frozenset[str] = frozenset({"message.channels", "message.groups", "app_uninstalled", "tokens_revoked"})
 
 ASK_COMMAND = "/ask"
 
@@ -131,6 +176,23 @@ ADAPTER_METHODS: Mapping[str, MethodSpec] = {
     "conversations.info": MethodSpec(tier=3, idempotent=True),
     "conversations.members": MethodSpec(tier=4, idempotent=True),
 }
+
+# Capture. Slack recommends no more than 200 messages per history page (part 2, "Timers and budgets").
+HISTORY_PAGE = 200
+JOURNAL_PAGE = 200
+# The journal holds message text only until it is read or ages past retention. Past this many events
+# it starts again, and cursors into it read history instead.
+JOURNAL_LIMIT = 100_000
+# Slack retries an event delivery after about 0 seconds, 1 minute and 5 minutes, so a message sent
+# just before the last one read may still have been on its way when the journal was lost.
+RESUME_OVERLAP_SECONDS = 300.0
+DAY_SECONDS = 24 * 3600.0
+# Message subtypes a person writes. Joins, topic changes, bot messages and the rest aren't evidence.
+CAPTURED_SUBTYPES: frozenset[str] = frozenset({"thread_broadcast", "file_share"})
+# Capture can wait, so transient failures get part 2's capture budget. A 429 is handed back to the
+# caller as an incomplete page instead of waited out inside one call, as the ChatPlatform contract
+# asks; the client's limiter stays armed, so the next page still waits for Retry-After.
+CAPTURE_PAGE_BUDGET = replace(CAPTURE_BUDGET, wait_on_throttle=False)
 
 # Opening a Socket Mode connection runs inside the receiver's poll, between acknowledgements. A
 # limiter wait that long would hold up acknowledgements on the other connection, so the open gives
@@ -156,24 +218,72 @@ class OutcomeUnknown(PlatformError):
     """Slack may or may not have posted it. It is not retried, because a duplicate is worse than a gap."""
 
 
+class CaptureFailed(PlatformError):
+    """This channel's capture failed for this run. Other channels are unaffected; the cursor is still good."""
+
+
+class _Throttled(Exception):
+    """Slack answered a capture call with a 429. Becomes an incomplete page, never reaches the caller."""
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(f"retry after {seconds:g} seconds")
+        self.seconds = seconds
+
+
+class CaptureRules(Protocol):
+    """What capture hands the Slack data rules (part 2, RA-KNOW-014) directly, beside the pages it returns.
+
+    ``DataRules`` in ``automation/knowledge/slack_data.py`` satisfies it as written: ``on_event``
+    withdraws a ``message_deleted`` message from answers at once and starts SD-1's purge on
+    ``app_uninstalled`` or ``tokens_revoked``, and ``reconcile`` withdraws captured messages that a
+    fresh read of a span no longer shows (SD-2). Messages and edits are not handed over here. They go
+    out on the page, and the platform-neutral capture stage writes them through ``DataRules.write``,
+    which applies SD-2, SD-9 and SD-11 again before any store sees them.
+    """
+
+    def on_event(self, workspace: str, event: Mapping[str, Any]) -> None: ...
+
+    def reconcile(self, workspace: str, channel: str, present: Collection[str], since: float, until: float) -> object: ...
+
+
 def bot_scopes(roles: frozenset[Role]) -> frozenset[str]:
-    """The bot token scopes the app asks for, for the roles this adapter builds."""
-    _refuse_source(roles)
-    return INTERFACE_SCOPES
+    """The bot token scopes the app asks for: the history scopes only with the source role."""
+    scopes: frozenset[str] = frozenset()
+    if "interface" in roles:
+        scopes |= INTERFACE_SCOPES
+    if "source" in roles:
+        scopes |= SOURCE_SCOPES
+    return scopes
+
+
+def scope_reasons(roles: frozenset[Role]) -> dict[str, str]:
+    """Each scope ``bot_scopes`` asks for, with the reason the app's description gives (SD-8)."""
+    return {scope: SCOPE_REASONS[scope] for scope in sorted(bot_scopes(roles))}
 
 
 def event_subscriptions(roles: frozenset[Role]) -> frozenset[str]:
-    """The Events API subscriptions the app asks for. No message event: they need history scopes."""
-    _refuse_source(roles)
-    return INTERFACE_EVENTS
-
-
-def _refuse_source(roles: frozenset[Role]) -> None:
+    """The Events API subscriptions the app asks for: message events only with the source role."""
+    events: frozenset[str] = frozenset()
+    if "interface" in roles:
+        events |= INTERFACE_EVENTS
     if "source" in roles:
-        raise PlatformSelectionError(
-            "Slack's source role is not built: it is RA-KNOW-011, which waits on the owner's recorded reading "
-            "of Slack's API terms (SPEC-007 decision 5 and open decision 2)"
-        )
+        events |= SOURCE_EVENTS
+    return events
+
+
+def _check_capture(config: PlatformConfig, rules: Optional[CaptureRules]) -> None:
+    """CP-7, checked again where capture is built: the configuration is not the only way to make one."""
+    if "source" not in config.roles:
+        return
+    where = f"Slack workspace {config.workspace}"
+    if config.app != "internal":
+        raise PlatformSelectionError(f'capture on {where} needs an internal app, declared as "app": "internal" (CP-7)')
+    if config.slack_terms_decision is None:
+        raise PlatformSelectionError(f"capture on {where} waits on the owner's recorded decision on Slack's terms (CP-7)")
+    if config.capture_retention_days is None:
+        raise PlatformSelectionError(f"capture on {where} needs a retention; captured evidence has no default (SD-11)")
+    if rules is None:
+        raise PlatformSelectionError(f"capture on {where} needs the Slack data rules to hand deletions to (RA-KNOW-014)")
 
 
 def slack_revision(message: Mapping[str, Any]) -> str:
@@ -243,6 +353,106 @@ class _AuthTest(_Payload):
     user_id: str
 
 
+# Slack's message timestamp, which is also the message's id in its channel.
+SlackTs = Annotated[str, Field(pattern=r"^[0-9]{1,12}\.[0-9]{1,6}$")]
+
+
+class _Edited(_Payload):
+    ts: SlackTs
+
+
+class _Message(_Payload):
+    ts: SlackTs
+    user: Optional[str] = None
+    text: str = ""
+    subtype: Optional[str] = None
+    bot_id: Optional[str] = None
+    thread_ts: Optional[SlackTs] = None
+    edited: Optional[_Edited] = None
+    reply_count: int = 0
+    latest_reply: Optional[SlackTs] = None
+
+    @property
+    def revision(self) -> str:
+        return self.edited.ts if self.edited is not None else "0"
+
+    @property
+    def thread(self) -> Optional[str]:
+        # A thread's parent carries its own ts as thread_ts. Only a reply belongs to a thread.
+        return self.thread_ts if self.thread_ts not in (None, self.ts) else None
+
+
+class _Changed(_Payload):
+    message: _Message
+    previous_message: Optional[_Message] = None
+
+
+class _Deleted(_Payload):
+    deleted_ts: SlackTs
+    previous_message: Optional[dict[str, Any]] = None
+
+
+class _History(_Payload):
+    messages: list[dict[str, Any]]
+    has_more: bool = False
+
+
+class _State(BaseModel):
+    # A cursor comes back from the caller, so it is read as untrusted input.
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class _Window(_State):
+    """A span of history being read: the channel's own messages first, then each queued thread's replies."""
+
+    oldest: SlackTs
+    latest: SlackTs
+    # Set for a span whose events Slack dropped: captured messages it no longer shows are reconciled.
+    reconcile: bool = False
+    history_done: bool = False
+    threads: tuple[SlackTs, ...] = ()
+    # Slack's own cursor for the next page of whatever is being read.
+    page: Optional[Annotated[str, Field(pattern=r"^[A-Za-z0-9+/=_\-]{1,512}$")]] = None
+    # What the span showed, kept only when it is to be reconciled.
+    seen: tuple[SlackTs, ...] = ()
+
+
+class _Cursor(_State):
+    """Where capture of one place resumes. Opaque to the caller, who stores it after committing a page."""
+
+    v: Literal[1] = 1
+    channel: str
+    thread: Optional[str] = None
+    # The journal ``position`` counts in. Another journal means a restart or an overflow.
+    journal: str
+    position: Annotated[int, Field(ge=0)]
+    # Every message in the place sent before this has been read, from history or the journal.
+    watermark: SlackTs
+    # Recorded gaps that end at or before this have been read again.
+    gaps_through: SlackTs
+    window: Optional[_Window] = None
+
+
+def _ts_key(ts: str) -> tuple[int, int]:
+    # Compared as integers: a float can't hold every microsecond of a Slack timestamp exactly.
+    seconds, _, micros = ts.partition(".")
+    return int(seconds), int(micros.ljust(6, "0"))
+
+
+def _ts_at(moment: float) -> str:
+    """A wall-clock time as a Slack timestamp."""
+    micros = round(moment * 1_000_000)
+    return f"{micros // 1_000_000}.{micros % 1_000_000:06d}"
+
+
+def _later(first: str, second: str) -> str:
+    return first if _ts_key(first) >= _ts_key(second) else second
+
+
+def _earlier(first: str, second: str) -> str:
+    return first if _ts_key(first) <= _ts_key(second) else second
+
+
 @dataclass(frozen=True)
 class _Pending:
     interaction: Interaction
@@ -255,7 +465,7 @@ def _seconds(moment: float) -> datetime:
 
 
 class SlackAdapter:
-    """One Slack workspace, in the ``interface`` role, as a ``ChatPlatform``. Build it with ``slack_factory``."""
+    """One Slack workspace, in the roles the operator enabled, as a ``ChatPlatform``. Build it with ``slack_factory``."""
 
     # ponytail: not thread-safe, like the client and the receiver it drives. One caller at a time.
 
@@ -266,10 +476,11 @@ class SlackAdapter:
         receiver: SocketModeReceiver,
         *,
         clock: Callable[[], float] = time.time,
+        rules: Optional[CaptureRules] = None,
     ) -> None:
         if config.kind != "slack":
             raise PlatformSelectionError(f"the Slack adapter can't serve a {config.kind} workspace")
-        _refuse_source(config.roles)
+        _check_capture(config, rules)
         if client.workspace != config.workspace or receiver.workspace != config.workspace:
             raise PlatformSelectionError(f"the Slack client and receiver must both serve workspace {config.workspace}")
         self._config = config
@@ -280,6 +491,15 @@ class SlackAdapter:
         self._pending: dict[str, _Pending] = {}
         # Why deliveries were dropped, by reason only: never the text, which SD-5 says not to keep.
         self.dropped: Counter[str] = Counter()
+        self._rules = rules
+        # The capture journal: message events from source-allowlisted channels since it began.
+        self._journal: deque[tuple[int, CaptureEvent]] = deque()
+        self._seq = 0
+        self._dropped_through = 0
+        self._epoch = 0
+        # A cursor from another adapter, or from before a restart, must not count in this journal.
+        self._session = secrets.token_hex(8)
+        self._journal_start = clock()
         # The token is the one thing that says which workspace it really serves, so it is checked
         # before anything is received.
         identity = self._parse(_AuthTest, self._call("auth.test"), "auth.test")
@@ -381,9 +601,19 @@ class SlackAdapter:
         return Audience(place=place, members=frozenset(self._principal(user) for user in members if user != self._bot))
 
     def fetch_since(self, place: Place, cursor: Optional[str]) -> CapturePage:
-        # The factory never builds the source role, so this always refuses, before any call.
         require_role(self, "source")
-        raise PlatformSelectionError("Slack's source role is not built (RA-KNOW-011)")
+        require_own(self, place)
+        # Refused on the ids alone first, so a channel nobody allowlisted costs no call at all.
+        if place.channel not in self._config.channels.source:
+            raise NotAllowlisted(f"Slack channel {place.channel} is not allowlisted for capture")
+        state = self._read_cursor(place, cursor)
+        self._pump()
+        try:
+            # A channel can become shared with another organization at any time, so every page checks.
+            self._check_place(place, capture=True)
+            return self._capture(place, state)
+        except _Throttled as throttled:
+            return CapturePage(place=place, events=(), cursor=cursor, complete=False, retry_after_seconds=throttled.seconds)
 
     def publish(self, destination: Place, candidate: ShareCandidate, receipt: Optional[ApprovalReceipt]) -> Delivery:
         require_role(self, "interface")
@@ -422,6 +652,13 @@ class SlackAdapter:
             work = self._receiver.next_work()
             if work is None:
                 return
+            if not work.question:
+                self._capture_work(work)
+                continue
+            if "interface" not in self.roles:
+                # Nobody can collect it, so holding its text would only keep it (SD-5).
+                self._drop("interface role not enabled")
+                continue
             interaction = self._question(work)
             if interaction is not None:
                 self._pending[interaction.id] = _Pending(interaction, work.origin_at + STALE_QUESTION_SECONDS)
@@ -432,10 +669,6 @@ class SlackAdapter:
             yield self._questions.popleft()
 
     def _question(self, work: InboundWork) -> Optional[Interaction]:
-        if not work.question:
-            # Message, edit and deletion events need history scopes this app doesn't ask for. One
-            # delivered anyway is dropped: the interface role captures nothing (CP-3).
-            return self._drop("not a question")
         if work.source == "slash_commands":
             asked = self._from_command(work)
         else:
@@ -516,22 +749,24 @@ class SlackAdapter:
             raise NotAllowlisted(f"Slack channel {place.channel} is not allowlisted for questions")
         self._check_place(place)
 
-    def _check_place(self, place: Place) -> None:
+    def _check_place(self, place: Place, *, capture: bool = False) -> None:
         # A DM's id says what it is, so it costs no call.
         if place.channel.startswith("D"):
             raise ExcludedConversation(f"Slack conversation {place.channel} is a direct message")
         try:
-            conversation = self._conversation(place.channel)
+            conversation = self._conversation(place.channel, budget=CAPTURE_PAGE_BUDGET if capture else QUESTION_BUDGET)
         except SlackCallError as error:
+            if capture:
+                self._capture_failure(place, error)
             raise PlatformError(f"Slack conversation {place.channel} can't be checked: {error}") from None
         reason = _excluded(conversation)
         if reason is not None:
             raise ExcludedConversation(f"Slack conversation {place.channel} is {reason}")
 
-    def _conversation(self, channel: str) -> _Conversation:
+    def _conversation(self, channel: str, *, budget: RetryBudget = QUESTION_BUDGET) -> _Conversation:
         if channel.startswith("D"):
             return _Conversation(id=channel, is_im=True)
-        found = self._call("conversations.info", {"channel": channel})
+        found = self._client.call("conversations.info", {"channel": channel}, budget=budget)
         conversation = self._parse(_Conversation, found.get("channel"), "conversations.info")
         if conversation.id != channel:
             raise PlatformError(f"Slack answered for conversation {conversation.id} when asked about {channel}")
@@ -571,6 +806,364 @@ class SlackAdapter:
                 # Slack keeps a deleted parent with replies as a tombstone.
                 return None if message.get("subtype") == "tombstone" else message
         return None
+
+    # Capture: live events
+
+    def _capture_work(self, work: InboundWork) -> None:
+        if "source" not in self.roles:
+            # Message, edit and deletion events need history scopes this app doesn't ask for. One
+            # delivered anyway is dropped: the interface role captures nothing (CP-3).
+            self._drop("not a question")
+            return
+        try:
+            callback = _EventCallback.model_validate(work.payload)
+        except ValidationError:
+            self._drop("malformed event")
+            return
+        event = callback.event
+        kind = event.get("type")
+        if callback.team_id != self.workspace:
+            self._drop("another workspace")
+        elif kind in ("app_uninstalled", "tokens_revoked"):
+            # SD-1: the data rules purge everything from this workspace.
+            self._hand_off({"type": kind})
+        elif kind != "message":
+            self._drop("not a capture event")
+        elif event.get("channel") not in self._config.channels.source:
+            self._drop("channel not allowlisted for capture")
+        elif (
+            callback.enterprise_id
+            or callback.is_ext_shared_channel
+            or event.get("channel_type") not in (None, "channel", "group")
+        ):
+            self._drop("excluded conversation")
+        else:
+            self._capture_message_event(str(event["channel"]), event, work.origin_at)
+
+    def _capture_message_event(self, channel: str, event: Mapping[str, Any], origin_at: float) -> None:
+        try:
+            captured = self._live_event(channel, event, origin_at)
+        except ValidationError:
+            # Capture can't vouch for what came after an event it couldn't read, so every cursor into
+            # this journal reads history again from its watermark.
+            self._drop("unreadable message event")
+            self._restart_journal()
+            return
+        if captured is None:
+            self._drop("not captured")
+            return
+        if captured.kind != "delete" and self._expired(captured.source.message):
+            # Older than retention: neither captured nor kept (SD-11). A deletion always propagates.
+            self._drop("past retention")
+            return
+        self._record(captured)
+        if captured.kind == "delete":
+            # Withdrawn from answers at once (SD-2), not when the page is next read. Only the ids go:
+            # the deleted message's text stays behind.
+            self._hand_off(
+                {"type": "message", "subtype": "message_deleted", "channel": channel, "deleted_ts": captured.source.message}
+            )
+
+    def _live_event(self, channel: str, event: Mapping[str, Any], origin_at: float) -> Optional[CaptureEvent]:
+        subtype = event.get("subtype")
+        if subtype == "message_deleted":
+            deleted = _Deleted.model_validate(event)
+            previous = deleted.previous_message or {}
+            thread_ts = previous.get("thread_ts")
+            thread = thread_ts if isinstance(thread_ts, str) and thread_ts != deleted.deleted_ts else None
+            return self._deletion(channel, thread, deleted.deleted_ts, slack_revision(previous), origin_at)
+        if subtype == "message_changed":
+            changed = _Changed.model_validate(event)
+            message, previous = changed.message, changed.previous_message
+            if message.subtype == "tombstone":
+                # A deleted parent that still has replies stays as a tombstone: it is a deletion.
+                revision = previous.revision if previous is not None else "0"
+                return self._deletion(channel, message.thread, message.ts, revision, origin_at)
+            # Slack also sends message_changed when a reply is added or a link unfurls. Only a new
+            # edited.ts is a new revision.
+            if message.edited is None or (previous is not None and previous.revision == message.revision):
+                return None
+            if not self._capturable(message):
+                return None
+            return self._message_event("edit", channel, message, float(message.edited.ts))
+        message = _Message.model_validate(event)
+        if not self._capturable(message):
+            return None
+        return self._message_event("message", channel, message, float(message.ts))
+
+    def _capturable(self, message: _Message) -> bool:
+        # Bots, integrations, system notices and the adapter's own messages aren't evidence.
+        return (
+            message.user is not None
+            and message.bot_id is None
+            and message.user != self._bot
+            and (message.subtype is None or message.subtype in CAPTURED_SUBTYPES)
+        )
+
+    def _message_event(self, kind: Literal["message", "edit"], channel: str, message: _Message, at: float) -> CaptureEvent:
+        source = SourceRef(
+            platform="slack",
+            workspace=self.workspace,
+            channel=channel,
+            thread=message.thread,
+            message=message.ts,
+            revision=message.revision,
+        )
+        return CaptureEvent(
+            kind=kind, source=source, author=self._principal(str(message.user)), text=message.text, at=_seconds(at)
+        )
+
+    def _deletion(self, channel: str, thread: Optional[str], ts: str, revision: str, at: float) -> CaptureEvent:
+        source = SourceRef(
+            platform="slack", workspace=self.workspace, channel=channel, thread=thread, message=ts, revision=revision
+        )
+        return CaptureEvent(kind="delete", source=source, at=_seconds(at))
+
+    def _hand_off(self, event: Mapping[str, Any]) -> None:
+        if self._rules is None:
+            return
+        try:
+            self._rules.on_event(self.workspace, event)
+        except Exception as error:  # the data rules are outside this module; a failure must not pass silently
+            raise PlatformError(f"the Slack data rules refused a {event.get('type')} event: {error}") from error
+
+    def _record(self, event: CaptureEvent) -> None:
+        self._seq += 1
+        self._journal.append((self._seq, event))
+        if len(self._journal) > JOURNAL_LIMIT:
+            self._restart_journal()
+
+    def _restart_journal(self) -> None:
+        self._journal.clear()
+        self._dropped_through = self._seq
+        self._epoch += 1
+        self._journal_start = self._clock()
+
+    # Capture: pages
+
+    @property
+    def _journal_id(self) -> str:
+        return f"{self._session}.{self._epoch}"
+
+    def _horizon(self) -> str:
+        """The oldest timestamp still within retention: the shorter of the operator's and the workspace's."""
+        days = self._config.capture_retention_days
+        assert days is not None  # _check_capture refuses a source role without one
+        return _ts_at(self._clock() - days * DAY_SECONDS)
+
+    def _expired(self, ts: str) -> bool:
+        return _ts_key(ts) < _ts_key(self._horizon())
+
+    def _capture(self, place: Place, state: Optional[_Cursor]) -> CapturePage:
+        horizon = self._horizon()
+        start = _ts_at(self._journal_start)
+        if state is None:
+            state = _Cursor(
+                channel=place.channel,
+                thread=place.thread,
+                journal=self._journal_id,
+                position=self._dropped_through,
+                watermark=horizon,
+                gaps_through=start,
+                window=self._window(place, horizon, start),
+            )
+        elif state.journal != self._journal_id:
+            # The journal this cursor counted in is gone. Read what it may have missed from history.
+            oldest = _later(_ts_at(float(state.watermark) - RESUME_OVERLAP_SECONDS), horizon)
+            state = state.model_copy(
+                update={
+                    "journal": self._journal_id,
+                    "position": self._dropped_through,
+                    "gaps_through": start,
+                    "window": self._window(place, oldest, start),
+                }
+            )
+        gaps = self._receiver.gap_ledger.gaps
+        # While Slack is dropping events, capture slows to a page a minute (part 2, "Timers and budgets").
+        slowed = bool(gaps) and not gaps[-1].closed
+        if state.window is None:
+            pending = self._pending_gap(state)
+            if pending is not None:
+                oldest, latest = _later(_ts_at(pending.start), horizon), _ts_at(pending.end)
+                window = self._window(place, oldest, latest, reconcile=place.thread is None)
+                state = state.model_copy(update={"gaps_through": latest, "window": window})
+        retry = RATE_LIMIT_NOTICE_SECONDS if slowed else None
+        events: list[CaptureEvent] = []
+        if state.window is not None:
+            found, window = self._read_window(place, state.window, horizon)
+            events.extend(found)
+            if window is not None:
+                state = state.model_copy(update={"window": window})
+                return CapturePage(
+                    place=place, events=tuple(events), cursor=self._cursor(state), complete=False, retry_after_seconds=retry
+                )
+            # The span is read through, so the watermark can move past it if it reached the span.
+            # Nothing older than the horizon is read at all, so a watermark behind it counts as there.
+            watermark = _later(state.watermark, horizon)
+            if _ts_key(watermark) >= _ts_key(_later(state.window.oldest, horizon)):
+                watermark = _later(watermark, state.window.latest)
+            state = state.model_copy(update={"window": None, "watermark": watermark})
+        found, position, exhausted, newest = self._journal_page(place, state.position)
+        events.extend(found)
+        watermark = state.watermark if newest is None else _later(state.watermark, newest)
+        # Never past a span Slack dropped that hasn't been read again, so a restart still reads it.
+        for gap in gaps:
+            if not gap.closed or _ts_key(_ts_at(gap.end)) > _ts_key(state.gaps_through):
+                watermark = _earlier(watermark, _ts_at(gap.start))
+        state = state.model_copy(update={"position": position, "watermark": watermark})
+        complete = exhausted and not slowed and self._pending_gap(state) is None
+        return CapturePage(
+            place=place, events=tuple(events), cursor=self._cursor(state), complete=complete, retry_after_seconds=retry
+        )
+
+    def _pending_gap(self, state: _Cursor) -> Optional[Gap]:
+        for gap in self._receiver.gap_ledger.gaps:
+            if gap.closed and _ts_key(_ts_at(gap.end)) > _ts_key(state.gaps_through):
+                return gap
+        return None
+
+    def _window(self, place: Place, oldest: str, latest: str, *, reconcile: bool = False) -> Optional[_Window]:
+        if _ts_key(oldest) >= _ts_key(latest):
+            return None
+        if place.thread is not None:
+            # A thread's place reads only that thread's replies.
+            return _Window(oldest=oldest, latest=latest, history_done=True, threads=(place.thread,))
+        return _Window(oldest=oldest, latest=latest, reconcile=reconcile)
+
+    def _read_window(self, place: Place, window: _Window, horizon: str) -> tuple[list[CaptureEvent], Optional[_Window]]:
+        """One page of a span's history or replies, and the span's state after it, or None once it is read through."""
+        # Retention may have moved on since the span was planned, even past all of it.
+        oldest = _later(window.oldest, horizon)
+        if _ts_key(oldest) > _ts_key(window.latest):
+            return [], None
+        events: list[CaptureEvent] = []
+        if not window.history_done or window.threads:
+            params: dict[str, Any] = {
+                "channel": place.channel,
+                "oldest": oldest,
+                "latest": window.latest,
+                "inclusive": True,
+                "limit": HISTORY_PAGE,
+            }
+            if window.page is not None:
+                params["cursor"] = window.page
+            reading = None if not window.history_done else window.threads[0]
+            if reading is None:
+                data = self._capture_call(place, "conversations.history", params)
+            else:
+                data = self._capture_call(place, "conversations.replies", {**params, "ts": reading})
+            page = self._parse(_History, data, "history")
+            seen = list(window.seen)
+            threads = list(window.threads)
+            for raw in page.messages:
+                try:
+                    message = _Message.model_validate(raw)
+                except ValidationError:
+                    raise CaptureFailed(
+                        f"Slack's history for channel {place.channel} holds a message in an unknown shape"
+                    ) from None
+                in_span = _ts_key(oldest) <= _ts_key(message.ts) <= _ts_key(window.latest)
+                if not in_span or (reading is not None and (message.ts == reading or message.thread_ts != reading)):
+                    # Out of the span asked for, or the thread's parent, which replies always list first.
+                    continue
+                if window.reconcile:
+                    seen.append(message.ts)
+                if (
+                    reading is None
+                    and message.thread is None
+                    and message.reply_count > 0
+                    and message.latest_reply is not None
+                    and _ts_key(message.latest_reply) >= _ts_key(oldest)
+                    and message.ts not in threads
+                ):
+                    threads.append(message.ts)
+                if self._capturable(message):
+                    events.append(self._message_event("message", place.channel, message, float(message.ts)))
+            following = _next_cursor(data) if page.has_more else ""
+            if page.has_more and (not following or following == window.page):
+                raise CaptureFailed(f"Slack's history for channel {place.channel} did not advance")
+            update: dict[str, Any] = {"page": following or None, "seen": tuple(seen), "threads": tuple(threads)}
+            if not following:
+                if reading is None:
+                    update["history_done"] = True
+                else:
+                    update["threads"] = tuple(threads[1:])
+            window = window.model_copy(update=update)
+            events.sort(key=lambda event: _ts_key(event.source.message))
+            if not window.history_done or window.threads:
+                return events, window
+        if window.reconcile:
+            self._reconcile(place, window, oldest)
+        return events, None
+
+    def _reconcile(self, place: Place, window: _Window, oldest: str) -> None:
+        """Withdraw captured messages the span no longer shows: deletions whose events Slack dropped (SD-2)."""
+        if self._rules is None:
+            return
+        present = set(window.seen)
+        # History can't show a reply to a thread that started before the span. One delivered live is
+        # counted present, so it isn't withdrawn for that alone.
+        for _, event in self._journal:
+            source = event.source
+            if source.channel == place.channel and source.thread is not None and event.kind != "delete":
+                present.add(source.message)
+        try:
+            self._rules.reconcile(self.workspace, place.channel, frozenset(present), float(oldest), float(window.latest))
+        except Exception as error:  # see _hand_off
+            raise PlatformError(f"the Slack data rules couldn't reconcile channel {place.channel}: {error}") from error
+
+    def _journal_page(self, place: Place, position: int) -> tuple[list[CaptureEvent], int, bool, Optional[str]]:
+        if position < self._dropped_through or position > self._seq:
+            raise PlatformError(f"cursor position {position} is not in this capture journal")
+        horizon = _ts_key(self._horizon())
+        # Text that aged past retention while it waited is not kept (SD-11). Deletions carry none.
+        self._journal = deque(
+            (seq, event) for seq, event in self._journal if event.kind == "delete" or _ts_key(event.source.message) >= horizon
+        )
+        events: list[CaptureEvent] = []
+        last = position
+        newest: Optional[str] = None
+        for seq, event in self._journal:
+            if seq <= position:
+                continue
+            if len(events) == JOURNAL_PAGE:
+                return events, last, False, newest
+            last = seq
+            source = event.source
+            if source.channel == place.channel and (place.thread is None or source.thread == place.thread):
+                events.append(event)
+                if event.kind == "message":
+                    newest = source.message if newest is None else _later(newest, source.message)
+        return events, self._seq, True, newest
+
+    def _capture_call(self, place: Place, method: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            return self._client.call(method, params, budget=CAPTURE_PAGE_BUDGET)
+        except SlackCallError as error:
+            self._capture_failure(place, error)
+
+    def _capture_failure(self, place: Place, error: SlackCallError) -> NoReturn:
+        if error.error_class is ErrorClass.THROTTLED:
+            wait = error.retry_after_seconds
+            raise _Throttled(wait if wait is not None and wait > 0 else RETRY_AFTER_MISSING_SECONDS) from None
+        if error.error_class is ErrorClass.ACCESS_GONE:
+            raise CaptureFailed(f"Slack channel {place.channel} can no longer be read: {error}") from None
+        raise CaptureFailed(f"capture of Slack channel {place.channel} failed for this run: {error}") from None
+
+    def _cursor(self, state: _Cursor) -> str:
+        return state.model_dump_json(exclude_defaults=True)
+
+    def _read_cursor(self, place: Place, cursor: Optional[str]) -> Optional[_Cursor]:
+        if cursor is None:
+            return None
+        try:
+            state = _Cursor.model_validate_json(cursor)
+        except ValidationError:
+            raise PlatformError("the capture cursor was not issued by this adapter") from None
+        # An edited cursor can't point capture at another channel or thread than the one asked for.
+        if (state.channel, state.thread) != (place.channel, place.thread):
+            raise PlatformError(f"the capture cursor was issued for another place than Slack channel {place.channel}")
+        return state
 
     # Calls
 
@@ -652,24 +1245,26 @@ def slack_factory(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     random: Callable[[], float] = _random.random,
+    rules: Optional[CaptureRules] = None,
 ) -> PlatformFactory:
     """The factory ``start_platforms`` calls for a Slack selection.
 
-    Building the factory reads nothing. Calling it checks the selection, refuses the source role,
-    then reads the bot token and the app-level token with ``config.read_secret`` and hands each to
-    its own Web API transport. ``apps.connections.open`` goes through the app token's client, so
-    opening a connection is throttled like every other call. The adapter never sees either token.
+    Building the factory reads nothing. Calling it checks the selection, and for the source role
+    checks CP-7 and that ``rules`` is there to hand deletions to, then reads the bot token and the
+    app-level token with ``config.read_secret`` and hands each to its own Web API transport.
+    ``apps.connections.open`` goes through the app token's client, so opening a connection is
+    throttled like every other call. The adapter never sees either token.
     """
 
     def build(selection: PlatformSelection) -> ChatPlatform:
         if selection.kind != "slack":
             raise PlatformSelectionError(f"the Slack factory was handed a {selection.kind} selection")
         platform = settings.platform(selection)
-        # Checked before any token is read, so a selection the operator didn't write, or a role this
-        # adapter doesn't build, connects nothing.
+        # Checked before any token is read, so a selection the operator didn't write, or capture
+        # without the terms decision or the data rules, connects nothing.
         if platform.selection() != selection:
             raise PlatformSelectionError(f"Slack workspace {selection.workspace} is configured with other roles")
-        _refuse_source(selection.roles)
+        _check_capture(platform, rules)
         bot_ref, app_ref = platform.credentials.bot_token, platform.credentials.app_token
         if bot_ref is None or app_ref is None:
             raise PlatformSelectionError(f"Slack workspace {selection.workspace} needs both a bot and an app-level token")
@@ -689,6 +1284,6 @@ def slack_factory(
             return open_socket(url)
 
         receiver = SocketModeReceiver(platform.workspace, connect, clock=clock, random=random)
-        return SlackAdapter(platform, client, receiver, clock=clock)
+        return SlackAdapter(platform, client, receiver, clock=clock, rules=rules)
 
     return build

@@ -148,11 +148,15 @@ class RetryBudget:
 
     ``deadline_seconds`` bounds every wait of the call, limiter waits included, from the call's
     start. A caller whose deadline spans several calls passes ``deadline_at`` to each instead.
+    ``wait_on_throttle`` False stops at the first ``429`` instead of waiting it out, for a caller
+    that hands the wait back to its own caller; the limiter is still armed, so nothing calls the
+    method again before ``Retry-After`` has passed.
     """
 
     cap_seconds: float
     max_attempts: int
     deadline_seconds: Optional[float] = None
+    wait_on_throttle: bool = True
 
 
 # A person is waiting for the answer.
@@ -220,6 +224,7 @@ class SlackCallError(Exception):
     """A call failed and won't be retried. ``error_class`` says what the caller must do next.
 
     ``outcome_unknown`` is set when Slack may have acted, on a method that can't safely repeat.
+    ``retry_after_seconds`` is Slack's ``Retry-After`` when the last answer was a ``429``.
     """
 
     def __init__(
@@ -231,6 +236,7 @@ class SlackCallError(Exception):
         attempts: int,
         error: Optional[str] = None,
         outcome_unknown: bool = False,
+        retry_after_seconds: Optional[float] = None,
     ) -> None:
         super().__init__(f"{method}: {error_class.value}: {detail}")
         self.method = method
@@ -238,6 +244,7 @@ class SlackCallError(Exception):
         self.error = error
         self.attempts = attempts
         self.outcome_unknown = outcome_unknown
+        self.retry_after_seconds = retry_after_seconds
 
 
 class CircuitOpen(SlackCallError):
@@ -393,7 +400,16 @@ def _stop(
     outcome_unknown: bool = False,
 ) -> SlackCallError:
     detail = f"{failure.detail}; {why}" if why else failure.detail
-    return cls(method, failure.error_class, detail, attempts=attempts, error=failure.error, outcome_unknown=outcome_unknown)
+    retry_after = failure.retry_after if failure.error_class is ErrorClass.THROTTLED else None
+    return cls(
+        method,
+        failure.error_class,
+        detail,
+        attempts=attempts,
+        error=failure.error,
+        outcome_unknown=outcome_unknown,
+        retry_after_seconds=retry_after,
+    )
 
 
 class SlackClient:
@@ -511,6 +527,8 @@ class SlackClient:
             # Armed even when giving up, so the method stays blocked for whoever calls it next.
             until = now + failure.retry_after + self._random() * RETRY_AFTER_JITTER_SECONDS
             bucket.slow_down(now, until)
+            if not budget.wait_on_throttle:
+                raise _stop(SlackCallError, method, failure, attempts, "the caller waits for Retry-After")
             if attempts >= budget.max_attempts:
                 raise _stop(SlackCallError, method, failure, attempts, f"gave up after {attempts} attempts")
             if deadline_at is not None and until > deadline_at:
