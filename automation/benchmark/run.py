@@ -25,13 +25,17 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
+from automation.supervisor import telemetry, telemetry_settings
+
 from .adapter import AgentAdapter, SupervisorAgentAdapter
 from .evalrunner import MAX_DOCKER_CPUS, EvalRunner, ProgramBenchEvalRunner
 from .instances import resolve_instances, task_spec
 from .scoring import EffectivenessReport, score_run_dir, write_report
 from .strategies import ALL_LANES
+from .tracing import benchmark_settings
 
 REPORT_FILENAME = "effectiveness-report.json"
+EX_CONFIG = 78  # sysexits.h, as run_next: required telemetry that can't be enabled
 _DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -167,6 +171,27 @@ def _add_lane_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repeats", type=int, default=1, help="Attempts per lane/instance. Use >=2; one run is noisy.")
 
 
+def experiment_telemetry(args: argparse.Namespace) -> Optional[telemetry.Telemetry]:
+    """The experiment's one telemetry handle, or None after saying why it can't start."""
+    settings = benchmark_settings(vars(args), os.environ)
+    for message in settings.messages:
+        print(message, file=sys.stderr)
+    if settings.refusal:
+        print(f"stop: {settings.refusal}", file=sys.stderr)
+        return None
+    repo_root = Path(args.repo_root)
+    try:
+        tracer = telemetry.configure(
+            settings, repo_root=repo_root, run_id=telemetry.new_run_id(), service_version=telemetry.version(repo_root)
+        )
+    except telemetry.TelemetryRefused as error:
+        print(f"stop: {error}", file=sys.stderr)
+        return None
+    for message in tracer.messages:
+        print(message, file=sys.stderr)
+    return tracer
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m automation.benchmark", description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -193,6 +218,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lane_args(lanes_parser)
     _add_eval_args(lanes_parser)
     lanes_parser.add_argument("--eval", action="store_true", help="Also run ProgramBench eval (Docker) per cell.")
+    # The flags run_next takes, read from this command line only: a benchmark is traced only
+    # when this run asks for it, never because a live run's settings are in the environment.
+    telemetry_settings.add_flags(lanes_parser)
 
     compare_parser = subparsers.add_parser("compare", help="Compare an existing lane matrix (no Docker).")
     compare_parser.add_argument("--run-dir", required=True, type=Path)
@@ -224,25 +252,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "compare":
             comparison = lanes_module.build_comparison(args.run_dir, args.lanes, args.repeats)
         else:
-            comparison = lanes_module.run_experiment(
-                run_dir=args.run_dir,
-                instances=_instances_from_args(args),
-                adapter_factory=lanes_module.default_adapter_factory(
+            tracer = experiment_telemetry(args)
+            if tracer is None:
+                return EX_CONFIG
+            try:
+                comparison = lanes_module.run_experiment(
+                    run_dir=args.run_dir,
+                    instances=_instances_from_args(args),
+                    adapter_factory=lanes_module.default_adapter_factory(
+                        repo_root=Path(args.repo_root),
+                        agent_command_template=args.agent_cmd,
+                        timeout_seconds=args.timeout,
+                        env=resolve_agent_env(args.agent_env),
+                        cleanroom=args.cleanroom,
+                        telemetry=tracer,
+                    ),
                     repo_root=Path(args.repo_root),
-                    agent_command_template=args.agent_cmd,
-                    timeout_seconds=args.timeout,
-                    env=resolve_agent_env(args.agent_env),
-                    cleanroom=args.cleanroom,
-                ),
-                repo_root=Path(args.repo_root),
-                lanes=args.lanes,
-                repeats=args.repeats,
-                eval_runner=(
-                    ProgramBenchEvalRunner(args.programbench_cmd, workers=args.workers, docker_cpus=args.docker_cpus)
-                    if args.eval
-                    else None
-                ),
-            )
+                    lanes=args.lanes,
+                    repeats=args.repeats,
+                    eval_runner=(
+                        ProgramBenchEvalRunner(args.programbench_cmd, workers=args.workers, docker_cpus=args.docker_cpus)
+                        if args.eval
+                        else None
+                    ),
+                    telemetry=tracer,
+                )
+            finally:
+                # Bounded, and an exporter failure never changes what the experiment recorded.
+                tracer.flush()
         assert comparison is not None
         path = lanes_module.write_comparison(comparison, args.run_dir)
         print(lanes_module.render_comparison_markdown(comparison))

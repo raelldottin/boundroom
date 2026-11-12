@@ -396,6 +396,7 @@ class SupervisorAgentAdapter:
         runner: Optional[CommandRunner] = None,
         strategy: Optional[ExecutionStrategy] = None,
         cleanroom: bool = False,
+        telemetry: Optional[Any] = None,
     ) -> None:
         self._repo_root = Path(repo_root)
         self._template = agent_command_template or _default_command_template(self._repo_root)
@@ -404,6 +405,7 @@ class SupervisorAgentAdapter:
         self._runner = runner or _subprocess_runner
         self._strategy = strategy or SliceContextStrategy()
         self._cleanroom = cleanroom
+        self._telemetry = telemetry
 
     @property
     def lane(self) -> str:
@@ -485,6 +487,7 @@ class SupervisorAgentAdapter:
                 timeout_seconds=self._timeout,
                 runner=runner,
                 agent_workspace=agent_workspace_for(self._cleanroom),
+                telemetry=self._telemetry,
             )
         )
         if witness is not None and witness.violations:

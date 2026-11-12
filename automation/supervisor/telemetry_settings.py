@@ -286,7 +286,7 @@ def resolve(
 
 
 def add_flags(parser: Any) -> None:
-    """The telemetry flags ``run_next.py`` and ``evaluate_handoff.py`` share. Headers have none."""
+    """The telemetry flags ``run_next.py``, ``evaluate_handoff.py`` and the sync tool share. Headers have none."""
     group = parser.add_argument_group("telemetry (SPEC-006; off unless you choose a mode and a destination)")
     group.add_argument("--telemetry", choices=MODES, help="off, file or otlp.")
     group.add_argument("--no-telemetry", action="store_true", help="Turn telemetry off, whatever any other source says.")

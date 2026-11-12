@@ -1,6 +1,6 @@
 # SPEC-006: Traceable agent runs with Logfire and OpenTelemetry
 
-Status: **accepted (raelldottin/boundroom#196, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request and needs its own approval. RA-TEL-001, the settings model and resolution (`automation/supervisor/telemetry_settings.py`), and RA-TEL-002, the exporter (`automation/supervisor/telemetry.py`, with `logfire==5.4.0` as the `telemetry` extra), are implemented, and so is RA-TEL-006's text: the run-next skill's telemetry rule, the workflow doc's Telemetry section and the control-map row. RA-TEL-003 is implemented too: `run_next.py` and `evaluate_handoff.py` emit the supervised lane's span tree under one `boundroom.run`, and the decision report's `telemetry.trace_id` joins a trace to its record. The handoff's own provenance doesn't carry the trace id yet, because the handoff is written by the agent; the board's run record and the decision report do. RA-TEL-004 is implemented as well: the runner gets `TRACEPARENT` for `boundroom.agent_session` and, unless the user set their own `OTEL_RESOURCE_ATTRIBUTES`, the run and slice ids. With `runner` on and an `otlp` destination, Claude Code's exporter is pointed at the user's endpoint; with any runner telemetry variable already exported by the user, Boundroom sets none of its own. In `file` mode the runner's own spans aren't exported, because Claude Code has no file exporter; the report says so. The decision report lists the variable names Boundroom set and the ones it passed through, never their values.
+Status: **accepted (raelldottin/boundroom#196, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request and needs its own approval. RA-TEL-001, the settings model and resolution (`automation/supervisor/telemetry_settings.py`), and RA-TEL-002, the exporter (`automation/supervisor/telemetry.py`, with `logfire==5.4.0` as the `telemetry` extra), are implemented, and so is RA-TEL-006's text: the run-next skill's telemetry rule, the workflow doc's Telemetry section and the control-map row. RA-TEL-003 is implemented too: `run_next.py` and `evaluate_handoff.py` emit the supervised lane's span tree under one `boundroom.run`, and the decision report's `telemetry.trace_id` joins a trace to its record. The handoff's own provenance doesn't carry the trace id yet, because the handoff is written by the agent; the board's run record and the decision report do. RA-TEL-004 is implemented as well: the runner gets `TRACEPARENT` for `boundroom.agent_session` and, unless the user set their own `OTEL_RESOURCE_ATTRIBUTES`, the run and slice ids. With `runner` on and an `otlp` destination, Claude Code's exporter is pointed at the user's endpoint; with any runner telemetry variable already exported by the user, Boundroom sets none of its own. In `file` mode the runner's own spans aren't exported, because Claude Code has no file exporter; the report says so. The decision report lists the variable names Boundroom set and the ones it passed through, never their values. RA-TEL-005's code is implemented too: the sync tool's Python core emits the sync lane's spans and takes the same telemetry flags, and the benchmark's `lanes` command emits the experiment, cell, phase, session and score spans, with one settings report in every cell's `run.json`. Its overhead measurement against `LANE_CEILING_SECONDS` is a benchmark run, which needs a person's approval, so it hasn't been done; see [Lane invariance](#lane-invariance-benchmark).
 
 Owner request recorded here (2026-11-11): use Logfire to make every agent interaction auditable and traceable, in every lane the plugin can start, with the user able to configure it.
 
@@ -102,6 +102,12 @@ A refusal, such as an out-of-scope path or a missing handoff, is an event on the
 
 `boundroom.run` with `entry=sync`, plus `boundroom.sync.verify` (pin, expected remote, result), `boundroom.sync.plan` (file count, drift count) and `boundroom.sync.write`. These spans come from the sync tool's Python core. The shell wrapper only passes settings.
 
+**As built (RA-TEL-005):**
+- The core imports the telemetry modules from the checkout the tool runs from, never from `--source`, which provenance hasn't checked yet. Under an interpreter without pydantic, the tool runs untraced as before, and refuses a telemetry flag or `required` rather than ignore it.
+- `file_dir` must be outside the consumer, the source and the tool's own checkout: a spans file in the consumer would land in the sync's pull request, and one in the source would fail the next sync's cleanliness check.
+- A refusal sets `result: refused` and the reason's first line on the span where it happened. The error leaves the span before it's raised again, and credentials in a URL are removed, so a remote's token reaches no span.
+- `--check` has a plan and no write span. The repository's reduce-only block isn't applied, because the sync tool reads no queue.
+
 ### Benchmark lanes A to E
 
 ```text
@@ -111,6 +117,12 @@ boundroom.benchmark.experiment     run dir, lanes, repeats, instance count, repo
     │   └── boundroom.agent_session
     └── boundroom.benchmark.score  ProgramBench score, treatment validity
 ```
+
+**As built (RA-TEL-005):**
+- ProgramBench scores a `<lane>/r<repeat>` directory after the whole matrix has run, so each `score` span is a child of the experiment, beside the cells, with the lane, repeat, report digest and treatment validity.
+- Every agent session gets a `phase` span, including lanes A and B's single implement session and the compaction sessions of D and E. A phase that owes an artifact carries its digest; implement's output is the submission, whose digest is on the cell, with the cell's `run.json` digest.
+- The benchmark reads telemetry only from the `lanes` command line. The operator file and `BOUNDROOM_TELEMETRY_*` configure live runs and are ignored, except the kill switch and the headers, which have no flag. Runner telemetry is refused, and the agent gets no trace context, so a runner's spans don't nest under `agent_session` here.
+- `environment: benchmark` is the resource's `deployment.environment.name`, so it applies to every span but isn't repeated in file mode's per-span lines.
 
 ### Joining a trace to the record
 
@@ -139,7 +151,7 @@ boundroom.benchmark.experiment     run dir, lanes, repeats, instance count, repo
 
 - **The same settings for every lane in an experiment.** The settings are part of the execution context handed to every lane unchanged, and recorded in each cell's `run.json`.
 - **Nothing in the agent's prompt, context or workspace.** Telemetry never adds to what the agent sees. Phase artifacts and submissions are unchanged.
-- **Bounded overhead.** Spans export in a background batch, and the final flush has a timeout. The overhead per cell is measured in the RA-TEL-005 canary and reported against `LANE_CEILING_SECONDS`.
+- **Bounded overhead.** Spans export in a background batch, and the final flush has a timeout. The overhead per cell is measured in the RA-TEL-005 canary and reported against `LANE_CEILING_SECONDS`. That canary is a benchmark run, so it waits for a person's approval; it hasn't run.
 - **Separate from live runs.** Benchmark spans use `environment: benchmark`, and in `otlp` mode the user names a separate endpoint or token for benchmark runs. This keeps the AGENTS.md rule that benchmarks stay isolated from live control-plane integrations. Turning telemetry on for a benchmark run is a run-setting change, so it needs a person's approval like any other benchmark change.
 
 ## Failure handling

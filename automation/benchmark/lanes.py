@@ -27,6 +27,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
+from automation.supervisor import telemetry as telemetry_module
+from automation.supervisor.telemetry import Telemetry
+
+from . import tracing
 from .adapter import AGENT_SESSIONS_DIR, AgentAdapter, SupervisorAgentAdapter
 from .diagnosis import diagnose_sessions
 from .evalrunner import EvalRunner
@@ -149,11 +153,13 @@ def default_adapter_factory(
     timeout_seconds: int = 1800,
     env: Optional[Mapping[str, str]] = None,
     cleanroom: bool = False,
+    telemetry: Optional[Telemetry] = None,
 ) -> AdapterFactory:
     """Build one adapter per lane; everything except the strategy is held fixed.
 
     ``env`` included: every lane is authorized the same variables, or the difference between
-    two lanes would be what they could reach rather than how they were prompted.
+    two lanes would be what they could reach rather than how they were prompted. So is
+    ``telemetry``: one handle, so every lane is traced, or not, the same way (SPEC-006).
     """
 
     def factory(lane: str) -> AgentAdapter:
@@ -164,12 +170,20 @@ def default_adapter_factory(
             env=env,
             strategy=build_strategy(lane),
             cleanroom=cleanroom,
+            telemetry=telemetry,
         )
 
     return factory
 
 
-def skip_cell(cell: Cell, run_dir: Path, repo_root: Path, reason: str) -> dict[str, Any]:
+def _telemetry_record(telemetry: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """The experiment's telemetry settings for a cell's run.json; off when the cell ran untraced."""
+    return dict(telemetry) if telemetry is not None else tracing.untraced().settings.report()
+
+
+def skip_cell(
+    cell: Cell, run_dir: Path, repo_root: Path, reason: str, telemetry: Optional[dict[str, Any]] = None
+) -> dict[str, Any]:
     """Record a cell that could not be administered, without writing a submission.
 
     A lane whose treatment cannot be resolved is reported as unrun. Substituting a
@@ -190,6 +204,7 @@ def skip_cell(cell: Cell, run_dir: Path, repo_root: Path, reason: str) -> dict[s
         "skipped": True,
         "skip_reason": reason,
         "strategy": None,
+        "telemetry": _telemetry_record(telemetry),
     }
     (instance_dir / PROVENANCE_FILENAME).write_text(json.dumps(provenance, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return provenance
@@ -253,8 +268,14 @@ def classify_provider_validity(sessions: Sequence[dict[str, Any]]) -> str:
     return PROVIDER_DEGRADED if served else PROVIDER_UNAVAILABLE
 
 
-def run_cell(cell: Cell, run_dir: Path, adapter: AgentAdapter, repo_root: Path) -> dict[str, Any]:
-    """Attempt one cell and write its provenance record."""
+def run_cell(
+    cell: Cell, run_dir: Path, adapter: AgentAdapter, repo_root: Path, telemetry: Optional[dict[str, Any]] = None
+) -> dict[str, Any]:
+    """Attempt one cell and write its provenance record.
+
+    ``telemetry`` is the experiment's settings report, the same dict for every cell, so each
+    run.json shows the lanes were traced alike (SPEC-006 lane invariance).
+    """
     instance_dir = cell.directory(run_dir)
     instance_dir.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(timezone.utc).isoformat()
@@ -288,6 +309,7 @@ def run_cell(cell: Cell, run_dir: Path, adapter: AgentAdapter, repo_root: Path) 
         # inference result at all, so it belongs in the cell's own provenance.
         "cleanroom": result.cleanroom.to_dict() if result.cleanroom is not None else None,
         "strategy": strategy,
+        "telemetry": _telemetry_record(telemetry),
     }
     (instance_dir / PROVENANCE_FILENAME).write_text(json.dumps(provenance, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return provenance
@@ -479,7 +501,7 @@ LANE_TREATMENTS = {
 }
 
 
-def build_comparison(run_dir: Path, lanes: Sequence[str], repeats: int) -> dict[str, Any]:
+def build_comparison(run_dir: Path, lanes: Sequence[str], repeats: int, telemetry: Optional[Telemetry] = None) -> dict[str, Any]:
     """Score every cell that has eval output and reduce it to one comparison."""
     run_dir = Path(run_dir)
     summaries = []
@@ -489,7 +511,25 @@ def build_comparison(run_dir: Path, lanes: Sequence[str], repeats: int) -> dict[
             cell_dir = run_dir / lane / f"r{repeat}"
             if not cell_dir.is_dir():
                 continue
-            reports.append(score_and_write(cell_dir))
+            # ProgramBench scores a <lane>/r<repeat> directory, every instance at once, after the
+            # whole matrix ran, so the score span sits beside the cells rather than inside one.
+            with tracing.span(telemetry, "boundroom.benchmark.score", lane=lane, repeat=repeat) as score_span:
+                report = score_and_write(cell_dir)
+                if tracing.enabled(telemetry):
+                    administered = all(
+                        record.get("treatment_validity", TREATMENT_VALID) == TREATMENT_VALID
+                        for record in _load_provenance(cell_dir)
+                    )
+                    tracing.annotate(
+                        telemetry,
+                        score_span,
+                        instance_count=report.instance_count,
+                        resolve_rate=report.resolve_rate,
+                        mean_pass_fraction=report.mean_pass_fraction,
+                        treatment_validity=TREATMENT_VALID if administered else TREATMENT_INVALID,
+                        report_sha256=tracing.file_sha256(cell_dir / REPORT_FILENAME),
+                    )
+            reports.append(report)
         if reports or (run_dir / lane).is_dir():
             summaries.append(summarize_lane(run_dir, lane, repeats, reports))
     return {
@@ -640,28 +680,62 @@ def run_experiment(
     repeats: int = 1,
     eval_runner: Optional[EvalRunner] = None,
     score: bool = True,
+    telemetry: Optional[Telemetry] = None,
 ) -> Optional[dict[str, Any]]:
-    """Run the full matrix, optionally evaluate and score it."""
+    """Run the full matrix, optionally evaluate and score it.
+
+    ``telemetry`` traces the experiment; pass the same handle to the adapter factory, so the
+    sessions nest under their cells. Absent, the run is untraced and each run.json says so.
+    The caller flushes it.
+    """
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
+    handle = telemetry or tracing.untraced()
+    traced = tracing.enabled(handle)
 
-    for cell in interleave(instances, lanes, repeats):
-        try:
-            adapter = adapter_factory(cell.lane)
-        except JSpaceUnavailable as error:
-            skip_cell(cell, run_dir, repo_root, str(error))
-            continue
-        run_cell(cell, run_dir, adapter, repo_root)
+    with tracing.span(
+        handle,
+        "boundroom.benchmark.experiment",
+        run_dir=str(run_dir),
+        lanes=list(lanes),
+        repeats=repeats,
+        instance_count=len(instances),
+        # A git call per experiment, so only when someone will read it.
+        repo_sha=_repo_sha(repo_root) if traced else None,
+    ) as experiment:
+        # Built once and handed to every cell, so no lane can record different settings.
+        settings = handle.settings.report(trace_id=telemetry_module.trace_id(experiment))
+        for cell in interleave(instances, lanes, repeats):
+            with tracing.span(
+                handle, "boundroom.benchmark.cell", lane=cell.lane, repeat=cell.repeat, instance=cell.instance_id
+            ) as cell_span:
+                try:
+                    adapter = adapter_factory(cell.lane)
+                except JSpaceUnavailable as error:
+                    provenance = skip_cell(cell, run_dir, repo_root, str(error), telemetry=settings)
+                else:
+                    provenance = run_cell(cell, run_dir, adapter, repo_root, telemetry=settings)
+                if traced:
+                    instance_dir = cell.directory(run_dir)
+                    tracing.annotate(
+                        handle,
+                        cell_span,
+                        skipped=bool(provenance.get("skipped")),
+                        provider_validity=provenance.get("provider_validity"),
+                        returncode=provenance.get("returncode"),
+                        run_json_sha256=tracing.file_sha256(instance_dir / PROVENANCE_FILENAME),
+                        submission_sha256=tracing.file_sha256(instance_dir / "submission.tar.gz"),
+                    )
 
-    if eval_runner is not None:
-        for cell_dir in cell_dirs(run_dir, lanes, repeats):
-            eval_runner.evaluate(cell_dir)
+        if eval_runner is not None:
+            for cell_dir in cell_dirs(run_dir, lanes, repeats):
+                eval_runner.evaluate(cell_dir)
 
-    if not score:
-        return None
-    comparison = build_comparison(run_dir, lanes, repeats)
-    write_comparison(comparison, run_dir)
-    return comparison
+        if not score:
+            return None
+        comparison = build_comparison(run_dir, lanes, repeats, telemetry=handle)
+        write_comparison(comparison, run_dir)
+        return comparison
 
 
 __all__ = [

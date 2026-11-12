@@ -15,9 +15,10 @@ import shutil
 import stat
 import subprocess
 import sys
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Iterator
 
 
 FORBIDDEN_SOURCE_PREFIXES = (
@@ -414,6 +415,7 @@ class Plan:
     writes: list[tuple[Path, Path, str, Entry]]
     deletions: list[tuple[Path, str]]
     issues: list[str]
+    file_count: int = 0
 
 
 def plan_entries(
@@ -430,9 +432,11 @@ def plan_entries(
     writes: list[tuple[Path, Path, str, Entry]] = []
     deletions: list[tuple[Path, str]] = []
     issues: list[str] = []
+    file_count = 0
 
     for entry in entries:
         pairs = source_files(source_root, target_root_resolved, entry)
+        file_count += len(pairs)
         expected = {target for _, target, _ in pairs}
 
         for source, target, display in pairs:
@@ -448,7 +452,7 @@ def plan_entries(
             issues.append(f"stale: {display}")
             deletions.append((stale, display))
 
-    return Plan(writes=writes, deletions=deletions, issues=sorted(issues))
+    return Plan(writes=writes, deletions=deletions, issues=sorted(issues), file_count=file_count)
 
 
 def sync_entries(
@@ -457,14 +461,34 @@ def sync_entries(
     entries: list[Entry],
     *,
     check: bool,
-    force_templates: bool = False
+    force_templates: bool = False,
+    tracer: Any = None,
 ) -> int:
+    tracer = tracer or NoTelemetry()
     target_root_resolved = target_root.resolve(strict=False)
 
     # Plan the whole import before touching anything, so a refusal leaves the consumer
     # byte-for-byte unchanged rather than half-imported.
-    plan = plan_entries(source_root, target_root_resolved, entries, force_templates=force_templates)
-    writes, deletions, issues = plan.writes, plan.deletions, plan.issues
+    with traced(tracer, "boundroom.sync.plan", check=check) as span:
+        plan = plan_entries(source_root, target_root_resolved, entries, force_templates=force_templates)
+        writes, deletions, issues = plan.writes, plan.deletions, plan.issues
+        tracer.annotate(span, file_count=plan.file_count, drift_count=len(issues) if check else len(writes) + len(deletions))
+
+        if not check:
+            # Part of the plan rather than the write: it is the last refusal before anything changes.
+            modified = locally_modified_targets(target_root_resolved)
+            clobbered = sorted(
+                display
+                for path, display in [(target, display) for _, target, display, _ in writes] + deletions
+                if path.resolve(strict=False) in modified
+            )
+            if clobbered:
+                raise SyncError(
+                    "refusing to import over locally modified files: "
+                    + ", ".join(clobbered)
+                    + ". Commit, stash or revert them first - an import overwrites them silently otherwise."
+                )
+        tracer.annotate(span, result="planned")
 
     if check:
         if issues:
@@ -475,35 +499,24 @@ def sync_entries(
         print("result: target is current")
         return 0
 
-    modified = locally_modified_targets(target_root_resolved)
-    clobbered = sorted(
-        display
-        for path, display in [(target, display) for _, target, display, _ in writes] + deletions
-        if path.resolve(strict=False) in modified
-    )
-    if clobbered:
-        raise SyncError(
-            "refusing to import over locally modified files: "
-            + ", ".join(clobbered)
-            + ". Commit, stash or revert them first - an import overwrites them silently otherwise."
-        )
-
     changes = 0
-    for source, target, display, entry in writes:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
-        set_target_mode(source, target, preserve_executable=entry.preserve_executable)
-        print(f"synced: {display}")
-        changes += 1
+    with traced(tracer, "boundroom.sync.write") as write:
+        for source, target, display, entry in writes:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            set_target_mode(source, target, preserve_executable=entry.preserve_executable)
+            print(f"synced: {display}")
+            changes += 1
 
-    for stale, display in deletions:
-        stale.unlink()
-        print(f"removed stale: {display}")
-        changes += 1
+        for stale, display in deletions:
+            stale.unlink()
+            print(f"removed stale: {display}")
+            changes += 1
 
-    for entry in entries:
-        if entry.kind == "directory" and entry.delete_stale:
-            remove_empty_dirs(resolve_under(target_root_resolved, entry.destination, must_exist=False))
+        for entry in entries:
+            if entry.kind == "directory" and entry.delete_stale:
+                remove_empty_dirs(resolve_under(target_root_resolved, entry.destination, must_exist=False))
+        tracer.annotate(write, written=len(writes), removed=len(deletions))
 
     if changes:
         print(f"result: synced {changes} change(s)")
@@ -978,8 +991,126 @@ def pin_status(
     return 0
 
 
+# --- telemetry (SPEC-006) -----------------------------------------------------------------
+
+
+class NoTelemetry:
+    """The handle when telemetry is off or can't load: every call costs nothing."""
+
+    run_id = ""
+    messages: list[str] = []
+
+    def span(self, name: str, **attributes: Any) -> Any:
+        return nullcontext()
+
+    def mark(self, name: str, **attributes: Any) -> None:
+        return None
+
+    def annotate(self, span: Any, **attributes: Any) -> None:
+        return None
+
+    def flush(self) -> bool:
+        return True
+
+
+def load_telemetry(tool_root: Path) -> tuple[Any, Any, str]:
+    """The supervisor's telemetry modules, from the checkout this tool runs from.
+
+    Never from --source: that is whatever path the caller named, and importing from it would
+    run its code before provenance has checked it. First on sys.path, so an ``automation``
+    directory in the working directory, such as a consumer's vendored copy, can't stand in.
+
+    Until SPEC-006 this tool needed only the standard library, and a consumer's make may still
+    run it under an interpreter without pydantic. That leaves the tool working with telemetry
+    off, rather than broken.
+    """
+    sys.path.insert(0, str(tool_root))
+    try:
+        from automation.supervisor import telemetry, telemetry_settings
+    except ImportError as error:
+        return None, None, str(error)
+    return telemetry, telemetry_settings, ""
+
+
+def without_telemetry(arguments: list[str], problem: str) -> list[str]:
+    """The arguments to parse when the telemetry modules can't load, or a refusal.
+
+    Telemetry asked for by flag, or required, must not quietly not happen. --no-telemetry asks
+    for what is already true, so it is dropped rather than refused.
+    """
+    asked = [argument for argument in arguments if argument.startswith("--telemetry")]
+    if asked or os.environ.get("BOUNDROOM_TELEMETRY_REQUIRED") == "true":
+        raise SyncError(
+            f"telemetry was asked for, but this interpreter can't load it ({problem}). "
+            "Run the tool under Boundroom's Python environment, or without telemetry."
+        )
+    chosen = [name for name in os.environ if name.startswith("BOUNDROOM_TELEMETRY") and os.environ[name] not in ("", "off")]
+    if chosen:
+        print(f"telemetry: off, because this interpreter can't load it ({problem})", file=sys.stderr)
+    return [argument for argument in arguments if argument != "--no-telemetry"]
+
+
+def start_telemetry(telemetry: Any, telemetry_settings: Any, args: argparse.Namespace, roots: tuple[Path, ...]) -> Any:
+    """Configure telemetry from the user's settings; off, the default, imports no SDK (UD-1).
+
+    ``roots`` are the consumer first, then the source and this tool's own checkout: a spans
+    file in the consumer would land in the sync's pull request, and one in the source would
+    fail the next sync's cleanliness check.
+    """
+    if telemetry is None:
+        return NoTelemetry()
+    settings = telemetry_settings.resolve(flags=vars(args), environ=os.environ)
+    for message in settings.messages:
+        print(message, file=sys.stderr)
+    if settings.refusal:
+        raise SyncError(settings.refusal)
+    try:
+        tracer = telemetry.configure(
+            settings,
+            repo_root=roots[0],
+            outside=roots[1:],
+            run_id=telemetry.new_run_id(),
+            service_version=telemetry.version(roots[-1]),
+        )
+    except telemetry.TelemetryRefused as error:
+        raise SyncError(str(error)) from error
+    for message in tracer.messages:
+        print(message, file=sys.stderr)
+    return tracer
+
+
+# A remote URL can carry a token as its user part; neither the expected remote nor a refusal
+# that quotes one records it.
+_URL_CREDENTIALS = re.compile(r"(?<=://)[^/@\s]+@")
+_REASON_CHARS = 200
+
+
+def without_credentials(text: str) -> str:
+    return _URL_CREDENTIALS.sub("", text)
+
+
+@contextmanager
+def traced(tracer: Any, name: str, **attributes: Any) -> Iterator[Any]:
+    """A span that records a refusal as its result and reason, then lets it propagate.
+
+    The refusal leaves the span before it is raised again, so the span carries the scrubbed
+    first line only, never an exception message or traceback that may quote a remote URL.
+    """
+    refusal = None
+    with tracer.span(name, **{key: value for key, value in attributes.items() if value is not None}) as span:
+        try:
+            yield span
+        except SyncError as error:
+            refusal = error
+            tracer.annotate(span, result="refused", reason=without_credentials(str(error).splitlines()[0])[:_REASON_CHARS])
+    if refusal is not None:
+        raise refusal
+
+
 def main(argv: list[str]) -> int:
     repo_root = Path(argv[0]).resolve()
+    telemetry, telemetry_settings, problem = load_telemetry(repo_root)
+    arguments = argv[1:] if telemetry_settings is not None else without_telemetry(argv[1:], problem)
 
     parser = argparse.ArgumentParser(description="Import reusable automation from the canonical Boundroom checkout into a consumer.")
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -1024,52 +1155,76 @@ def main(argv: list[str]) -> int:
         help="Re-baseline template entries to source content even when destination files already exist. "
         "Consumer-added files in template directories still survive."
     )
-    args = parser.parse_args(argv[1:])
+    if telemetry_settings is not None:
+        telemetry_settings.add_flags(parser)
+    args = parser.parse_args(arguments)
     if args.desired and not args.status:
         parser.error("--desired is used only with --status")
     if args.status and args.pin:
         parser.error("--status reads the pin from the consumer's lock; use --desired for the ref you want")
 
     source_root = Path(args.source).expanduser().resolve(strict=True)
+    target_root = Path(args.target).expanduser()
+    tracer = start_telemetry(telemetry, telemetry_settings, args, (target_root, source_root, repo_root))
+    # Flushed however the run ends; the flush is bounded and never changes the exit code.
+    try:
+        mode = "sync" if args.sync else "status" if args.status else "check"
+        with traced(tracer, "boundroom.run", entry="sync", run_id=tracer.run_id, mode=mode) as run:
+            code = sync_run(args, source_root, target_root, tracer)
+            tracer.annotate(run, exit_code=code)
+            return code
+    finally:
+        tracer.flush()
+
+
+def sync_run(args: argparse.Namespace, source_root: Path, target_root: Path, tracer: Any) -> int:
     manifest = Path(args.manifest).expanduser() if args.manifest else source_root / "automation/reusable-manifest.json"
     entries, runtime_requirements = load_manifest(manifest)
-    target_root = Path(args.target).expanduser()
 
-    ensure_target_is_not_canonical(source_root, target_root, args.expect_remote)
+    expected_remote = without_credentials(args.expect_remote) if args.expect_remote else None
+    with traced(tracer, "boundroom.sync.verify", pin=args.pin, expected_remote=expected_remote) as verify:
+        ensure_target_is_not_canonical(source_root, target_root, args.expect_remote)
 
-    if args.status:
-        return pin_status(
-            source_root,
-            target_root,
-            entries,
-            runtime_requirements,
-            desired=args.desired,
-            expect_remote=args.expect_remote,
-            runtime_python=args.runtime_python,
-        )
-
-    # --check answers "does the snapshot match the commit it is pinned to", so it needs the
-    # same provenance as --sync whenever a pin is supplied. Without a pin it stays a plain
-    # drift report, which is what the development fixtures use.
-    if args.sync or args.pin:
-        if args.allow_unverified_source:
-            print(
-                "boundroom-sync: warning: reading from an unverified source "
-                "(--allow-unverified-source); the result is neither traceable to a published "
-                "commit nor known to pass the canonical quality gate.",
-                file=sys.stderr,
+        if args.status:
+            # Read-only: --status skips the source checks and reports what it finds instead.
+            tracer.annotate(verify, result="status only")
+            return pin_status(
+                source_root,
+                target_root,
+                entries,
+                runtime_requirements,
+                desired=args.desired,
+                expect_remote=args.expect_remote,
+                runtime_python=args.runtime_python,
             )
-        else:
-            verify_source_provenance(source_root, args.pin, args.expect_remote)
-            verify_source_quality(source_root, args.quality_command)
 
-    # Identity and quality describe the source; this describes the destination, so it runs
-    # for every mode and is not covered by --allow-unverified-source.
-    verify_consumer_runtime(runtime_requirements, args.runtime_python)
+        # --check answers "does the snapshot match the commit it is pinned to", so it needs the
+        # same provenance as --sync whenever a pin is supplied. Without a pin it stays a plain
+        # drift report, which is what the development fixtures use.
+        result = "unpinned drift report"
+        if args.sync or args.pin:
+            if args.allow_unverified_source:
+                print(
+                    "boundroom-sync: warning: reading from an unverified source "
+                    "(--allow-unverified-source); the result is neither traceable to a published "
+                    "commit nor known to pass the canonical quality gate.",
+                    file=sys.stderr,
+                )
+                result = "unverified source"
+            else:
+                verify_source_provenance(source_root, args.pin, args.expect_remote)
+                verify_source_quality(source_root, args.quality_command)
+                result = "verified"
+
+        # Identity and quality describe the source; this describes the destination, so it runs
+        # for every mode and is not covered by --allow-unverified-source.
+        verify_consumer_runtime(runtime_requirements, args.runtime_python)
+        tracer.annotate(verify, result=result)
 
     if args.sync:
         target_root.mkdir(parents=True, exist_ok=True)
     elif not target_root.exists():
+        tracer.mark("boundroom.sync.plan", check=True, result="target missing")
         print(f"missing target: {target_root}")
         print("result: drift found (target missing)")
         return 1
@@ -1079,7 +1234,8 @@ def main(argv: list[str]) -> int:
         target_root,
         entries,
         check=args.check,
-        force_templates=args.force_templates
+        force_templates=args.force_templates,
+        tracer=tracer,
     )
 
 
