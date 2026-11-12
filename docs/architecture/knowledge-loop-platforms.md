@@ -118,9 +118,11 @@ These come before SPEC-003's RA-KNOW-001 to 005, which then build on the interfa
 | RA-KNOW-006 | `automation/knowledge/platform.py`: the `ChatPlatform` protocol, the normalized models, a fake platform, and a contract test suite that every adapter must pass | CP-1 and CP-2 against the fake platform. The contract suite is parameterized by adapter. |
 | RA-KNOW-007 | The configuration model and loader: platforms, roles, allowlists, secret references, the repository's narrow-only rule, and identity links | CP-1, CP-2, CP-7 and CP-11. Refused fields are rejected with named reasons. |
 | RA-KNOW-008 | The Discord adapter, using synthetic gateway and interaction payloads | The contract suite, CP-3, CP-6, CP-8 and CP-9 for Discord |
-| RA-KNOW-009 | The Slack adapter in the `interface` role, using synthetic Socket Mode payloads | The contract suite, CP-3, CP-6 and CP-9 for Slack |
+| RA-KNOW-009 | The Slack adapter in the `interface` role, using synthetic Socket Mode payloads | The contract suite, CP-3, CP-6 and CP-9 for Slack. Builds on RA-KNOW-012 and 013 in [part 2](knowledge-loop-slack.md). |
 | RA-KNOW-010 | Cross-platform isolation and identity links | CP-4, CP-5 and CP-12 with both adapters enabled together |
-| RA-KNOW-011 | Slack's `source` role, built only after decision 2 below is recorded | CP-7 and CP-8 for Slack, plus the retention-policy tests |
+| RA-KNOW-011 | Slack's `source` role, built only after decision 2 below is recorded | CP-7 and CP-8 for Slack, plus the retention-policy tests. Builds on RA-KNOW-014 in [part 2](knowledge-loop-slack.md). |
+
+[Part 2](knowledge-loop-slack.md) specifies the Slack adapter's rate limiting, retry timers, idempotence and data rules, with slices RA-KNOW-012 to 014.
 
 Live canaries need an approved host, the platform owner's approval for the workspace, scoped credentials from the owner, and SPEC-003's release gate. The owner's company computer can't host them: only Claude Code is approved there, and a Discord bot or a Hindsight server is not.
 
