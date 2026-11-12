@@ -89,6 +89,8 @@ The manifest does not name a destination. It says what is reusable, never where 
 
 ## Releases
 
+To move a consumer to a new release, check which versions you have, or roll back, see [Upgrading, version skew and rolling back](upgrading.md).
+
 Consumers sync from a release tag, not from whatever `main` happens to be. A release is a semver tag `vMAJOR.MINOR.PATCH` (optionally `-prerelease`) on a commit that is already on `main`. `.github/workflows/release.yml` runs on the tag push and publishes `Boundroom-<tag>.tar.gz` with a `.sha256` beside it.
 
 A maintainer tags, on `main`, after the change has merged through the ruleset. Nothing else creates tags:
