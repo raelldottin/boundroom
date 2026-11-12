@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 import tempfile
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ContextManager, Generator, Sequence
+from typing import Any, ContextManager, Generator, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from automation.supervisor.telemetry_settings import TelemetrySettings
@@ -53,6 +55,17 @@ class Telemetry:
         if self._logfire is None:
             return nullcontext()
         return self._logfire.span(name, **attributes)
+
+    def mark(self, name: str, **attributes: Any) -> None:
+        """A span for a step that is over as soon as it is recorded: a selection, a claim, a verdict."""
+        if self._logfire is not None:
+            with self._logfire.span(name, **attributes):
+                pass
+
+    def annotate(self, span: Any, **attributes: Any) -> None:
+        if span is not None and self._logfire is not None:
+            for key, value in attributes.items():
+                span.set_attribute(key, value)
 
     def flush(self) -> bool:
         """Flush for at most five seconds, then drop what's left and say so (bounded flush)."""
@@ -218,3 +231,27 @@ def _span_record(span: Any) -> dict[str, Any]:
         "status": span.status.status_code.name,
         "attributes": dict(span.attributes or {}),
     }
+
+
+def new_run_id() -> str:
+    """A run id that sorts by time and can't collide between two runs started in the same second."""
+    return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
+
+
+def version(repo_root: Path) -> str:
+    """The Boundroom version from the repository's pyproject, when it has one; consumers may not."""
+    try:
+        text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        if line.startswith("version = "):
+            return line.split("=", 1)[1].strip().strip('"')
+    return ""
+
+
+def trace_id(span: Any) -> Optional[str]:
+    """The trace id of the run's root span, for the decision report; None when telemetry is off."""
+    if span is None:
+        return None
+    return f"{span.get_span_context().trace_id:032x}"

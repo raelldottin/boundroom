@@ -16,6 +16,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -29,7 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from automation.supervisor import policy, runner_profile, telemetry_settings
+from automation.supervisor import policy, runner_profile, telemetry, telemetry_settings
 
 
 # ---------------------------------------------------------------------------
@@ -511,24 +512,49 @@ def main() -> int:
     repo_root = REPO_ROOT
     queue_path = repo_root / args.queue
     repository_telemetry = policy.load_queue(queue_path)["policy"].get("telemetry") if queue_path.exists() else None
-    telemetry = telemetry_settings.resolve(flags=vars(args), environ=os.environ, repository=repository_telemetry)
-    for message in telemetry.messages:
+    resolved = telemetry_settings.resolve(flags=vars(args), environ=os.environ, repository=repository_telemetry)
+    for message in resolved.messages:
         print(message, file=sys.stderr)
-    if telemetry.refusal:
-        print(f"stop: {telemetry.refusal}", file=sys.stderr)
+    if resolved.refusal:
+        print(f"stop: {resolved.refusal}", file=sys.stderr)
         return 78  # sysexits.h EX_CONFIG, as run_next.py uses
 
-    report = evaluate(
-        repo_root=repo_root,
-        queue_path=repo_root / args.queue,
-        handoff_path=Path(args.handoff),
-        slice_id=args.slice_id,
-        base_sha=args.base_sha,
-        head_sha=args.head_sha,
-        dry_run=args.dry_run,
-    )
+    try:
+        tracer = telemetry.configure(
+            resolved, repo_root=repo_root, run_id=telemetry.new_run_id(), service_version=telemetry.version(repo_root)
+        )
+    except telemetry.TelemetryRefused as error:
+        print(f"stop: {error}", file=sys.stderr)
+        return 78
+    for message in tracer.messages:
+        print(message, file=sys.stderr)
+    telemetry_block = resolved.report()
+    try:
+        with tracer.span("boundroom.run", entry="evaluate_handoff", run_id=tracer.run_id, slice_id=args.slice_id) as root:
+            telemetry_block["trace_id"] = telemetry.trace_id(root)
+            report = evaluate(
+                repo_root=repo_root,
+                queue_path=repo_root / args.queue,
+                handoff_path=Path(args.handoff),
+                slice_id=args.slice_id,
+                base_sha=args.base_sha,
+                head_sha=args.head_sha,
+                dry_run=args.dry_run,
+            )
+            for replay in report.supervisor_validation_replays:
+                tracer.mark("boundroom.validation.replay", command=replay.get("command"), success=replay.get("success"))
+            result = report_to_dict(report) | {"telemetry": telemetry_block}
+            tracer.mark(
+                "boundroom.decision",
+                verdict=report.decision,
+                reason=report.reason,
+                changed_file_count=report.changed_file_count,
+                report_sha256=hashlib.sha256(json.dumps(result, sort_keys=True).encode("utf-8")).hexdigest(),
+            )
+    finally:
+        tracer.flush()
 
-    print(json.dumps(report_to_dict(report) | {"telemetry": telemetry.report()}, indent=2))
+    print(json.dumps(result, indent=2))
     return 0 if report.queue_status == "done" else 1
 
 
