@@ -43,6 +43,7 @@ nav:
   - Agent Plugin Specification: architecture/agent-plugin.md
   - Rename to Boundroom: architecture/boundroom-rename.md
   - Discord Knowledge Loop Specification: architecture/discord-knowledge-loop.md
+  - Knowledge Loop on Discord or Slack (proposed): architecture/knowledge-loop-platforms.md
   - Agentic SDLC and GitOps Standard (draft): architecture/agentic-gitops-sdlc-standard.md
   - Product Roadmap: product-roadmap.md
   - CIS and SOC 2 Control Map: compliance/controls.md
