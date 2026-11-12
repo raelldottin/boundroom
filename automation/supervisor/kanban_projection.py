@@ -263,7 +263,7 @@ def project(snapshot: BoardSnapshot, overlay: KanbanOverlay) -> Projection:
         _slice_record(snapshot, task, overlay.approved[task["id"]], top, parents_of, by_id, projected_ids, prefix)
         for task in projected
     ]
-    queue = {"version": 1, "policy": overlay.policy.model_dump(), "slices": slices}
+    queue = {"version": 1, "policy": overlay.policy.model_dump(exclude_none=True), "slices": slices}
     validation = policy.validate_document(queue, SliceQueue)
     errors = validation.errors or policy.validate_queue_integrity(queue)
     if errors:

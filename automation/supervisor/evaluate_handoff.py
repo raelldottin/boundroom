@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -28,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from automation.supervisor import policy
+from automation.supervisor import policy, telemetry_settings
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--head-sha", required=True, help="Git SHA of the verified implementation.")
     parser.add_argument("--queue", default="automation/queue/slices.json", help="Path to the queue JSON.")
     parser.add_argument("--dry-run", action="store_true", help="Emit the decision without mutating the queue.")
+    telemetry_settings.add_flags(parser)
     return parser
 
 
@@ -503,6 +505,14 @@ def report_to_dict(report: EvaluationReport) -> dict[str, Any]:
 def main() -> int:
     args = parse_args()
     repo_root = REPO_ROOT
+    queue_path = repo_root / args.queue
+    repository_telemetry = policy.load_queue(queue_path)["policy"].get("telemetry") if queue_path.exists() else None
+    telemetry = telemetry_settings.resolve(flags=vars(args), environ=os.environ, repository=repository_telemetry)
+    for message in telemetry.messages:
+        print(message, file=sys.stderr)
+    if telemetry.refusal:
+        print(f"stop: {telemetry.refusal}", file=sys.stderr)
+        return 78  # sysexits.h EX_CONFIG, as run_next.py uses
 
     report = evaluate(
         repo_root=repo_root,
@@ -514,7 +524,7 @@ def main() -> int:
         dry_run=args.dry_run,
     )
 
-    print(json.dumps(report_to_dict(report), indent=2))
+    print(json.dumps(report_to_dict(report) | {"telemetry": telemetry.report()}, indent=2))
     return 0 if report.queue_status == "done" else 1
 
 

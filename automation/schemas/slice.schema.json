@@ -26,6 +26,10 @@
           "minItems": 1,
           "title": "Supervisor Owned Paths",
           "type": "array"
+        },
+        "telemetry": {
+          "$ref": "#/$defs/RepositoryTelemetry",
+          "default": null
         }
       },
       "required": [
@@ -35,6 +39,41 @@
         "supervisor_owned_paths"
       ],
       "title": "QueuePolicy",
+      "type": "object"
+    },
+    "RepositoryTelemetry": {
+      "additionalProperties": false,
+      "description": "The queue policy's optional ``telemetry`` block, which can only reduce telemetry (SPEC-006).",
+      "properties": {
+        "mode": {
+          "const": "off",
+          "default": null,
+          "title": "Mode",
+          "type": "string"
+        },
+        "capture": {
+          "const": "metadata",
+          "default": null,
+          "title": "Capture",
+          "type": "string"
+        },
+        "runner": {
+          "default": null,
+          "enum": [
+            "off",
+            "metadata"
+          ],
+          "title": "Runner",
+          "type": "string"
+        },
+        "environment": {
+          "default": null,
+          "pattern": "^[a-z][a-z0-9-]{0,31}$",
+          "title": "Environment",
+          "type": "string"
+        }
+      },
+      "title": "RepositoryTelemetry",
       "type": "object"
     },
     "SliceRecord": {

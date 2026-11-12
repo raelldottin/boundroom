@@ -13,9 +13,9 @@ the harness, which stays dict-based.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SliceStatus = Literal["queued", "in_progress", "blocked", "deferred", "done", "failed"]
 HandoffStatus = Literal["done", "blocked", "failed"]
@@ -54,11 +54,47 @@ class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+# Why each field a repository's telemetry block may not hold is refused (SPEC-006 UD-7). A file a
+# slice can edit must not decide where the agent's activity is sent, or turn the sending on.
+REPOSITORY_TELEMETRY_REFUSALS = {
+    "endpoint": "the repository can't choose a telemetry destination",
+    "file_dir": "the repository can't choose a telemetry destination",
+    "headers": "the repository can't hold telemetry credentials",
+    "required": "the repository can't require telemetry",
+}
+
+
+class RepositoryTelemetry(Contract):
+    """The queue policy's optional ``telemetry`` block, which can only reduce telemetry (SPEC-006)."""
+
+    mode: Annotated[Literal["off"], Omittable]
+    capture: Annotated[Literal["metadata"], Omittable]
+    runner: Annotated[Literal["off", "metadata"], Omittable]
+    environment: Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,31}$"), Omittable]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_widening(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        for field, reason in REPOSITORY_TELEMETRY_REFUSALS.items():
+            if field in data:
+                raise ValueError(f"telemetry.{field}: {reason} (SPEC-006 UD-7)")
+        if data.get("mode", "off") != "off":
+            raise ValueError("telemetry.mode: the repository can only turn telemetry off (SPEC-006 UD-7)")
+        if data.get("capture", "metadata") != "metadata":
+            raise ValueError("telemetry.capture: the repository can't raise capture above metadata (SPEC-006 UD-7)")
+        if data.get("runner", "off") not in ("off", "metadata"):
+            raise ValueError("telemetry.runner: the repository can't raise runner telemetry above metadata (SPEC-006 UD-7)")
+        return data
+
+
 class QueuePolicy(Contract):
     consecutive_autonomous_limit: Annotated[int, Field(ge=1)]
     handoff_timeout_seconds: Annotated[int, Field(ge=1)]
     agent_command_template: str
     supervisor_owned_paths: NonEmptyStrList
+    telemetry: Annotated[RepositoryTelemetry, Omittable]
 
 
 class SliceRecord(Contract):

@@ -17,7 +17,7 @@ from typing import Any, Literal, Optional
 EntryPoint = Literal["run_next", "evaluate_handoff", "kanban_projection", "sync"]
 SettingClass = Literal["secret", "internal", "security", "essential", "advanced", "outside"]
 RepositoryRule = Literal["any", "narrow-only", "never"]
-Area = Literal["runner", "work source", "policy", "sync", "memory", "evaluate", "projection", "internal"]
+Area = Literal["runner", "work source", "policy", "sync", "memory", "telemetry", "evaluate", "projection", "internal"]
 
 ENTRY_POINTS: tuple[EntryPoint, ...] = ("run_next", "evaluate_handoff", "kanban_projection", "sync")
 CLASSES: tuple[SettingClass, ...] = ("secret", "internal", "security", "essential", "advanced", "outside")
@@ -49,6 +49,8 @@ class Setting:
     # ``overlay.policy.<field>`` or ``memory.<field>``.
     repository_fields: tuple[str, ...] = ()
     repository_rule: RepositoryRule = "never"
+    # A key in one of the operator's files under ~/.config/boundroom/, as ``<file>:<key>``.
+    operator_file: Optional[str] = None
     # Shown in the quick view only when this other setting has this value.
     only_when: Optional[tuple[str, str]] = None
 
@@ -346,6 +348,102 @@ SETTINGS: tuple[Setting, ...] = (
         repository_fields=("memory.projects",),
         repository_rule="any",
     ),
+    # --- telemetry (SPEC-006) ------------------------------------------------------------------
+    Setting(
+        "telemetry_kill_switch",
+        "telemetry",
+        "security",
+        "Turn telemetry off whatever any other source says; BOUNDROOM_TELEMETRY=off does the same.",
+        default=False,
+        flags=(_flag("run_next", "--no-telemetry"), _flag("evaluate_handoff", "--no-telemetry")),
+    ),
+    Setting(
+        "telemetry_mode",
+        "telemetry",
+        "security",
+        "off, file or otlp. Telemetry is on only with a mode and a destination.",
+        default="off",
+        choices=("off", "file", "otlp"),
+        flags=(_flag("run_next", "--telemetry"), _flag("evaluate_handoff", "--telemetry")),
+        env="BOUNDROOM_TELEMETRY",
+        repository_fields=_policy_fields("telemetry.mode"),
+        repository_rule="narrow-only",
+        operator_file="telemetry.json:mode",
+    ),
+    *(
+        Setting(
+            f"telemetry_{name}",
+            "telemetry",
+            "security",
+            description,
+            flags=(
+                _flag("run_next", f"--telemetry-{name.replace('_', '-')}"),
+                _flag("evaluate_handoff", f"--telemetry-{name.replace('_', '-')}"),
+            ),
+            env=f"BOUNDROOM_TELEMETRY_{name.upper()}",
+            operator_file=f"telemetry.json:{name}",
+        )
+        for name, description in (
+            ("file_dir", "Where file mode writes its JSON Lines; an absolute directory outside the repository."),
+            ("endpoint", "Your OTLP endpoint; https://, or http:// to localhost only."),
+        )
+    ),
+    Setting(
+        "telemetry_headers",
+        "telemetry",
+        "secret",
+        "Headers sent only to the endpoint, such as a token. Never a flag, never printed.",
+        default={},
+        env="BOUNDROOM_TELEMETRY_HEADERS",
+        operator_file="telemetry.json:headers",
+    ),
+    Setting(
+        "telemetry_capture",
+        "telemetry",
+        "security",
+        "metadata, or content as well.",
+        default="metadata",
+        choices=("metadata", "content"),
+        flags=(_flag("run_next", "--telemetry-capture"), _flag("evaluate_handoff", "--telemetry-capture")),
+        env="BOUNDROOM_TELEMETRY_CAPTURE",
+        repository_fields=_policy_fields("telemetry.capture"),
+        repository_rule="narrow-only",
+        operator_file="telemetry.json:capture",
+    ),
+    Setting(
+        "telemetry_runner",
+        "telemetry",
+        "security",
+        "Whether the runner's own telemetry joins the trace.",
+        default="off",
+        choices=("off", "metadata", "content"),
+        flags=(_flag("run_next", "--telemetry-runner"), _flag("evaluate_handoff", "--telemetry-runner")),
+        env="BOUNDROOM_TELEMETRY_RUNNER",
+        repository_fields=_policy_fields("telemetry.runner"),
+        repository_rule="narrow-only",
+        operator_file="telemetry.json:runner",
+    ),
+    Setting(
+        "telemetry_required",
+        "telemetry",
+        "advanced",
+        "Refuse to start a run whose telemetry can't be enabled.",
+        default=False,
+        flags=(_flag("run_next", "--telemetry-required"), _flag("evaluate_handoff", "--telemetry-required")),
+        env="BOUNDROOM_TELEMETRY_REQUIRED",
+        operator_file="telemetry.json:required",
+    ),
+    Setting(
+        "telemetry_environment",
+        "telemetry",
+        "advanced",
+        "A short name recorded on every span, such as local, ci or benchmark.",
+        default="local",
+        env="BOUNDROOM_TELEMETRY_ENVIRONMENT",
+        repository_fields=_policy_fields("telemetry.environment"),
+        repository_rule="any",
+        operator_file="telemetry.json:environment",
+    ),
     # --- evaluate_handoff ------------------------------------------------------------------------
     Setting(
         "evaluate_slice_id", "evaluate", "advanced", "The slice to evaluate.", flags=(_flag("evaluate_handoff", "--slice-id"),)
@@ -512,6 +610,8 @@ NOT_SETTINGS: dict[str, str] = {
     "queue.slices": "work items",
     "overlay.version": "schema version",
     "overlay.policy": "a container; its fields are listed one by one",
+    "queue.policy.telemetry": "a container; its fields are listed one by one",
+    "overlay.policy.telemetry": "a container; its fields are listed one by one",
     "overlay.approved": "work items",
     "memory.version": "schema version",
     "memory.budgets": "a container; its fields are listed one by one",
