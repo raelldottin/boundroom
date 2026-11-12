@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "channel": {
+    "id": "C0SYNTH0001",
+    "name": "synthetic-channel",
+    "is_channel": true,
+    "is_group": false,
+    "is_im": false,
+    "is_mpim": false,
+    "is_private": false,
+    "is_archived": false,
+    "is_general": false,
+    "is_shared": false,
+    "is_ext_shared": false,
+    "is_org_shared": false,
+    "is_pending_ext_shared": false,
+    "is_member": true,
+    "created": 1794441000,
+    "creator": "U0SYNTH0001"
+  }
+}
