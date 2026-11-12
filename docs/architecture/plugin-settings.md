@@ -17,7 +17,7 @@ The plugin's skills drive the synced supervisor, and the supervisor reads its se
 | Memory configuration | endpoint, credential variable, timeout, 8 budgets, project grants | `api_key_env`, `endpoint` |
 | Proposed: [SPEC-006](https://github.com/raelldottin/boundroom/pull/196) telemetry and [SPEC-007](https://github.com/raelldottin/boundroom/pull/197) knowledge platforms | about 15 more | `BOUNDROOM_TELEMETRY`, `platforms` |
 
-Some of these matter a great deal and are invisible today. The clearest case: when the runner is Claude Code, `run_agent.sh` passes `--permission-mode "${BOUNDROOM_CLAUDE_PERMISSION_MODE:-bypassPermissions}"`. Every supervised Claude Code session runs with permission checks bypassed unless the user knows to set that variable, and nothing tells them.
+Some of these matter a great deal and are invisible today. The clearest case, for which this spec proposes [a safer default](#a-safer-default-for-the-claude-code-runner): when the runner is Claude Code, `run_agent.sh` passes `--permission-mode "${BOUNDROOM_CLAUDE_PERMISSION_MODE:-bypassPermissions}"`. Every supervised Claude Code session runs with permission checks bypassed unless the user knows to set that variable, and nothing tells them.
 
 ## Decision (proposed)
 
@@ -79,7 +79,7 @@ Every setting known today. The registry is built from this table in RA-SET-001, 
 | Setting | Source | Class | Why it surfaces |
 | --- | --- | --- | --- |
 | Runner (`BOUNDROOM_AGENT_RUNNER`) | env | security | Decides which agent executes the slice |
-| Claude Code permission mode (`BOUNDROOM_CLAUDE_PERMISSION_MODE`) | env | security | **Defaults to `bypassPermissions`.** The quick view always shows it, with a warning while it's the default. Whether to change the default is an open decision. |
+| Claude Code runner profile (`BOUNDROOM_CLAUDE_PROFILE`, and `BOUNDROOM_CLAUDE_PERMISSION_MODE` as an override) | env | security | **Today the runner defaults to `bypassPermissions`.** [A safer default](#a-safer-default-for-the-claude-code-runner) proposes `bounded`. The quick view always shows the profile, and warns on `unbounded` or an explicit `bypassPermissions`. |
 | One slice or several (`--single-slice`, `--autonomous-limit`, policy `consecutive_autonomous_limit`) | flag, policy | security | How much runs unattended. As AGENTS.md says, the policy value is a default a caller can override, so both views show which one won. |
 | Agent command (`--agent-cmd`, policy `agent_command_template`) | flag, policy | security | What actually runs. Shown as *default* or *custom*, with the custom command printed. |
 | Supervisor-owned paths (policy `supervisor_owned_paths`) | policy | security | The files no slice may change |
@@ -111,7 +111,7 @@ Applying the rule above, one setting qualifies today, and two more once SPEC-006
 
 | Option | Maps to | When |
 | --- | --- | --- |
-| `claude_permission_mode` | `BOUNDROOM_CLAUDE_PERMISSION_MODE` | RA-SET-006 |
+| `claude_profile` | `BOUNDROOM_CLAUDE_PROFILE`: `bounded`, `edits` or `unbounded` | RA-SET-006. Choosing `unbounded` here still needs the isolation declaration, which only an environment variable can make. |
 | `telemetry` (`off` and nothing else at first) | SPEC-006's kill switch | After SPEC-006's RA-TEL-001 |
 | `telemetry_endpoint` | SPEC-006's `endpoint` | After SPEC-006, and only if the owner wants destinations settable from Claude Code. Headers stay out, because they're secrets. |
 
@@ -124,7 +124,7 @@ No `userConfig` option has a `default`, so leaving one empty changes nothing and
 ```text
 Boundroom 0.3.0 settings (quick view)          run `boundroom settings --all` for everything
   runner             claude                      env BOUNDROOM_AGENT_RUNNER
-  permission mode    bypassPermissions  default  ! permission checks are bypassed for the agent
+  claude profile     bounded            default  dontAsk, slice allowlist, sandbox, $5 cap
   slices per run     1                           flag --single-slice
   agent command      default
   work source        local board ~/.boards/demo  overlay ./automation/overlay.json
@@ -142,6 +142,65 @@ Warnings
 - URL paths, query strings and headers are never printed.
 - An unreadable or invalid source is reported in the view, not fatal.
 
+## A safer default for the Claude Code runner
+
+Owner decision recorded here (2026-11-12): **propose a safer default** than `bypassPermissions` for Claude Code runners.
+
+### Why change it
+
+- **Claude Code's own guidance.** Its permissions documentation warns that `bypassPermissions` skips prompts, "including for writes to protected paths such as `.git` and `.claude`", and should be used "only … in isolated environments like containers or VMs". A supervised slice runs in the operator's own checkout, on the operator's own machine.
+- **The other runners are already contained.**
+  - Codex runs with `--sandbox workspace-write`.
+  - Hermes runs with `HERMES_SAFE_MODE=1` and its own sandbox options.
+
+  Claude Code is the one runner with no boundary.
+- **The supervisor's gates check results, not actions.** Gates such as the scope check, the validation replay and the committed-path check catch out-of-scope *changes* after the run. They don't stop a command from reading `~/.ssh`, calling the network, or writing outside the repository while it runs.
+- **It's been tested.** The RA-BD-004 canary (2026-11-10) ran its Claude runner with `acceptEdits`, a `--settings` file allowing only the slice's git and validation commands, and a budget cap. The slice reached review cleanly. This spec's earlier note that the gates were "measured with" `bypassPermissions` was wrong; the only Claude canary didn't use it.
+
+### Profiles
+
+A new setting, `BOUNDROOM_CLAUDE_PROFILE`, chooses one of four profiles. `BOUNDROOM_CLAUDE_PERMISSION_MODE` stays as an explicit override of the mode alone, for compatibility, and the quick view shows when it's in effect.
+
+| Profile | Permission mode | Allowed actions | Sandbox | Budget |
+| --- | --- | --- | --- | --- |
+| **`bounded` (proposed default)** | `dontAsk`: anything not pre-approved is denied, never prompted, which suits a headless session | The slice allowlist below | On, with `failIfUnavailable: true` and `allowUnsandboxedCommands: false`. Network closed. | `--max-budget-usd`, default **$5** per slice |
+| `edits` | `acceptEdits` | The slice allowlist below | Off | As above |
+| `unbounded` | `bypassPermissions` | Everything | Off | As above |
+| `custom` | The operator's own `--settings` file (`BOUNDROOM_CLAUDE_SETTINGS`) | As the file says | As the file says | As above |
+
+`edits` reproduces the RA-BD-004 canary's setup for machines where the sandbox can't start. `unbounded` keeps today's behavior. It is accepted only with `BOUNDROOM_CLAUDE_ISOLATED=1`, the operator's declaration that the run is in a container or VM. Without it, the run is refused before the claim, and the quick view warns whenever `unbounded` is chosen.
+
+### The slice allowlist
+
+The supervisor writes a per-slice settings file **outside the repository** (in the run's temporary directory) and passes it with `--settings`. Claude Code ignores an untrusted project's own `.claude/settings.json`, as the canary found, so this file is the only source of permissions. It's built from the slice record, not from anything the agent wrote:
+
+- **Allow:**
+  - `Edit` and `Write` for each of the slice's `allowed_paths`;
+  - `Bash` for each of the slice's `required_validations`, exactly as written;
+  - `git status`, `git diff`, `git add` for the allowed paths, `git commit`, and `git push` to the current branch's upstream. The runner prompt requires committing and pushing before a clean stop.
+- **Deny, which wins over allow:**
+  - `Edit` and `Write` for the policy's `supervisor_owned_paths`, `.git/**` and `.claude/**`;
+  - `Read` for `~/.ssh/**`, `~/.aws/**` and `~/.config/**`;
+  - `WebFetch` and `WebSearch`.
+- **Reads** inside the repository need no rule.
+- **The sandbox:**
+  - Writes are limited to the repository and the per-user temp directory.
+  - The network allowlist is empty.
+  - `git push` is listed in `excludedCommands`: Claude Code's sandbox proxy doesn't carry plain SSH, and the push still needs its allow rule.
+- **The runner prompt** gains a short "What you may run" list generated from the same file, so the agent doesn't spend turns on calls that will be denied.
+
+A denied call isn't a supervisor error. If the agent can't finish within its allowlist, its handoff reports the blocker, and the slice fails or blocks through the existing gates. That's the safe outcome.
+
+### Rollout
+
+1. **RA-SET-008:** generate the per-slice settings file and add the profiles, with `unbounded` still the default. No behavior change unless the operator opts in.
+2. **RA-SET-009:** a canary of one slice on a disposable local board in `bounded`, then one in `edits`, on the owner's machine with Claude Code only. Record any call that was denied but needed, and adjust the allowlist rules in the spec before the switch.
+3. **RA-SET-010:** switch the default to `bounded`, in a minor release (`v0.4.0`), with release notes naming `BOUNDROOM_CLAUDE_PROFILE=unbounded` and `BOUNDROOM_CLAUDE_ISOLATED=1` as the way back.
+
+The switch is reversible: `unbounded` stays available for isolated environments, and the previous default can be restored by one setting.
+
+**The benchmark is unaffected.** Its lanes set `BOUNDROOM_AGENT_RUNNER: hermes`, and the Claude profile applies only to the Claude runner.
+
 ## Requirements
 
 | Id | Requirement | Acceptance test |
@@ -155,7 +214,12 @@ Warnings
 | PS-7 | Source and precedence are reported correctly | For each setting, every combination of sources yields the expected value and the source that won |
 | PS-8 | A repository value that breaks its rule is refused and shown | Tests for each `narrow-only` and `never` setting |
 | PS-9 | The reference page matches the registry | `boundroom settings --docs --check` in `make reusable-check` |
-| PS-10 | Defaults are unchanged | The registry's defaults equal today's behavior, so introducing it changes nothing a user sees except the new views |
+| PS-10 | Defaults are unchanged until RA-SET-010 | The registry's defaults equal today's behavior through RA-SET-009, so introducing it changes nothing a user sees except the new views |
+| PS-11 | The slice allowlist comes from the slice record only | The generated settings file is a pure function of the slice record and policy. A handoff or repository file can't add a rule. |
+| PS-12 | Deny wins | Edits to `supervisor_owned_paths`, `.git/**` and `.claude/**`, and reads of `~/.ssh/**`, are denied even when an allow rule also matches |
+| PS-13 | `unbounded` needs the isolation declaration | `unbounded` without `BOUNDROOM_CLAUDE_ISOLATED=1` is refused before the claim, and the board's bytes are unchanged |
+| PS-14 | `bounded` fails closed | If the sandbox can't start, the run stops before the agent runs; it isn't silently unsandboxed |
+| PS-15 | The settings file stays outside the repository | Written under the run's temporary directory, and removed afterwards. The worktree is unchanged by it. |
 
 ## Effects on other specs and rules
 
@@ -175,8 +239,11 @@ Each slice is one pull request by the agent, approved by a person.
 | RA-SET-003 | The views: `settings`, `--all`, `--json` and `--explain`, with redaction | PS-5 and PS-6, plus golden-output tests for the quick view |
 | RA-SET-004 | The generated reference page and its CI check | PS-9 |
 | RA-SET-005 | The `boundroom-settings` skill, and quick-view warnings in `boundroom-status`, as text only | PS-4. The skill contains no code. |
-| RA-SET-006 | The `userConfig` block for `claude_permission_mode`, after the owner decides below | PS-4. `claude plugin validate` passes. |
+| RA-SET-006 | The `userConfig` block for `claude_profile`, after the owner decides below | PS-4. `claude plugin validate` passes. |
 | RA-SET-007 | SPEC-006 and SPEC-007 settings, as each lands | PS-1 to PS-9 for the new entries |
+| RA-SET-008 | The Claude runner profiles and the per-slice settings file, with `unbounded` still the default | PS-11 to PS-15, using a fake `claude` that records its arguments and settings file |
+| RA-SET-009 | Canary: `bounded`, then `edits`, on a disposable local board, Claude Code only | One slice each reaches review. Denied-but-needed calls are recorded and the allowlist rules are adjusted. Recorded in this spec. |
+| RA-SET-010 | Switch the default to `bounded` in `v0.4.0`, with release notes | PS-10 is updated to the new default. The quick view shows `bounded`. |
 
 ## Alternatives considered
 
@@ -186,7 +253,7 @@ Each slice is one pull request by the agent, approved by a person.
 
 ## Open decisions for the owner
 
-1. **The Claude Code permission mode default.** Keep `bypassPermissions`, which the supervisor's gates were measured with, or change it. Changing it alters how every supervised Claude Code session behaves, so it would be its own pull request.
-2. **Which `userConfig` options to ship:** `claude_permission_mode` now, and the telemetry options after SPEC-006.
+1. **The safer default's details,** proposed in [A safer default](#a-safer-default-for-the-claude-code-runner): `bounded` as the default after the canary, the $5 per-slice budget cap, allowing `git push` (the runner prompt requires it), and `v0.4.0` for the switch.
+2. **Which `userConfig` options to ship:** `claude_profile` after RA-SET-008, and the telemetry options after SPEC-006.
 3. **Whether to require Claude Code 2.1.271** for fixed-choice `options` pickers.
 4. **Whether destinations,** such as a telemetry endpoint, should ever be settable from Claude Code's `/config`, or only from the operator's files.
