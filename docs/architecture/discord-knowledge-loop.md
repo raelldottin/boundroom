@@ -1,6 +1,6 @@
 # SPEC-003: Discord knowledge loop (planned, not deployed)
 
-**Status:** design and roadmap proposal, 2026-11-09. **Amended by [SPEC-007](knowledge-loop-platforms.md) (proposed 2026-11-12):** the loop works with Discord, Slack or both, through one platform interface. Where this page says Discord, read *each enabled chat platform*, with SPEC-007's platform rules. **Epic:** [RA-KNOW-000](https://github.com/raelldottin/boundroom/issues/173). **Depends on:** [SPEC-001](control-plane.md), [Hindsight interface](memory-interface.md), [Swarm Wiki compiler pin](swarm-wiki-compiler.md), and [product roadmap](../product-roadmap.md).
+**Status:** design and roadmap proposal, 2026-11-09. **Amended by [SPEC-007](knowledge-loop-platforms.md) (accepted 2026-11-12):** the loop works with Discord, Slack or both, through one platform interface. Where this page says Discord, read *each enabled chat platform*, with SPEC-007's platform rules. **Epic:** [RA-KNOW-000](https://github.com/raelldottin/boundroom/issues/173). **Depends on:** [SPEC-001](control-plane.md), [Hindsight interface](memory-interface.md), [Swarm Wiki compiler pin](swarm-wiki-compiler.md), and [product roadmap](../product-roadmap.md).
 
 ## Decision and product boundary
 

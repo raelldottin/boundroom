@@ -1,6 +1,6 @@
 # SPEC-008: Plugin settings you can see
 
-Status: **proposed** in the pull request that adds it. Merging that pull request, after a person's approving review, accepts the design. Each delivery slice below is still its own pull request with its own approval. Nothing here is implemented.
+Status: **accepted (raelldottin/boundroom#198, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request with its own approval. Nothing here is implemented.
 
 Owner request recorded here (2026-11-12): give the user a quick or an extensive look at every option the Boundroom plugin can be configured with, and decide which options and settings should be surfaced to the user.
 
@@ -15,7 +15,7 @@ The plugin's skills drive the synced supervisor, and the supervisor reads its se
 | Queue policy (`automation/queue/slices.json`) | 4 fields | `consecutive_autonomous_limit`, `agent_command_template` |
 | Kanban overlay | `backend`, `board` and the policy again | `"backend": "local"` |
 | Memory configuration | endpoint, credential variable, timeout, 8 budgets, project grants | `api_key_env`, `endpoint` |
-| Proposed: [SPEC-006](https://github.com/raelldottin/boundroom/pull/196) telemetry and [SPEC-007](https://github.com/raelldottin/boundroom/pull/197) knowledge platforms | about 15 more | `BOUNDROOM_TELEMETRY`, `platforms` |
+| Accepted, not yet implemented: [SPEC-006](agent-telemetry.md) telemetry and [SPEC-007](knowledge-loop-platforms.md) knowledge platforms | about 15 more | `BOUNDROOM_TELEMETRY`, `platforms` |
 
 Some of these matter a great deal and are invisible today. The clearest case, for which this spec proposes [a safer default](#a-safer-default-for-the-claude-code-runner): when the runner is Claude Code, `run_agent.sh` passes `--permission-mode "${BOUNDROOM_CLAUDE_PERMISSION_MODE:-bypassPermissions}"`. Every supervised Claude Code session runs with permission checks bypassed unless the user knows to set that variable, and nothing tells them.
 
