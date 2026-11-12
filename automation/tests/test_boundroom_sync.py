@@ -831,6 +831,274 @@ class BoundroomImportGuardTests(unittest.TestCase):
         self.assertFalse((self.target / "COPYING").exists())
 
 
+class PinStatusTests(unittest.TestCase):
+    """RA-PROD-103: `--status` shows the consumer's pin, drift and Git state, and writes nothing."""
+
+    REMOTE = "https://github.com/raelldottin/boundroom.git"
+
+    def setUp(self) -> None:
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="boundroom-status-"))
+        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
+        self.source = self.tmpdir / "canonical"
+        self.target = self.tmpdir / "consumer"
+        self.source.mkdir()
+        self.target.mkdir()
+        self.manifest = self.tmpdir / "manifest.json"
+        self.manifest.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "entries": [
+                        {
+                            "source": "harness",
+                            "destination": "vendored",
+                            "kind": "directory",
+                            "preserve_executable": False,
+                            "delete_stale": True,
+                            "template": False,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.git(self.source, "init", "-b", "main")
+        self.git(self.source, "remote", "add", "origin", self.REMOTE)
+        self.v1 = self.commit_source("one\n", "v0.1.0")
+        self.v2 = self.commit_source("two\n", "v0.2.0")
+        self.git(self.source, "checkout", "--quiet", "--detach", self.v1)
+        self.git(self.target, "init", "-b", "main")
+
+    def git(self, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            ["git", "-C", str(cwd), "-c", "user.email=t@example.com", "-c", "user.name=T", *args],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, result.returncode, msg=f"git {' '.join(args)}: {result.stderr}")
+        return result
+
+    def commit_source(self, contents: str, tag: str) -> str:
+        (self.source / "harness").mkdir(exist_ok=True)
+        (self.source / "harness/tool.py").write_text(contents, encoding="utf-8")
+        self.git(self.source, "add", "-A")
+        self.git(self.source, "commit", "-m", tag)
+        self.git(self.source, "tag", tag)
+        return self.git(self.source, "rev-parse", "HEAD").stdout.strip()
+
+    def vendor(self, contents: str = "one\n") -> None:
+        (self.target / "vendored").mkdir(exist_ok=True)
+        (self.target / "vendored/tool.py").write_text(contents, encoding="utf-8")
+
+    def write_lock(self, commit: str, name: str = "automation/boundroom.lock") -> None:
+        path = self.target / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "commit": commit,
+                    "remote": self.REMOTE,
+                    "repository": "raelldottin/boundroom",
+                    "imported_at": "2026-11-12T00:00:00Z",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def commit_consumer(self, message: str = "consumer") -> None:
+        self.git(self.target, "add", "-A")
+        self.git(self.target, "commit", "-m", message)
+
+    def status(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                str(SYNC_TOOL),
+                "--status",
+                *extra,
+                "--source",
+                str(self.source),
+                "--manifest",
+                str(self.manifest),
+                "--target",
+                str(self.target),
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+    def snapshot(self) -> dict[str, tuple[bytes, int]]:
+        found: dict[str, tuple[bytes, int]] = {}
+        for root in (self.source, self.target):
+            for path in sorted(root.rglob("*")):
+                if path.is_file():
+                    found[str(path)] = (path.read_bytes(), path.stat().st_mtime_ns)
+        return found
+
+    def test_no_lock_is_reported(self) -> None:
+        self.vendor()
+        self.commit_consumer()
+
+        result = self.status()
+
+        self.assertEqual(1, result.returncode, msg=result.stderr)
+        self.assertIn("lock: none", result.stdout)
+        self.assertIn("result: attention needed: no lock", result.stdout)
+
+    def test_a_current_boundroom_lock_is_current(self) -> None:
+        self.vendor()
+        self.write_lock(self.v1)
+        self.commit_consumer()
+
+        result = self.status()
+
+        self.assertEqual(0, result.returncode, msg=result.stdout + result.stderr)
+        self.assertIn("lock: automation/boundroom.lock\n", result.stdout)
+        self.assertIn(f"lock commit: {self.v1}", result.stdout)
+        self.assertIn(f"lock remote: {self.REMOTE}", result.stdout)
+        self.assertIn("lock imported_at: 2026-11-12T00:00:00Z", result.stdout)
+        self.assertIn(f"pin: {self.v1} (tag v0.1.0)", result.stdout)
+        self.assertIn("(the pinned commit)", result.stdout)
+        self.assertIn("drift: none", result.stdout)
+        self.assertIn("consumer worktree: clean", result.stdout)
+        self.assertIn(f"Tools/repo-automation-sync.sh --check --target {self.target.resolve()} --pin {self.v1}", result.stdout)
+        self.assertTrue(result.stdout.rstrip().endswith("result: current"))
+
+    def test_a_legacy_lock_is_read_in_key_value_form(self) -> None:
+        self.vendor()
+        lock = self.target / "automation/repo-automation.lock"
+        lock.parent.mkdir(parents=True)
+        lock.write_text(f"commit={self.v1}\nremote={self.REMOTE}\nimported_at=2026-10-01\n", encoding="utf-8")
+        self.commit_consumer()
+
+        result = self.status()
+
+        self.assertEqual(0, result.returncode, msg=result.stdout + result.stderr)
+        self.assertIn("lock: automation/repo-automation.lock", result.stdout)
+        self.assertIn(f"lock commit: {self.v1}", result.stdout)
+        self.assertIn("lock repository: (missing)", result.stdout)
+
+    def test_desired_equal_to_the_pin(self) -> None:
+        self.vendor()
+        self.write_lock(self.v1)
+        self.commit_consumer()
+
+        result = self.status("--desired", "v0.1.0")
+
+        self.assertEqual(0, result.returncode, msg=result.stdout + result.stderr)
+        self.assertIn(f"desired: v0.1.0 -> {self.v1}", result.stdout)
+        self.assertIn("pin vs desired: same", result.stdout)
+        self.assertNotIn("update to", result.stdout)
+
+    def test_desired_different_from_the_pin_prints_update_and_rollback(self) -> None:
+        self.vendor()
+        self.write_lock(self.v1)
+        self.commit_consumer()
+
+        result = self.status("--desired", "v0.2.0")
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn(f"desired: v0.2.0 -> {self.v2} (tag v0.2.0)", result.stdout)
+        self.assertIn("pin vs desired: differs", result.stdout)
+        self.assertIn(f"update to v0.2.0 ({self.v2}):", result.stdout)
+        self.assertIn(f"git checkout --detach {self.v2}", result.stdout)
+        self.assertIn(f"--sync --target {self.target.resolve()} --pin {self.v2} --expect-remote {self.REMOTE}", result.stdout)
+        self.assertIn(f"sync back to the current pin {self.v1}", result.stdout)
+        self.assertIn("desired differs from the pin", result.stdout)
+
+    def test_previous_pin_comes_from_the_lock_history(self) -> None:
+        self.vendor()
+        self.write_lock(self.v1)
+        self.commit_consumer("pin v1")
+        self.vendor("two\n")
+        self.write_lock(self.v2)
+        self.commit_consumer("pin v2")
+        self.git(self.source, "checkout", "--quiet", "--detach", self.v2)
+
+        result = self.status()
+
+        self.assertEqual(0, result.returncode, msg=result.stdout + result.stderr)
+        self.assertIn(f"roll back to the previous pin {self.v1} (tag v0.1.0)", result.stdout)
+        self.assertIn(f"--sync --target {self.target.resolve()} --pin {self.v1}", result.stdout)
+
+    def test_unknown_desired_ref_is_reported(self) -> None:
+        self.vendor()
+        self.write_lock(self.v1)
+        self.commit_consumer()
+
+        result = self.status("--desired", "v9.9.9")
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("desired: v9.9.9 (not found in the source checkout", result.stdout)
+
+    def test_drifted_vendored_files_are_reported(self) -> None:
+        self.vendor("edited locally\n")
+        (self.target / "vendored/extra.py").write_text("stale\n", encoding="utf-8")
+        self.write_lock(self.v1)
+        self.commit_consumer()
+
+        result = self.status()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("  changed: vendored/tool.py", result.stdout)
+        self.assertIn("  stale: vendored/extra.py", result.stdout)
+        self.assertIn("drift: found (2 issue(s))", result.stdout)
+
+    def test_source_at_another_commit_is_not_called_the_pin(self) -> None:
+        self.vendor()
+        self.write_lock(self.v1)
+        self.commit_consumer()
+        self.git(self.source, "checkout", "--quiet", "--detach", self.v2)
+
+        result = self.status()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("not the pinned commit", result.stdout)
+        self.assertIn("source is not at the pinned commit", result.stdout)
+
+    def test_a_dirty_consumer_worktree_is_reported(self) -> None:
+        self.vendor()
+        self.write_lock(self.v1)
+        self.commit_consumer()
+        (self.target / "notes.txt").write_text("uncommitted\n", encoding="utf-8")
+
+        result = self.status()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("consumer worktree: dirty (1 path(s))", result.stdout)
+        self.assertIn("?? notes.txt", result.stdout)
+
+    def test_status_writes_nothing(self) -> None:
+        self.vendor("edited locally\n")
+        self.write_lock(self.v1)
+        self.commit_consumer("pin v1")
+        self.write_lock(self.v2)
+        self.commit_consumer("pin v2")
+        (self.target / "notes.txt").write_text("uncommitted\n", encoding="utf-8")
+        before = self.snapshot()
+
+        result = self.status("--desired", "v0.2.0")
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("commands (printed only; --status runs none of them):", result.stdout)
+        self.assertEqual(before, self.snapshot(), "--status must not write the lock, the index or any other file")
+
+    def test_status_refuses_pin_and_desired_needs_status(self) -> None:
+        refused = self.status("--pin", self.v1)
+        self.assertEqual(2, refused.returncode)
+        self.assertIn("reads the pin from the consumer's lock", refused.stderr)
+
+        result = subprocess.run(
+            [str(SYNC_TOOL), "--check", "--desired", "v0.1.0", "--target", str(self.target)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(2, result.returncode)
+        self.assertIn("--desired is used only with --status", result.stderr)
+
+
 class PreRenameNamesTests(unittest.TestCase):
     """SPEC-005: what a consumer synced before 0.3.0 still calls keeps working."""
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import stat
@@ -408,21 +409,27 @@ def locally_modified_targets(target_root: Path) -> set[Path]:
     return modified
 
 
-def sync_entries(
+@dataclass(frozen=True)
+class Plan:
+    writes: list[tuple[Path, Path, str, Entry]]
+    deletions: list[tuple[Path, str]]
+    issues: list[str]
+
+
+def plan_entries(
     source_root: Path,
-    target_root: Path,
+    target_root_resolved: Path,
     entries: list[Entry],
     *,
-    check: bool,
     force_templates: bool = False
-) -> int:
-    target_root_resolved = target_root.resolve(strict=False)
-    issues: list[str] = []
+) -> Plan:
+    """Compare the source with the consumer, entry by entry, without touching either.
 
-    # Plan the whole import before touching anything, so a refusal leaves the consumer
-    # byte-for-byte unchanged rather than half-imported.
+    --check and --status report `issues`; --sync carries out `writes` and `deletions`.
+    """
     writes: list[tuple[Path, Path, str, Entry]] = []
     deletions: list[tuple[Path, str]] = []
+    issues: list[str] = []
 
     for entry in entries:
         pairs = source_files(source_root, target_root_resolved, entry)
@@ -434,20 +441,34 @@ def sync_entries(
             drift = file_drift(source, target, preserve_executable=entry.preserve_executable)
             if drift is None:
                 continue
-            if check:
-                issues.append(f"{drift}: {display}")
-                continue
+            issues.append(f"{drift}: {display}")
             writes.append((source, target, display, entry))
 
         for stale, display in stale_files(target_root_resolved, entry, expected):
-            if check:
-                issues.append(f"stale: {display}")
-                continue
+            issues.append(f"stale: {display}")
             deletions.append((stale, display))
+
+    return Plan(writes=writes, deletions=deletions, issues=sorted(issues))
+
+
+def sync_entries(
+    source_root: Path,
+    target_root: Path,
+    entries: list[Entry],
+    *,
+    check: bool,
+    force_templates: bool = False
+) -> int:
+    target_root_resolved = target_root.resolve(strict=False)
+
+    # Plan the whole import before touching anything, so a refusal leaves the consumer
+    # byte-for-byte unchanged rather than half-imported.
+    plan = plan_entries(source_root, target_root_resolved, entries, force_templates=force_templates)
+    writes, deletions, issues = plan.writes, plan.deletions, plan.issues
 
     if check:
         if issues:
-            for issue in sorted(issues):
+            for issue in issues:
                 print(issue)
             print(f"result: drift found ({len(issues)} issue(s))")
             return 1
@@ -712,6 +733,251 @@ def verify_consumer_runtime(requirements: list[RuntimeRequirement], python_execu
         )
 
 
+# --- --status: read-only pin report (RA-PROD-103) ---------------------------------------------
+#
+# Everything below only reads. It never writes the lock or any other file, and it prints the
+# update and rollback commands as text without running them. Git is called with
+# --no-optional-locks so that even `git status` leaves the consumer's index alone.
+
+LOCK_NAMES = ("automation/boundroom.lock", "automation/repo-automation.lock")
+LOCK_FIELDS = ("commit", "remote", "repository", "imported_at")
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
+LOCK_LINE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*(?::=|\?=|=|:)\s*(.*)$")
+LOCK_HISTORY_DEPTH = 50
+
+
+def parse_lock(text: str) -> dict[str, str] | None:
+    """Read a lock written as a JSON object or as `key=value` / `key: value` lines.
+
+    The consumer owns the lock's format, so this accepts the common shapes rather than one.
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, dict):
+        return {str(key).lower(): str(value) for key, value in data.items() if isinstance(value, (str, int))}
+
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = LOCK_LINE.match(stripped)
+        if match:
+            fields[match.group(1).lower()] = match.group(2).strip().strip("\"'")
+    return fields or None
+
+
+def read_only_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return git_result(repo, "--no-optional-locks", *args)
+
+
+def git_value(repo: Path, *args: str) -> str | None:
+    result = read_only_git(repo, *args)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def tags_at(source_root: Path, sha: str) -> str:
+    tags = git_value(source_root, "tag", "--points-at", sha)
+    return f" (tag {', '.join(tags.split())})" if tags else ""
+
+
+def previous_pin(target_root: Path, lock_relative: str, current: str | None) -> str | None:
+    """The most recent earlier `commit` the lock held, from the consumer's own history."""
+    log = git_value(target_root, "log", "-n", str(LOCK_HISTORY_DEPTH), "--follow", "--format=%H", "--", lock_relative)
+    if not log:
+        return None
+    for commit in log.splitlines():
+        for name in LOCK_NAMES:
+            shown = read_only_git(target_root, "show", f"{commit}:{name}")
+            if shown.returncode != 0:
+                continue
+            value = (parse_lock(shown.stdout) or {}).get("commit")
+            if value and value != current:
+                return value
+    return None
+
+
+def script_at(source_root: Path, sha: str) -> str:
+    """The sync script's name at `sha`: tags before 0.3.0 carry only the old name (SPEC-005)."""
+    if read_only_git(source_root, "cat-file", "-e", f"{sha}:Tools/boundroom-sync.sh").returncode == 0:
+        return "Tools/boundroom-sync.sh"
+    return "Tools/repo-automation-sync.sh"
+
+
+def sync_commands(source_root: Path, target_root: Path, sha: str, remote: str | None) -> list[str]:
+    script = script_at(source_root, sha)
+    common = f"--target {shlex.quote(str(target_root))} --pin {sha} --expect-remote {shlex.quote(remote) if remote else '<remote-url>'}"
+    return [
+        f"cd {shlex.quote(str(source_root))} && git checkout --detach {sha}",
+        f"{script} --check {common}",
+        f"{script} --sync {common}   # only after the owner says go, on a new consumer branch",
+        f"then set the lock's commit to {sha} and imported_at to the import time; change no other field",
+    ]
+
+
+def pin_status(
+    source_root: Path,
+    target_root: Path,
+    entries: list[Entry],
+    runtime_requirements: list[RuntimeRequirement],
+    *,
+    desired: str | None,
+    expect_remote: str | None,
+    runtime_python: str,
+) -> int:
+    attention: list[str] = []
+    target = target_root.resolve(strict=False)
+    print(f"target: {target}")
+    if not target.exists():
+        print("result: attention needed: target missing")
+        return 1
+
+    # The lock: which file, and what it pins.
+    present = [name for name in LOCK_NAMES if (target / name).is_file()]
+    lock: dict[str, str] = {}
+    lock_name: str | None = None
+    if not present:
+        print(f"lock: none ({' or '.join(LOCK_NAMES)} not found)")
+        attention.append("no lock")
+    else:
+        lock_name = present[0]
+        also = f" ({present[1]} also exists)" if len(present) > 1 else ""
+        print(f"lock: {lock_name}{also}")
+        parsed = parse_lock((target / lock_name).read_text(encoding="utf-8", errors="replace"))
+        if parsed is None:
+            print("lock fields: unreadable (neither a JSON object nor key=value lines)")
+            attention.append("lock unreadable")
+        else:
+            lock = parsed
+        for field in LOCK_FIELDS:
+            print(f"lock {field}: {lock.get(field, '(missing)')}")
+
+    pin = lock.get("commit")
+    if lock_name and lock and not (pin and FULL_SHA.fullmatch(pin)):
+        attention.append("lock commit is not a full SHA")
+        pin = None
+
+    # The source checkout the comparison runs against.
+    source_head = git_value(source_root, "rev-parse", "HEAD")
+    source_origin = git_value(source_root, "remote", "get-url", "origin")
+    source_dirty = git_value(source_root, "status", "--porcelain", "--untracked-files=all")
+    print(f"source: {source_root}")
+    print(f"source head: {source_head + tags_at(source_root, source_head) if source_head else '(not a Git checkout)'}")
+    print(f"source origin: {source_origin or '(none)'}")
+    if source_dirty:
+        print(f"source worktree: dirty ({len(source_dirty.splitlines())} path(s))")
+        attention.append("source has uncommitted changes")
+
+    if pin:
+        if read_only_git(source_root, "cat-file", "-e", f"{pin}^{{commit}}").returncode == 0:
+            print(f"pin: {pin}{tags_at(source_root, pin)}")
+        else:
+            print(f"pin: {pin} (not in the source checkout; fetch it first)")
+            attention.append("pinned commit not in the source checkout")
+
+    lock_remote = lock.get("remote")
+    remote = expect_remote or lock_remote or source_origin
+    if lock_remote and source_origin and lock_remote != source_origin:
+        print(
+            f"remote: the lock names {lock_remote} but the source's origin is {source_origin}; "
+            "a pinned check refuses until the consumer's owner updates the lock's remote"
+        )
+        attention.append("lock remote differs from the source origin")
+
+    # Desired ref, resolved in the source checkout.
+    desired_sha: str | None = None
+    if desired:
+        desired_sha = git_value(source_root, "rev-parse", "--verify", "--quiet", f"{desired}^{{commit}}")
+        if not desired_sha:
+            print(f"desired: {desired} (not found in the source checkout; try git fetch --tags)")
+            attention.append("desired ref not found")
+        else:
+            print(f"desired: {desired} -> {desired_sha}{tags_at(source_root, desired_sha)}")
+            if not pin:
+                print("pin vs desired: no pin to compare")
+            elif pin == desired_sha:
+                print("pin vs desired: same")
+            else:
+                print("pin vs desired: differs")
+                attention.append("desired differs from the pin")
+
+    # Drift: the same manifest comparison --check makes, against the source as checked out.
+    if source_head and pin == source_head:
+        print(f"drift against: source head {source_head} (the pinned commit)")
+    elif source_head:
+        print(
+            f"drift against: source head {source_head}, not the pinned commit; "
+            "these are the files a sync to that head would change"
+        )
+        if pin:
+            attention.append("source is not at the pinned commit")
+    if source_dirty:
+        print("drift note: the source has uncommitted changes, so this compares its working tree, not a commit")
+    issues = plan_entries(source_root, target, entries).issues
+    for issue in issues:
+        print(f"  {issue}")
+    if issues:
+        print(f"drift: found ({len(issues)} issue(s))")
+        attention.append("drift found")
+    else:
+        print("drift: none")
+
+    # The consumer's own Git state.
+    status = read_only_git(target, "status", "--porcelain", "--untracked-files=all")
+    if status.returncode != 0:
+        print("consumer worktree: not a Git repository")
+        attention.append("consumer is not a Git repository")
+    elif status.stdout.strip():
+        lines = status.stdout.rstrip("\n").splitlines()
+        print(f"consumer worktree: dirty ({len(lines)} path(s))")
+        for line in lines:
+            print(f"  {line}")
+        attention.append("consumer worktree is not clean")
+    else:
+        print("consumer worktree: clean")
+
+    # Whether the consumer can run what the manifest declares.
+    if not runtime_requirements:
+        print("runtime: nothing declared")
+    else:
+        try:
+            verify_consumer_runtime(runtime_requirements, runtime_python)
+            print(f"runtime: ok ({runtime_python})")
+        except SyncError as error:
+            print(f"runtime: {str(error).splitlines()[0]}")
+            attention.append("runtime dependency missing")
+
+    # Commands, as text only.
+    print("commands (printed only; --status runs none of them):")
+    if pin:
+        print(f"  reproduce the check of the current pin {pin}:")
+        for line in sync_commands(source_root, target, pin, remote)[:2]:
+            print(f"    {line}")
+    if desired_sha and desired_sha != pin:
+        print(f"  update to {desired} ({desired_sha}):")
+        for line in sync_commands(source_root, target, desired_sha, remote):
+            print(f"    {line}")
+    previous = previous_pin(target, lock_name, pin) if lock_name else None
+    if previous and previous == desired_sha:
+        print(f"  roll back to the previous pin {previous}: the update above is that rollback.")
+    elif previous:
+        print(f"  roll back to the previous pin {previous}{tags_at(source_root, previous)} (from the lock's Git history):")
+        for line in sync_commands(source_root, target, previous, remote):
+            print(f"    {line}")
+    elif pin:
+        print("  roll back: the lock's Git history holds no earlier pin.")
+    if pin and desired_sha and desired_sha != pin:
+        print(f"  to undo an update to {desired}, sync back to the current pin {pin} the same way.")
+
+    if attention:
+        print(f"result: attention needed: {'; '.join(attention)}")
+        return 1
+    print("result: current")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     repo_root = Path(argv[0]).resolve()
 
@@ -719,6 +985,18 @@ def main(argv: list[str]) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="Report drift without changing files.")
     mode.add_argument("--sync", action="store_true", help="Update the target to match the reusable manifest.")
+    mode.add_argument(
+        "--status",
+        action="store_true",
+        help="Read-only. Report the consumer's lock and pin, drift against the source as checked out, "
+        "and whether the consumer's worktree is clean, then print the update and rollback commands "
+        "without running them. Exits 1 when anything needs attention.",
+    )
+    parser.add_argument(
+        "--desired",
+        help="With --status: the tag or commit you want the consumer on, resolved in the source checkout "
+        "and compared with the lock's pin.",
+    )
     parser.add_argument("--target", required=True, help="Destination consumer folder. There is no default.")
     parser.add_argument("--source", default=str(repo_root), help="Canonical source repository root. Defaults to this checkout.")
     parser.add_argument("--manifest", help="Manifest path. Defaults to <source>/automation/reusable-manifest.json.")
@@ -747,6 +1025,10 @@ def main(argv: list[str]) -> int:
         "Consumer-added files in template directories still survive."
     )
     args = parser.parse_args(argv[1:])
+    if args.desired and not args.status:
+        parser.error("--desired is used only with --status")
+    if args.status and args.pin:
+        parser.error("--status reads the pin from the consumer's lock; use --desired for the ref you want")
 
     source_root = Path(args.source).expanduser().resolve(strict=True)
     manifest = Path(args.manifest).expanduser() if args.manifest else source_root / "automation/reusable-manifest.json"
@@ -754,6 +1036,17 @@ def main(argv: list[str]) -> int:
     target_root = Path(args.target).expanduser()
 
     ensure_target_is_not_canonical(source_root, target_root, args.expect_remote)
+
+    if args.status:
+        return pin_status(
+            source_root,
+            target_root,
+            entries,
+            runtime_requirements,
+            desired=args.desired,
+            expect_remote=args.expect_remote,
+            runtime_python=args.runtime_python,
+        )
 
     # --check answers "does the snapshot match the commit it is pinned to", so it needs the
     # same provenance as --sync whenever a pin is supplied. Without a pin it stays a plain

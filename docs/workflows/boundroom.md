@@ -125,6 +125,7 @@ Use `Tools/boundroom-sync.sh` for manifest-owned sync:
 
 - `--check`: report drift between the canonical source and a consumer's vendored snapshot without changing files.
 - `--sync`: update a consumer's vendored snapshot to match the manifest at the pinned canonical commit.
+- `--status`: read-only. Report the consumer's lock and pin, compare it with `--desired <tag-or-sha>`, report drift and whether the consumer's worktree is clean, and print the update and rollback commands without running them ([Check your pin](upgrading.md#check-your-pin)).
 - `--import`: the explicit mutating path; require the canonical source to be clean and published at the pinned commit, import canonical-owned files inward, then verify `--check` passes. There is no outward `--auto-update`; it was the destructive direction and is removed.
 - `--target <path>`: **required.** The consumer to write into. There is no default, and it may not be the canonical repository or another checkout of it.
 - `--source <path>` and `--manifest <path>`: test hooks for temp repositories and alternate manifests.
