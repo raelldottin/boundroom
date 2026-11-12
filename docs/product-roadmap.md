@@ -1,6 +1,6 @@
 # Product roadmap: Boundroom
 
-**Snapshot:** 2026-11-10 (original capability audit: 2026-11-03) | **Planning status:** proposed product priorities; not an execution authorization | **Current published release:** [v0.2.4](https://github.com/raelldottin/boundroom/releases/tag/v0.2.4)
+**Snapshot:** 2026-11-10 (original capability audit: 2026-11-03) | **Planning status:** proposed product priorities; not an execution authorization | **Current published release:** [v0.3.0](https://github.com/raelldottin/boundroom/releases/tag/v0.3.0) (2026-11-12)
 
 **Product owner:** repository maintainer. **Delivery model:** reviewed pull requests, exact pinned releases, explicit consumer adoption. **Primary technical contract:** [SPEC-001](architecture/control-plane.md), [SPEC-002](architecture/agent-plugin.md), and [repository policy](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md).
 
@@ -68,7 +68,7 @@ Use three statuses consistently: **SHIPPED** means code or a release exists; **P
 
 ## 4. Release horizons and milestone map
 
-Horizon names are **planning increments**, not committed dates or promises of a particular semantic version. Version numbers after v0.2.4 are illustrative until the maintainer approves a release tag. P0 control-plane acceptance takes priority over optional supervisor expansion. Authorized effectiveness research is exempt and can run in parallel.
+Horizon names are **planning increments**, not committed dates or promises of a particular semantic version. Version numbers after v0.3.0 are illustrative until the maintainer approves a release tag. P0 control-plane acceptance takes priority over optional supervisor expansion. Authorized effectiveness research is exempt and can run in parallel.
 
 | Horizon | Indicative window | Product result | Dependency / exit decision |
 | --- | --- | --- | --- |
@@ -85,7 +85,7 @@ Horizon names are **planning increments**, not committed dates or promises of a 
 
 **Outcome:** people can trust the existing release, understand precisely what is and is not implemented, and upgrade without accidental privilege expansion.
 
-- **H0.1 Security maintenance.** The [pydantic update #145](https://github.com/raelldottin/boundroom/pull/145), which cited security advisories affecting the 2.14.1 baseline, merged on 2026-11-10; `uv.lock` now pins pydantic 2.14.2 on `main`. It is not yet in a release: v0.2.4 still ships the 2.14.1 lock. Keep triaging each later dependency bump on its own patch, lockfile, audit results and compatibility; do **not** assume a bot bump is safe.
+- **H0.1 Security maintenance.** The [pydantic update #145](https://github.com/raelldottin/boundroom/pull/145), which cited security advisories affecting the 2.14.1 baseline, merged on 2026-11-10; `uv.lock` pins pydantic 2.14.2, and v0.2.5 and v0.3.0 ship it. Keep triaging each later dependency bump on its own patch, lockfile, audit results and compatibility; do **not** assume a bot bump is safe.
 - **H0.2 Accuracy pass.** Correct stale README and documentation claims when touching their files (e.g. an old description of the subset-based coverage job, stale owner/repository URLs). See [consumer-link correction #167](https://github.com/raelldottin/boundroom/pull/167); preserve exact remote identifiers required by locks and plugin install commands.
 - **H0.3 Release and plugin contract.** Audit version parity across plugin manifests, catalog resolution and release tag; test SHA-based Hermes installs, partial-copy rejection, supported Python and fail-closed old-copy detection.
 - **H0.4 Maintenance gate.** Keep the five protected checks, strict documentation build, coverage floor and supply-chain review. Treat a coverage number as a measured statistic, never a substitute for failure-path tests.
@@ -220,7 +220,7 @@ These are *proposed work packages*, not created issues or an authorization to ru
 
 | ID | Priority | Deliverable | Acceptance check | Horizon |
 | --- | --- | --- | --- | --- |
-| RA-PROD-001 | P0 | Dependency/security triage (pydantic #145 merged 2026-11-10, not yet released) | Audit results, lock validation, compatibility tests, documented disposition | H0 |
+| RA-PROD-001 | P0 | Dependency/security triage (pydantic #145 released in v0.2.5) | Audit results, lock validation, compatibility tests, documented disposition | H0 |
 | RA-PROD-002 | P0 | Documentation truth + install matrix | Correct release and coverage claims; fresh installs and exact command transcripts | H0–H1 |
 | RA-PROD-003 | P0 | One-slice success and refused-invocation canary | Exactly one agent run, second slice queued; invalid limits refused before mutation | H1 |
 | RA-PROD-004 | P0 | Consumer sync/pin/rollback usability | Check, locked import, PR evidence, old-pin restore and clean stop | H1 |
