@@ -18,7 +18,15 @@ If any of these is missing or unclear, ask.
 
 ## 1. Check first
 
-From the Boundroom checkout:
+From the Boundroom checkout, at the tag or commit the user names, show where the consumer stands:
+
+```bash
+Tools/boundroom-sync.sh --status --target <consumer-path> --desired <tag-or-full-sha> --expect-remote https://github.com/raelldottin/boundroom.git
+```
+
+`--status` is read-only. It reports the consumer's lock and the commit it pins, whether that pin matches `--desired`, the drift between the consumer's synced files and the checkout, and whether the consumer's worktree is clean. It prints the commands to update and to roll back, and runs none of them. Show the user its report. If the consumer's worktree is dirty, stop and let the user deal with it.
+
+Then run the pinned check:
 
 ```bash
 Tools/boundroom-sync.sh --check --target <consumer-path> --pin <full-sha> --expect-remote https://github.com/raelldottin/boundroom.git
@@ -28,7 +36,7 @@ Tools/boundroom-sync.sh --check --target <consumer-path> --pin <full-sha> --expe
 
 ## 2. Sync only after the user says go
 
-Show the user the drift report and wait for an explicit yes. Then run the same command with `--sync` in place of `--check`.
+Show the user the status and drift reports and wait for an explicit yes. Then run the same command with `--sync` in place of `--check`.
 
 ## 3. Update the consumer's lock pin, if it keeps one
 

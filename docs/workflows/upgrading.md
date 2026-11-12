@@ -23,6 +23,24 @@ The synced copy is the authority, as [SPEC-002](../architecture/agent-plugin.md)
 
 A **stale pin** is a lock whose `commit` is older than the latest release. It isn't an error, and nothing updates it automatically: every sync starts from a person's request (AGENTS.md, Consumer Repositories).
 
+## Check your pin
+
+From a Boundroom checkout, run:
+
+```bash
+Tools/boundroom-sync.sh --status --target <consumer> --desired <tag-or-sha>
+```
+
+It is read-only and changes no file, the lock included. It reports:
+
+- which lock the consumer has, and its `commit`, `remote`, `repository` and `imported_at`;
+- whether the pin matches the ref you pass as `--desired`;
+- drift: the same manifest comparison `--check` makes, against the checkout as it is. When the checkout is at the pinned commit, this tells you whether the synced files match the pin. When it is at another commit, it lists what a sync to that commit would change;
+- whether the consumer's Git worktree is clean;
+- the commands to reproduce the pinned check, to update to `--desired` and to roll back to the previous pin in the lock's Git history. It prints them and runs none of them.
+
+It exits 0 when everything matches and 1 when something needs attention. The last line says what.
+
 ## Moving to a new release
 
 1. **Read the release notes** for every tag between your pin and the target. A minor release (`0.x.0`) may rename or remove something; a patch release doesn't.
@@ -61,7 +79,7 @@ For the plugin, add the marketplace from the older tag and update or reinstall t
 
 If a skill stops with "the synced copy is too old", or the consumer's check reports drift you didn't expect, report:
 
-- the lock's `commit`;
+- the lock's `commit` (`--status` prints it);
 - the plugin's version from `claude plugin list`;
 - the tag you meant to sync;
 - the output of `Tools/boundroom-sync.sh --check` against that tag.

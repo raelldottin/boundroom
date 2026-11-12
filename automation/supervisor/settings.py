@@ -542,6 +542,21 @@ SETTINGS: tuple[Setting, ...] = (
         default=False,
         flags=(_flag("sync", "--sync"),),
     ),
+    Setting(
+        "sync_status",
+        "sync",
+        "advanced",
+        "Report the consumer's lock, pin, drift and Git state without changing files.",
+        default=False,
+        flags=(_flag("sync", "--status"),),
+    ),
+    Setting(
+        "sync_desired",
+        "sync",
+        "advanced",
+        "With --status: the tag or commit to compare with the lock's pin.",
+        flags=(_flag("sync", "--desired"),),
+    ),
     Setting("sync_target", "sync", "advanced", "The consumer folder to write into.", flags=(_flag("sync", "--target"),)),
     Setting(
         "sync_source",
