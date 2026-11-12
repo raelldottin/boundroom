@@ -641,3 +641,13 @@ def test_an_interface_only_adapter_still_never_captures():
     with pytest.raises(RoleNotEnabled):
         adapter.fetch_since(place(C1), None)
     assert world.history_requests == []
+
+
+@pytest.mark.parametrize("roles", [frozenset({"interface"}), frozenset({"source"}), frozenset({"interface", "source"})])
+def test_sd8_the_adapter_asks_for_exactly_the_scopes_the_data_rules_allow(roles):
+    """The adapter's scopes and the data rules' SD-8 list can't drift apart."""
+    from automation.knowledge import slack_adapter, slack_data
+
+    assert slack_data.scope_problems(roles, slack_adapter.scope_reasons(roles)) == []
+    allowed = {scope for role in roles for scope in slack_data.SCOPES_BY_ROLE[role]}
+    assert slack_adapter.bot_scopes(roles) == allowed

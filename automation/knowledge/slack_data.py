@@ -81,15 +81,23 @@ ALLOWED_USES = frozenset({"retrieval"})
 
 # SD-8. Scopes per role, as SPEC-007 lists them, each with the reason the app's description gives.
 # Private-channel and DM scopes are absent on purpose: SPEC-007 excludes those by default.
+# The read scopes are here because the adapters check a channel's type and members before answering
+# in it or citing it (CP-6, CP-5), and the source role captures private channels the operator
+# allowlisted by id. DM and group DM scopes are never listed: those are never captured or answered.
+# ``automation/tests/test_knowledge_slack_source.py`` checks the Slack adapter asks for exactly these.
 SCOPES_BY_ROLE: Mapping[str, Mapping[str, str]] = {
     "interface": {
         "commands": "Receive the slash command people ask questions with",
         "app_mentions:read": "Receive questions asked by mentioning the app",
         "chat:write": "Post each answer where its question was asked",
+        "channels:read": "Check an allowlisted public channel's type and members before answering in it",
+        "groups:read": "Check a private channel allowlisted by id before answering in it",
     },
     "source": {
         "channels:history": "Capture messages from the operator's allowlisted public channels",
+        "groups:history": "Capture messages from the private channels the operator allowlisted by id",
         "channels:read": "Check who can read an allowlisted channel before citing it",
+        "groups:read": "Check who can read an allowlisted private channel before citing it",
     },
 }
 
