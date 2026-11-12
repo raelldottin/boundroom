@@ -8,7 +8,7 @@
     {
       "name": "boundroom",
       "description": "Drive a repository's synced Boundroom supervisor: see what is next, run exactly one slice, evaluate a handoff, and sync a consumer through a pull request.",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "source": "./plugins/boundroom",
       "author": {
         "name": "Raell Dottin",

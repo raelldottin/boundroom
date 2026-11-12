@@ -114,7 +114,7 @@ live end-to-end:
 
 `plugins/boundroom/` is one plugin for Claude Code, Codex and Hermes, specified in [SPEC-002](docs/architecture/agent-plugin.md). It was first released in `v0.2.0`, as `repo-automation@repo-automation`; from `v0.3.0` it is `boundroom@boundroom`, and [SPEC-005](docs/architecture/boundroom-rename.md#moving-an-installed-plugin) says how to move an install. It holds five skills and no supervisor code: status, run-next, evaluate-handoff, sync and settings. Each skill drives the Boundroom copy already synced into the repository you work in, and stops if there isn't one. The run-next skill runs `run_next.py --single-slice`, which runs at most one slice.
 
-Install from a release tag, such as `v0.3.0`, not from `main`:
+Install from a release tag, such as `v0.4.0`, not from `main`:
 
 ```bash
 claude plugin marketplace add raelldottin/boundroom@<tag>

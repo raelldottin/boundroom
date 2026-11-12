@@ -49,6 +49,30 @@ It exits 0 when everything matches and 1 when something needs attention. The las
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.
 5. **Update the plugin** to the same tag, if you use it: change the marketplace source to the new tag, then update the plugin. Only a rename, as in 0.3.0, needs an uninstall and reinstall.
 
+### From 0.3.x to 0.4.0 (a safer Claude runner by default)
+
+0.4.0 changes one default and adds opt-in features. Nothing a consumer depends on is renamed or removed.
+
+- **The Claude Code runner starts in the `bounded` profile** (SPEC-008 RA-SET-010). That means `dontAsk`, the slice's own allowlist, and the sandbox with `failIfUnavailable`, whatever mode the parent session runs in. Before 0.4.0 it ran in `bypassPermissions`. There are three ways to keep the old behavior:
+  - `BOUNDROOM_CLAUDE_PERMISSION_MODE` still overrides the profile when it is set alone;
+  - `BOUNDROOM_CLAUDE_PROFILE=unbounded` with `BOUNDROOM_CLAUDE_ISOLATED=1` restores it, where the run really is in a container or VM;
+  - `--runner-profile` picks another profile for one run.
+  The runner prompt now lists what the runner may run. A slice the allowlist can't finish ends `blocked` through the usual gates.
+- **Telemetry is available and off by default** (SPEC-006). Nothing is traced unless you choose a mode and a destination, with `--telemetry` and its flags, `BOUNDROOM_TELEMETRY*` variables, or your operator file under `~/.config/boundroom/`. A repository can only narrow it.
+- **Settings you can read** (SPEC-008):
+  - `python3 automation/supervisor/settings_view.py` (`--all`, `--json`, `--explain <id>`);
+  - the generated [settings reference](../reference/settings.md);
+  - the plugin's `boundroom-settings` skill;
+  - `userConfig` options for the runner profile and its ceiling, and for telemetry's mode, capture and runner level, none with a default. Destinations stay in your own files and variables.
+- **New read-only reports:**
+  - `operator_status.py`, the version, pin, queue mode, next slice and refusal reasons;
+  - `Tools/boundroom-sync.sh --status`, a consumer's pin and drift;
+  - `handoff_summary.py`, a handoff's review summary.
+  `run_next.py` also records the slice's base and head commits and can append reports to a `--report-file`.
+- **The knowledge loop's contracts** (SPEC-007) ship as code and hermetic tests only. No Discord or Slack service is deployed, and none runs unless the owner deploys one.
+
+To roll back, sync the consumer to its previous pin, as above. Moving the plugin is a marketplace-source change to the new tag, with no reinstall.
+
 ### From 0.2.x to 0.3.0 (the rename)
 
 0.3.0 renamed the product from repo-automation to Boundroom. Everything a consumer already depended on keeps working under its old name in 0.3.0:
