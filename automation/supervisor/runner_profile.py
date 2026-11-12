@@ -176,7 +176,8 @@ def choose(flags: Mapping[str, Any], environ: Mapping[str, str], parent_mode: Op
     sandbox = False
     if requested == "parent":
         resolved = _resolve_parent(parent_mode, reasons)
-        sandbox = resolved == "bounded" and parent_mode is None
+        # The fallback, for no parent or a mode this code doesn't know, is bounded with the sandbox (PS-17).
+        sandbox = resolved == "bounded" and (parent_mode is None or parent_mode not in KNOWN_PARENT_MODES)
     else:
         resolved = requested
         sandbox = requested == "bounded"
@@ -214,6 +215,9 @@ def choose(flags: Mapping[str, Any], environ: Mapping[str, str], parent_mode: Op
     )
 
 
+KNOWN_PARENT_MODES = ("plan", "bypassPermissions", "acceptEdits", "default", "manual", "dontAsk", "auto")
+
+
 def _resolve_parent(parent_mode: Optional[str], reasons: list[str]) -> str:
     if parent_mode is None:
         reasons.append("no Claude Code parent, or its flags couldn't be read: the fallback profile, bounded")
@@ -226,11 +230,12 @@ def _resolve_parent(parent_mode: Optional[str], reasons: list[str]) -> str:
     if parent_mode == "acceptEdits":
         reasons.append("the parent runs acceptEdits")
         return "edits"
-    if parent_mode in ("default", "dontAsk"):
+    if parent_mode in ("default", "manual", "dontAsk"):
+        # Claude Code 2.1 calls Manual mode "manual" on its command line; earlier versions said "default".
         reasons.append(f"the parent runs {parent_mode}: headless, so every action is pre-approved or denied")
         return "bounded"
     if parent_mode == "auto":
-        reasons.append("the parent runs auto; whether -p accepts it is unverified until RA-SET-009, so edits")
+        reasons.append("the parent runs auto; -p accepts it (RA-SET-009), but no profile runs auto yet, so edits")
         return "edits"
     reasons.append(f"the parent's mode {parent_mode!r} isn't known: the fallback profile, bounded")
     return "bounded"

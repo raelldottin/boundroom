@@ -109,6 +109,17 @@ class ChoiceTests(unittest.TestCase):
         self.assertEqual(("bounded", True), (profile.effective, profile.sandbox))
         self.assertIn("fallback", " ".join(profile.reasons))
 
+    def test_a_mode_this_code_does_not_know_also_gets_the_sandbox(self) -> None:
+        profile = choose("parent", "someFutureMode")
+        self.assertEqual(("bounded", True), (profile.effective, profile.sandbox))
+
+    def test_claude_code_21_manual_mode_resolves_like_default(self) -> None:
+        # The RA-SET-009 canary: a Manual parent reported "manual", which fell through to the fallback.
+        for mode in ("manual", "default"):
+            profile = choose("parent", mode)
+            self.assertEqual(("bounded", "dontAsk", False), (profile.effective, profile.mode, profile.sandbox))
+            self.assertIn(f"the parent runs {mode}", " ".join(profile.reasons))
+
     def test_ps18_the_effective_profile_is_the_lower_of_request_and_ceiling(self) -> None:
         for requested, ceiling in itertools.product(("bounded", "edits", "unbounded"), rp.CEILINGS):
             with self.subTest(requested=requested, ceiling=ceiling):

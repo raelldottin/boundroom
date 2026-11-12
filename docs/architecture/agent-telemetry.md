@@ -192,6 +192,18 @@ Each slice is one pull request by the agent, approved by a person, with tests in
 
 An `otlp` canary, against a destination the user names, comes after the owner's decisions below.
 
+### RA-TEL-007 result (2026-11-12)
+
+Four canary slices ran on the owner's machine. Each used a disposable consumer synced through `Tools/boundroom-sync.sh` from a pinned commit, a local board with one task ("append one line to `NOTES.md`"), Claude Code as parent and runner, the `bounded` runner profile, and `--telemetry file --telemetry-runner metadata`. Each runner was capped at $5. No software was added and telemetry made no network calls. The runner itself talks to Anthropic, as every Claude Code runner does.
+
+- **The first run failed, and so did the next two.** The runner couldn't write its handoff, and then couldn't commit. These were runner-profile defects, not telemetry ones; SPEC-008's RA-SET-009 result lists them and their fixes. Even the failed runs gave one trace per run, with a `trace_id` equal to the decision report's.
+- **Two telemetry defects, fixed in the same change:**
+  - a failed slice had no `boundroom.board.record` span, although the board was written;
+  - the `boundroom.decision` span's `reason` carried the handoff's absolute path, which names the person whose machine it is. Reasons now have the repository's path cut out (`telemetry.without_root`).
+- **The fourth run passed.** It used commit `dbbcde6` of the fix branch. The runner committed and pushed, the supervisor stopped for review, and the board moved the task to `review` with no approval event. The span tree under `boundroom.run` was `select`, `context`, `claim`, `agent_session`, `handoff.evaluate`, `decision` and `board.record`, in that order. All spans shared one `trace_id`, which joins the decision report. The file held ids, digests, counts, verdicts and reason text only: no prompt, handoff or file content, no absolute path, and no username.
+- **Not met by design: the runner's own spans.** In `file` mode the runner gets `TRACEPARENT` and `OTEL_RESOURCE_ATTRIBUTES` only. Claude Code has no file exporter, and adding a local collector would be new software. So no runner span nests under `agent_session`. This criterion can be checked only in the `otlp` canary.
+- **Ambient settings were left alone.** The parent session had `CLAUDE_CODE_ENABLE_TELEMETRY` set. The report listed it under `runner_passthrough`, and Boundroom didn't change it (UD-9).
+
 ## Alternatives considered
 
 - **Plain OpenTelemetry SDK without Logfire.** It needs more code for the same result, such as scrubbing and a pydantic integration. Because the contract is OpenTelemetry, and Boundroom never uses Logfire's hosted service directly, switching later doesn't change the span model or any setting.
