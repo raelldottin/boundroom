@@ -1,6 +1,6 @@
 # SPEC-006: Traceable agent runs with Logfire and OpenTelemetry
 
-Status: **accepted (raelldottin/boundroom#196, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request and needs its own approval. RA-TEL-001, the settings model and resolution (`automation/supervisor/telemetry_settings.py`), is implemented; the other slices aren't, so nothing is exported yet.
+Status: **accepted (raelldottin/boundroom#196, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request and needs its own approval. RA-TEL-001, the settings model and resolution (`automation/supervisor/telemetry_settings.py`), and RA-TEL-002, the exporter (`automation/supervisor/telemetry.py`, with `logfire==5.4.0` as the `telemetry` extra), are implemented. Nothing calls the exporter until RA-TEL-003, so no run is traced yet.
 
 Owner request recorded here (2026-11-11): use Logfire to make every agent interaction auditable and traceable, in every lane the plugin can start, with the user able to configure it.
 
@@ -150,6 +150,12 @@ boundroom.benchmark.experiment     run dir, lanes, repeats, instance count, repo
 - **Bounded flush.** The final flush waits at most 5 seconds, then drops what's left and says so on stderr.
 
 The SDK is configured explicitly, never from its defaults or the ambient environment: `send_to_logfire=False` always (it defaults to sending to Pydantic's hosted service), spans go only to Boundroom's own exporter for the user's destination, and `console=False`, `fleet=False`, `inspect_arguments=False`, `data_dir` outside the repository, and `service_name="boundroom-supervisor"`. `service_version` is the Boundroom version and commit.
+
+**As built (RA-TEL-002, Logfire 5.4.0):**
+- Logfire 5.4.0 has no `fleet` parameter, so there is nothing to set; the other settings above are passed as written, with `local=True` so no global tracer provider is installed, `metrics=False` and `distributed_tracing=False`.
+- `logfire.configure` reads `OTEL_EXPORTER_OTLP_*` from the environment and adds an exporter for them. `configure` hides every `OTEL_*` and `LOGFIRE_*` variable while it runs and restores them afterwards, which is what makes UD-6 hold.
+- Logfire registers a pydantic plugin, and pydantic imports every installed plugin the first time a model is built, so an installed extra would import the SDK on every run. `automation/schemas/models.py` switches that one plugin off while pydantic loads its plugins and restores the environment, so UD-1 holds with the extra installed and no child process inherits the switch.
+- `logfire` is also in the dev group, at the same pin, so CI exercises the exporter.
 
 ## Effects on other specs and rules
 

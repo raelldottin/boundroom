@@ -13,9 +13,38 @@ the harness, which stays dict-based.
 
 from __future__ import annotations
 
+import os
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+def _without_logfire_plugin() -> None:
+    """Keep pydantic from importing Logfire just because it is installed (SPEC-006 UD-1).
+
+    Logfire registers a pydantic plugin, and pydantic loads every installed plugin the first time
+    a model is built, so an installed telemetry extra would import the SDK on every run, with
+    telemetry off. The plugin is switched off only while pydantic loads its plugins, which it does
+    once per process, and the environment is restored, so no agent or child process inherits it.
+    """
+    key = "PYDANTIC_DISABLE_PLUGINS"
+    previous = os.environ.get(key)
+    if previous in ("__all__", "1", "true"):
+        return
+    os.environ[key] = ",".join(filter(None, (previous, "logfire-plugin")))
+    try:
+
+        class _LoadsPluginsOnce(BaseModel):
+            pass
+
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous
+
+
+_without_logfire_plugin()
 
 SliceStatus = Literal["queued", "in_progress", "blocked", "deferred", "done", "failed"]
 HandoffStatus = Literal["done", "blocked", "failed"]

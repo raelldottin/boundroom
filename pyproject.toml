@@ -8,6 +8,13 @@ dependencies = [
     "pydantic==2.14.2",
 ]
 
+[project.optional-dependencies]
+# SPEC-006: imported only when telemetry is on. Not in the sync manifest's runtime dependencies,
+# so a consumer without it still imports.
+telemetry = [
+    "logfire==5.4.0",
+]
+
 [dependency-groups]
 dev = [
     "ruff==0.17.4",
@@ -17,6 +24,8 @@ dev = [
     "coverage==7.17.0",
     "mkdocs-material==9.8.0",
     "pip-audit==2.10.1",
+    # So CI exercises the telemetry exporter; the same pin as the telemetry extra.
+    "logfire==5.4.0",
 ]
 
 [tool.uv]
@@ -27,7 +36,9 @@ package = false
 pythonpath = ["."]
 testpaths = ["automation/tests"]
 python_files = ["test_*.py"]
-addopts = "-ra"
+# Logfire, a dev dependency for the telemetry exporter, installs a pytest plugin that reads the
+# environment on every test call; the knowledge tests count every environment read (SPEC-007 CP-1).
+addopts = "-ra -p no:logfire"
 
 [tool.coverage.run]
 source = ["automation"]
