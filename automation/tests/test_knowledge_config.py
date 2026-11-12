@@ -396,6 +396,49 @@ def test_cp7_the_repository_can_neither_declare_the_app_nor_record_the_decision(
     assert f"{field}: the repository can't" in message
 
 
+# SD-11 (RA-KNOW-011): Slack capture keeps nothing longer than the shorter retention
+
+
+@pytest.mark.parametrize("operator_days, workspace_days, kept", [(30, 7, 7), (3, 7, 3), (30, None, 30)])
+def test_sd11_slack_capture_keeps_the_shorter_of_the_operator_s_and_the_workspace_s_retention(
+    operator_days, workspace_days, kept
+):
+    entry = slack_capture(retention_days=operator_days)
+    if workspace_days is not None:
+        entry["workspace_retention_days"] = workspace_days
+
+    (platform,) = parse(KnowledgeConfig, {"platforms": [entry]}).platforms
+
+    assert (platform.workspace_retention_days, platform.capture_retention_days) == (workspace_days, kept)
+
+
+@pytest.mark.parametrize(
+    "entry, reason",
+    [
+        (lambda: slack(workspace_retention_days=7), "the source role is not enabled"),
+        (lambda: discord(workspace_retention_days=7), "only a Slack entry"),
+        (lambda: slack_capture(workspace_retention_days=0), "workspace_retention_days"),
+        (lambda: slack_capture(workspace_retention_days="7"), "workspace_retention_days"),
+    ],
+    ids=["interface only", "discord", "zero", "a string"],
+)
+def test_sd11_a_workspace_retention_is_recorded_only_for_slack_capture(entry, reason):
+    assert reason in refusal(KnowledgeConfig, {"platforms": [entry()]})
+
+
+def test_sd11_the_repository_can_not_record_the_workspace_s_retention_and_dropping_capture_drops_it():
+    message = refusal(
+        RepositoryKnowledgeScope, {"platforms": [{"kind": "slack", "workspace": SLACK_WS, "workspace_retention_days": 1}]}
+    )
+    assert "workspace_retention_days: the workspace's own retention" in message
+
+    configured = operator(slack_capture(workspace_retention_days=7))
+    (kept,) = narrow(configured, scope({"kind": "slack", "workspace": SLACK_WS, "retention_days": 5})).platforms
+    assert (kept.retention_days, kept.workspace_retention_days, kept.capture_retention_days) == (5, 7, 5)
+    (interface,) = narrow(configured, scope({"kind": "slack", "workspace": SLACK_WS, "roles": ["interface"]})).platforms
+    assert (interface.roles, interface.workspace_retention_days) == (frozenset({"interface"}), None)
+
+
 # CP-11: credentials stay out of the configuration, its errors and its output
 
 

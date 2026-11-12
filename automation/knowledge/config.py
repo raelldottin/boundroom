@@ -14,7 +14,9 @@ What this module guarantees:
 - **Each platform on its own (CP-2).** Every entry becomes its own ``PlatformSelection``, with
   exactly the roles the operator wrote. Enabling Discord says nothing about Slack, and the reverse.
 - **Slack capture waits on the terms decision (CP-7).** Slack's ``source`` role is refused unless
-  the entry records the owner's decision on Slack's API terms and declares an internal app.
+  the entry records the owner's decision on Slack's API terms and declares an internal app. Such an
+  entry may also record the workspace's own message retention, ``workspace_retention_days``, so
+  capture keeps nothing longer than the shorter of it and ``retention_days`` (SD-11).
 - **No token in the configuration, its errors or its repr (CP-11).** Credentials are references,
   ``{"env": NAME}`` or ``{"file": /absolute/path}``. Anything shaped like a Slack, Discord or GitHub
   token is refused by where it is, never by what it is, and every model hides its input in errors.
@@ -124,6 +126,10 @@ REPOSITORY_PLATFORM_REFUSALS: dict[str, str] = {
     "credentials": "the repository can't hold or name a credential (SPEC-007, Configuration)",
     "app": "the repository can't declare the Slack app. Only the operator can (SPEC-007 CP-7)",
     "slack_terms_decision": "the repository can't record the owner's Slack terms decision (SPEC-007 CP-7)",
+    "workspace_retention_days": (
+        "the workspace's own retention is the operator's record of the workspace. "
+        "The repository can shorten retention_days instead (SPEC-007 part 2, SD-11)"
+    ),
 }
 
 
@@ -252,6 +258,10 @@ class PlatformConfig(Config):
     credentials: Credentials
     app: Optional[Literal["internal", "distributed"]] = None
     slack_terms_decision: Optional[SlackTermsDecision] = None
+    # The Slack workspace's own message retention, as its admins set it. Slack offers no API to read
+    # it outside Enterprise Grid, which is out of scope, so the operator records it. Absent means the
+    # workspace keeps messages indefinitely, and ``retention_days`` alone bounds capture.
+    workspace_retention_days: Optional[Annotated[StrictInt, Field(ge=1)]] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -287,6 +297,11 @@ class PlatformConfig(Config):
             if name not in needed and present:
                 raise ValueError(f"credentials.{name}: {self.kind} doesn't use one")
 
+        if self.workspace_retention_days is not None:
+            if self.kind != "slack":
+                raise ValueError("workspace_retention_days: only a Slack entry records its workspace's retention")
+            if "source" not in self.roles:
+                raise ValueError(f"workspace_retention_days: the source role is not enabled on {where}")
         if self.kind == "discord":
             if self.app is not None:
                 raise ValueError("app: only a Slack entry declares its app type")
@@ -312,6 +327,12 @@ class PlatformConfig(Config):
 
     def destination(self, share: ShareDestination) -> Place:
         return Place(platform=self.kind, workspace=self.workspace, channel=share.channel, thread=share.thread)
+
+    @property
+    def capture_retention_days(self) -> Optional[int]:
+        """How long captured evidence may be kept: the shorter of the operator's and the workspace's (SD-11)."""
+        days = [d for d in (self.retention_days, self.workspace_retention_days) if d is not None]
+        return min(days) if days else None
 
     def secrets(self) -> dict[str, SecretRef]:
         return {name: ref for name in ("bot_token", "app_token") if (ref := getattr(self.credentials, name)) is not None}
@@ -470,6 +491,8 @@ def narrow(config: KnowledgeConfig, scope: RepositoryKnowledgeScope) -> Knowledg
             "roles": roles,
             "channels": ChannelAllowlists(**channels),
             "retention_days": retention if "source" in roles else None,
+            # The workspace's retention is recorded only for capture, so it goes with the source role.
+            "workspace_retention_days": platform.workspace_retention_days if "source" in roles else None,
         }
         # Interface-only fields go with the interface role, as they would in an operator's entry.
         if "interface" in roles:
