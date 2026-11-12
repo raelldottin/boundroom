@@ -1,0 +1,11 @@
+{
+  "id": "1100000000000000001",
+  "name": "Synthetic guild",
+  "owner_id": "1100000000000000900",
+  "roles": [{"id": "1100000000000000001", "name": "@everyone", "permissions": "68608"}],
+  "channels": [],
+  "threads": [],
+  "members": [],
+  "member_count": 3,
+  "unavailable": false
+}

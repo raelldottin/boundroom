@@ -51,6 +51,12 @@ from automation.knowledge.platform import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KNOWLEDGE = REPO_ROOT / "automation/knowledge"
+# The modules the boundary tests must find, so a scan that silently skipped one would fail.
+KNOWLEDGE_MODULES = (
+    "automation.knowledge.platform",
+    "automation.knowledge.config",
+    "automation.knowledge.discord_adapter",
+)
 
 INTERFACE: frozenset[Role] = frozenset({"interface"})
 SOURCE: frozenset[Role] = frozenset({"source"})
@@ -676,7 +682,7 @@ def test_the_knowledge_package_imports_nothing_across_the_trust_boundary():
         module = ".".join(relative.parent.parts if is_package else relative.parts)
         scanned[module] = boundary_violations(path.read_text(encoding="utf-8"), module, is_package=is_package)
 
-    assert {"automation.knowledge", "automation.knowledge.platform", "automation.knowledge.config"} <= scanned.keys()
+    assert set(KNOWLEDGE_MODULES) | {"automation.knowledge"} <= scanned.keys()
     assert {module: found for module, found in scanned.items() if found} == {}
 
 
@@ -729,5 +735,5 @@ def test_importing_the_knowledge_package_loads_nothing_across_the_trust_boundary
 
     assert result.returncode == 0, result.stderr
     loaded = result.stdout.split()
-    assert {"automation.knowledge.platform", "automation.knowledge.config"} <= set(loaded)
+    assert set(KNOWLEDGE_MODULES) <= set(loaded)
     assert [name for name in loaded if any(name == m or name.startswith(m + ".") for m in FORBIDDEN_MODULES)] == []

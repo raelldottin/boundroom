@@ -1,0 +1,18 @@
+{
+  "id": "1300000000000000004",
+  "application_id": "1100000000000000800",
+  "type": 2,
+  "token": "SYNTHETIC-PLACEHOLDER-not-a-credential",
+  "version": 1,
+  "context": 1,
+  "channel_id": "1300000000000000005",
+  "channel": {"id": "1300000000000000005", "type": 1},
+  "user": {"id": "1100000000000000201", "username": "synthetic-user", "discriminator": "0"},
+  "locale": "en-US",
+  "data": {
+    "id": "1100000000000000700",
+    "name": "ask",
+    "type": 1,
+    "options": [{"name": "question", "type": 3, "value": "what did the private channel decide?"}]
+  }
+}

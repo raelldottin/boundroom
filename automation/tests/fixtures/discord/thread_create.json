@@ -1,0 +1,19 @@
+{
+  "id": "1300000000000000001",
+  "type": 11,
+  "guild_id": "1100000000000000001",
+  "parent_id": "1100000000000000101",
+  "owner_id": "1100000000000000201",
+  "name": "where is the runbook",
+  "last_message_id": null,
+  "message_count": 0,
+  "member_count": 1,
+  "permission_overwrites": [],
+  "thread_metadata": {
+    "archived": false,
+    "auto_archive_duration": 1440,
+    "archive_timestamp": "2026-11-12T00:00:00+00:00",
+    "locked": false
+  },
+  "newly_created": true
+}
