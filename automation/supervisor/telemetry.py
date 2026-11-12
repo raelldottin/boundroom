@@ -245,6 +245,15 @@ def _span_record(span: Any) -> dict[str, Any]:
     }
 
 
+def without_root(text: Optional[str], repo_root: Path) -> Optional[str]:
+    """A reason with the repository's absolute path cut out, so a span never records where the
+    checkout lives on someone's machine, which names them."""
+    if not text:
+        return text
+    root = str(repo_root.resolve())
+    return text.replace(root + "/", "").replace(root, ".")
+
+
 def new_run_id() -> str:
     """A run id that sorts by time and can't collide between two runs started in the same second."""
     return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"

@@ -239,19 +239,26 @@ def _resolve_parent(parent_mode: Optional[str], reasons: list[str]) -> str:
 # --- the slice allowlist --------------------------------------------------------------------------
 
 
-def slice_settings(slice_record: Mapping[str, Any], policy: Mapping[str, Any], profile: RunnerProfile) -> dict[str, Any]:
-    """The per-slice ``--settings`` file: a pure function of the slice record and policy (PS-11).
+def slice_settings(
+    slice_record: Mapping[str, Any], policy: Mapping[str, Any], profile: RunnerProfile, handoff: Optional[str] = None
+) -> dict[str, Any]:
+    """The per-slice ``--settings`` file: a pure function of the slice record, the policy and the
+    handoff path the supervisor chose (PS-11). Nothing an agent or a repository file writes adds a rule.
 
     Deny rules win over allow rules in Claude Code, so the supervisor-owned paths, ``.git`` and
-    ``.claude`` stay denied even inside an allowed path (PS-12).
+    ``.claude`` stay denied even inside an allowed path (PS-12). Claude Code applies only ``Edit``
+    rules to its file tools, and ``Edit`` covers every one of them, so there are no ``Write`` rules.
     """
     allowed = list(slice_record["allowed_paths"])
-    allow = [f"{tool}({path})" for path in allowed for tool in ("Edit", "Write")]
+    allow = [f"Edit({path})" for path in allowed]
+    if handoff:
+        # The handoff is the one file every slice must write, wherever its allowed paths are.
+        allow.append(f"Edit({handoff})")
     allow += [f"Bash({command})" for command in slice_record.get("required_validations", [])]
-    allow += ["Bash(git status)", "Bash(git diff:*)", "Bash(git commit:*)", "Bash(git push)"]
+    allow += ["Bash(git status)", "Bash(git diff:*)", "Bash(git rev-list:*)", "Bash(git commit:*)", "Bash(git push)"]
     allow += [f"Bash(git add {path})" for path in allowed]
     owned = list(policy.get("supervisor_owned_paths", []))
-    deny = [f"{tool}({path})" for path in (*owned, ".git/**", ".claude/**") for tool in ("Edit", "Write")]
+    deny = [f"Edit({path})" for path in (*owned, ".git/**", ".claude/**")]
     deny += ["Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/**)", "WebFetch", "WebSearch"]
     permissions: dict[str, Any] = {"allow": allow, "deny": deny}
     if profile.mode:
@@ -262,7 +269,10 @@ def slice_settings(slice_record: Mapping[str, Any], policy: Mapping[str, Any], p
             "enabled": True,
             "failIfUnavailable": True,
             "allowUnsandboxedCommands": False,
-            "excludedCommands": ["git push"],
+            # The sandbox turns the .git deny rule into a write block, so git add and commit run
+            # outside it; the allowlist above still limits them to the slice's paths (RA-SET-009).
+            # An entry without a wildcard matches only the bare command, so these carry " *".
+            "excludedCommands": ["git add *", "git commit *", "git push"],
             "network": {"allowedDomains": []},
         }
     return settings
@@ -270,7 +280,11 @@ def slice_settings(slice_record: Mapping[str, Any], policy: Mapping[str, Any], p
 
 @contextmanager
 def runner_environment(
-    slice_record: Mapping[str, Any], policy: Mapping[str, Any], profile: RunnerProfile, environ: Mapping[str, str]
+    slice_record: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    profile: RunnerProfile,
+    environ: Mapping[str, str],
+    handoff: Optional[str] = None,
 ) -> Generator[dict[str, str], None, None]:
     """The runner's environment, with the slice settings file in a temporary directory.
 
@@ -286,7 +300,7 @@ def runner_environment(
             env.pop(RUNNER_MODE_ENV, None)
         else:
             path = directory / "settings.json"
-            path.write_text(json.dumps(slice_settings(slice_record, policy, profile), indent=2) + "\n", encoding="utf-8")
+            path.write_text(json.dumps(slice_settings(slice_record, policy, profile, handoff), indent=2) + "\n", encoding="utf-8")
             env[RUNNER_SETTINGS_ENV] = str(path)
             env[RUNNER_MODE_ENV] = str(profile.mode)
         yield env

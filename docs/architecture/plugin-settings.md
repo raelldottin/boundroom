@@ -228,14 +228,14 @@ Matching the parent can give a runner wide permissions. So the rule that no work
 
 ### The slice allowlist
 
-The supervisor writes a per-slice settings file **outside the repository** (in the run's temporary directory) and passes it with `--settings`. Claude Code ignores an untrusted project's own `.claude/settings.json`, as the canary found, so this file is the only source of permissions. It's built from the slice record, not from anything the agent wrote:
+The supervisor writes a per-slice settings file **outside the repository** (in the run's temporary directory) and passes it with `--settings`. Claude Code ignores an untrusted project's own `.claude/settings.json`, as the canary found, so this file is the only source of permissions. It's built from the slice record, the policy and the handoff path the supervisor chose, not from anything the agent wrote:
 
 - **Allow:**
-  - `Edit` and `Write` for each of the slice's `allowed_paths`;
+  - `Edit` for each of the slice's `allowed_paths`, and for the slice's handoff file. Claude Code applies only `Edit` rules to its file tools, and `Edit` covers every one of them, so there are no `Write` rules;
   - `Bash` for each of the slice's `required_validations`, exactly as written;
-  - `git status`, `git diff`, `git add` for the allowed paths, `git commit`, and `git push` to the current branch's upstream. The runner prompt requires committing and pushing before a clean stop.
+  - `git status`, `git diff`, `git rev-list`, `git add` for the allowed paths, `git commit`, and `git push` to the current branch's upstream. The runner prompt requires committing and pushing before a clean stop.
 - **Deny, which wins over allow:**
-  - `Edit` and `Write` for the policy's `supervisor_owned_paths`, `.git/**` and `.claude/**`;
+  - `Edit` for the policy's `supervisor_owned_paths`, `.git/**` and `.claude/**`;
   - `Read` for `~/.ssh/**`, `~/.aws/**` and `~/.config/**`;
   - `WebFetch` and `WebSearch`.
 - **Reads** inside the repository need no rule.
@@ -243,6 +243,7 @@ The supervisor writes a per-slice settings file **outside the repository** (in t
   - Writes are limited to the repository and the per-user temp directory.
   - The network allowlist is empty.
   - `git push` is listed in `excludedCommands`: Claude Code's sandbox proxy doesn't carry plain SSH, and the push still needs its allow rule.
+  - `git add *` and `git commit *` are listed in `excludedCommands` too. The sandbox turns the `.git/**` deny rule into a write block, so inside it a commit can't create `.git/index.lock`. An entry without a wildcard matches only the bare command, hence the ` *`. Outside the sandbox, the allow rules still limit these commands to the slice's paths, and the file tools still can't touch `.git`. An excluded command is not a sandbox boundary: `git commit` runs the consumer's own hooks unsandboxed, which the runner can't edit because `.git/**` is denied to it.
 - **The runner prompt** gains a short "What you may run" list generated from the same file, so the agent doesn't spend turns on calls that will be denied.
 
 A denied call isn't a supervisor error. If the agent can't finish within its allowlist, its handoff reports the blocker, and the slice fails or blocks through the existing gates. That's the safe outcome.
