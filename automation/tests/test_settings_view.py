@@ -22,7 +22,7 @@ MARKERS = ("MARKER-HEADER-TOKEN", "MARKER-OPERATOR-TOKEN", "MARKER-MEMORY-KEY", 
 GOLDEN_QUICK = """\
 Boundroom settings (quick view)          run with --all for everything
   runner                   auto                               default
-  claude profile           none: bypassPermissions            default
+  claude profile           bounded                            default
   slices per run           2                                  repository queue.policy.consecutive_autonomous_limit
   agent command            from policy                        repository queue.policy.agent_command_template
   work source              queue automation/queue/slices.json default
@@ -30,8 +30,6 @@ Boundroom settings (quick view)          run with --all for everything
   telemetry                off                                default
   supervisor owned paths   automation/queue/slices.json, automation/handoffs/ repository queue.policy.supervisor_owned_paths
   handoff timeout seconds  1800                               repository queue.policy.handoff_timeout_seconds
-Warnings
-  ! a Claude runner starts in bypassPermissions; choose a profile with BOUNDROOM_CLAUDE_PROFILE
 """
 
 

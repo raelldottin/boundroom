@@ -11,9 +11,9 @@ To see the values in effect, run `python3 automation/supervisor/settings_view.py
 | Setting | Class | Default | Flags | Variables | Repository | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | `runner` | security | `auto` |  | `BOUNDROOM_AGENT_RUNNER, REPO_AUTOMATION_AGENT_RUNNER` |  | Which agent harness runs the slice; auto means the one the call came from. One of auto, codex, claude, hermes. |
-| `claude_permission_mode` | security | `bypassPermissions` |  | `BOUNDROOM_CLAUDE_PERMISSION_MODE, REPO_AUTOMATION_CLAUDE_PERMISSION_MODE` |  | The permission mode a Claude Code runner starts in. |
-| `claude_profile` | security |  | `--runner-profile` | `BOUNDROOM_CLAUDE_PROFILE` |  | The Claude Code runner profile. Unset keeps claude_permission_mode's behavior until RA-SET-010. One of parent, bounded, edits, unbounded, custom. |
-| `claude_profile_ceiling` | security | computed |  | `BOUNDROOM_CLAUDE_PROFILE_CEILING` |  | The most a Claude runner may get; edits by default, unbounded when the machine is declared isolated. One of bounded, edits, unbounded. |
+| `claude_permission_mode` | security | `bypassPermissions` |  | `BOUNDROOM_CLAUDE_PERMISSION_MODE, REPO_AUTOMATION_CLAUDE_PERMISSION_MODE` |  | Overrides the Claude runner's permission mode, with no profile, when set alone. run_agent.sh called without the supervisor still defaults to it. |
+| `claude_profile` | security | `bounded` | `--runner-profile` | `BOUNDROOM_CLAUDE_PROFILE` |  | The Claude Code runner profile; bounded by default since v0.4.0. claude_permission_mode alone overrides it. One of parent, bounded, edits, unbounded, custom. |
+| `claude_profile_ceiling` | security | computed | `--runner-profile-ceiling` | `BOUNDROOM_CLAUDE_PROFILE_CEILING` |  | The most a Claude runner may get; edits by default, unbounded when the machine is declared isolated. One of bounded, edits, unbounded. |
 | `claude_isolated` | security |  |  | `BOUNDROOM_CLAUDE_ISOLATED` |  | 1 declares this run is in a container or VM, which lets the ceiling admit unbounded. |
 | `claude_settings` | security |  |  | `BOUNDROOM_CLAUDE_SETTINGS` |  | The operator's own Claude Code settings file, for the custom profile. |
 | `codex_bin` | advanced | `codex` |  | `BOUNDROOM_CODEX_BIN, REPO_AUTOMATION_CODEX_BIN, OWLORY_CODEX_BIN` |  | The Codex executable. |

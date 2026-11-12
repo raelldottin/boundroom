@@ -80,7 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runner-profile",
         choices=runner_profile.PROFILES,
-        help="Claude Code runner profile (SPEC-008). Unset keeps BOUNDROOM_CLAUDE_PERMISSION_MODE's behavior.",
+        help="Claude Code runner profile (SPEC-008): bounded by default; BOUNDROOM_CLAUDE_PERMISSION_MODE alone overrides it.",
+    )
+    parser.add_argument(
+        "--runner-profile-ceiling",
+        choices=runner_profile.CEILINGS,
+        help="The most a Claude runner may get, whatever its profile asks for (SPEC-008).",
     )
     telemetry_settings.add_flags(parser)
     return parser
@@ -203,7 +208,7 @@ def _run(args: argparse.Namespace) -> int:
     report_file = report_file_for(args.report_file, repo_root)
     profile = None
     if runner_profile.configured(vars(args), os.environ):
-        profile = runner_profile.choose(vars(args), os.environ, runner_profile.parent_launch_mode())
+        profile = runner_profile.choose(vars(args), os.environ)
     profile_record = profile.record() if profile else None
     try:
         tracer = telemetry.configure(

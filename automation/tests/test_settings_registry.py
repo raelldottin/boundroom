@@ -17,12 +17,22 @@ from pydantic import BaseModel
 from automation.context.memory import MemoryConfig
 from automation.schemas.models import SliceQueue
 from automation.schemas.models import RepositoryTelemetry
-from automation.supervisor import evaluate_handoff, kanban_projection, operator_status, run_next, settings, telemetry_settings
+from automation.supervisor import (
+    evaluate_handoff,
+    kanban_projection,
+    operator_status,
+    run_next,
+    runner_profile,
+    settings,
+    telemetry_settings,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUN_AGENT = REPO_ROOT / "automation/supervisor/run_agent.sh"
 SYNC_TOOL = REPO_ROOT / "Tools/boundroom-sync.sh"
 ENV_NAME = re.compile(r"\b(?:BOUNDROOM|REPO_AUTOMATION|OWLORY)_[A-Z0-9_]*[A-Z0-9]\b")
+# Defaults that runner_profile.choose applies, rather than the parser (SPEC-008 RA-SET-010).
+APPLIED_IN_CODE = {"claude_profile": runner_profile.DEFAULT_PROFILE, "claude_profile_ceiling": settings.COMPUTED}
 # Flags in skill text that belong to other tools, not to Boundroom's entry points. The settings
 # view's own flags choose a view; they aren't settings.
 OTHER_TOOLS_FLAGS = {"--help", "--match-head-commit", "--all", "--json", "--explain"}
@@ -162,6 +172,9 @@ class DefaultsTests(unittest.TestCase):
                         self.assertIsNone(action.default)
                     elif action.default is not None:
                         self.assertEqual(setting.default, action.default)
+                    elif setting.id in APPLIED_IN_CODE:
+                        # The flag has no default because the profile's default is applied when it's chosen.
+                        self.assertEqual(APPLIED_IN_CODE[setting.id], setting.default)
                     else:
                         self.assertIsNone(setting.default)
 
