@@ -1,6 +1,6 @@
 # SPEC-005: Rename repo-automation to Boundroom
 
-Status: **proposed** in the pull request that implements it. Merging that pull request, after a person's approving review, accepts it. It amends the names in [SPEC-002](agent-plugin.md) and in the [workflow](../workflows/boundroom.md). It doesn't change any rule, gate or control.
+Status: **accepted and released** (raelldottin/boundroom#195, merged 2026-11-11 after the owner's approval; released in [`v0.3.0`](https://github.com/raelldottin/boundroom/releases/tag/v0.3.0) on 2026-11-12). It amends the names in [SPEC-002](agent-plugin.md) and in the [workflow](../workflows/boundroom.md). It doesn't change any rule, gate or control.
 
 Owner decisions recorded here (2026-11-11): the GitHub repository was renamed `raelldottin/boundroom` (raelldottin/boundroom#194). The owner then asked for the product itself to be renamed: the plugin, the tools and the identifiers, not only the URL.
 
@@ -76,8 +76,8 @@ The plugin's skills are named `boundroom-*` from then on. The plugin carries no 
 ## Rollout
 
 1. This pull request: the rename, the compatibility layer and this spec, with the version set to `0.3.0`. A person other than the author approves it, and the required checks pass at the approved head.
-2. A person creates the `v0.3.0` tag on the merge commit, or approves a named tag, after `python3 Tools/check_plugin_version.py v0.3.0` passes.
-3. Each install moves as shown above. The owner's own Claude Code install moves first.
+2. A person creates the `v0.3.0` tag on the merge commit, or approves a named tag, after `python3 Tools/check_plugin_version.py v0.3.0` passes. **Done 2026-11-12:** the owner pushed `v0.3.0` on `3524379`, a later commit on `main` that includes #195. The bot's push of the approved tag was refused, because the release-tag ruleset admits only the admin role. `release.yml` published `boundroom-v0.3.0.tar.gz` and its `.sha256`, and the checksum verifies.
+3. Each install moves as shown above. The owner's own Claude Code install moves first. **Done 2026-11-12 for the owner's Claude Code:** `boundroom@boundroom` 0.3.0 is installed from the `v0.3.0` marketplace, and `repo-automation@repo-automation` is removed.
 4. Owlory: the owner updates the lock's `remote`. Then a sync pull request from `v0.3.0` follows, under the usual consumer rules. Renaming Owlory's lock and make targets, if wanted, is Owlory's own pull request.
 5. No earlier than `v0.4.0`, and by a separate decision: remove the old environment names, the stub script and the pointer page.
 
