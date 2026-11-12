@@ -45,6 +45,8 @@
 | **Static analysis (code scanning, for example CodeQL)** | **Gap: not configured.** No analyses exist. | Code-scanning alerts |
 | Private vulnerability reporting (`SECURITY.md`) | Enforced since 2026-11-10: repository security setting | Security advisories |
 
+| Supervisor telemetry is off by default and goes only to a destination the user names (SPEC-006) | Enforced in code and tests: no SDK import, file or connection while off; no built-in destination and `send_to_logfire=False`; the kill switch wins; ambient `OTEL_*` and `LOGFIRE_*` are ignored; the repository can only reduce; plain `http://` only to loopback. Sending agent activity from the company machine to a hosted destination remains the owner's data-handling decision. | `test_telemetry_settings.py`, `test_telemetry_exporter.py`, each run's `telemetry` report block |
+
 ## Build and artifact integrity: SOC 2 CC8.1, CC7.1; CIS 2, build pipelines, and 4, artifacts
 
 | Control | Status | Evidence |
