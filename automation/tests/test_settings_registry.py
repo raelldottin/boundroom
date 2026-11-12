@@ -27,6 +27,14 @@ ENV_NAME = re.compile(r"\b(?:BOUNDROOM|REPO_AUTOMATION|OWLORY)_[A-Z0-9_]*[A-Z0-9
 OTHER_TOOLS_FLAGS = {"--help", "--match-head-commit"}
 
 
+def knowledge_service(path: Path) -> bool:
+    """The knowledge service is deployed separately with its own configuration (SPEC-007), and its
+    BOUNDROOM_KNOWLEDGE_* names are secret references the operator chooses, not supervisor settings.
+    """
+    relative = path.relative_to(REPO_ROOT).as_posix()
+    return relative.startswith("automation/knowledge/") or path.name.startswith("test_knowledge_")
+
+
 def parser_options(parser: argparse.ArgumentParser) -> set[str]:
     return {option for action in parser._actions for option in action.option_strings if option not in ("-h", "--help")}
 
@@ -82,7 +90,7 @@ class CompletenessTests(unittest.TestCase):
         found: set[str] = set()
         for root in (REPO_ROOT / "automation", REPO_ROOT / "Tools"):
             for path in root.rglob("*"):
-                if path.suffix in {".py", ".sh"} and path.is_file():
+                if path.suffix in {".py", ".sh"} and path.is_file() and not knowledge_service(path):
                     found |= set(ENV_NAME.findall(path.read_text(encoding="utf-8")))
         # run_agent.sh builds the legacy names from a list of suffixes, so they aren't written out.
         suffixes = re.search(r"for legacy_suffix in (.*?); do", RUN_AGENT.read_text(encoding="utf-8"), re.S)
