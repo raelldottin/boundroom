@@ -11,8 +11,8 @@ variable the code reads, every policy-model field and every flag a skill mention
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from dataclasses import dataclass, field
+from typing import Any, Literal, Mapping, Optional
 
 EntryPoint = Literal["run_next", "evaluate_handoff", "kanban_projection", "sync"]
 SettingClass = Literal["secret", "internal", "security", "essential", "advanced", "outside"]
@@ -53,6 +53,10 @@ class Setting:
     operator_file: Optional[str] = None
     # Shown in the quick view only when this other setting has this value.
     only_when: Optional[tuple[str, str]] = None
+    # A boolean setting that forces this one to ``off_value`` whatever else is set, and the value
+    # of ``env`` that does the same. Telemetry's kill switch is the one use.
+    kill_switch: Optional[str] = None
+    off_value: Any = None
 
     @property
     def secret(self) -> bool:
@@ -369,6 +373,8 @@ SETTINGS: tuple[Setting, ...] = (
         repository_fields=_policy_fields("telemetry.mode"),
         repository_rule="narrow-only",
         operator_file="telemetry.json:mode",
+        kill_switch="telemetry_kill_switch",
+        off_value="off",
     ),
     *(
         Setting(
@@ -638,3 +644,159 @@ def env_names() -> dict[str, Setting]:
 
 def repository_fields() -> dict[str, Setting]:
     return {field: setting for setting in SETTINGS for field in setting.repository_fields}
+
+
+# --- the resolver (RA-SET-002) -------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Sources:
+    """What one invocation can read a setting from. Every mapping is optional.
+
+    ``flags`` is the parsed command line (``vars(args)``), ``repository`` maps the dotted
+    paths in ``Setting.repository_fields`` to values (see ``repository_values``), and
+    ``operator`` maps ``<file>:<key>`` to values from the operator's files.
+    """
+
+    entry_point: Optional[EntryPoint] = None
+    flags: Mapping[str, Any] = field(default_factory=dict)
+    environ: Mapping[str, str] = field(default_factory=dict)
+    operator: Mapping[str, Any] = field(default_factory=dict)
+    repository: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Step:
+    """One source in a setting's precedence chain, whether it was set, and what happened to it."""
+
+    source: str  # kill switch, flag, env, legacy env, operator file, repository or default
+    name: str  # the option, variable, file key or field
+    is_set: bool
+    value: Any = None
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class Resolution:
+    setting: Setting
+    value: Any
+    source: str
+    chain: tuple[Step, ...]
+    refused: tuple[str, ...] = ()
+    legacy_in_effect: Optional[str] = None
+
+    @property
+    def is_default(self) -> bool:
+        return self.source == "default"
+
+
+def _dest(option: str) -> str:
+    return option.lstrip("-").replace("-", "_")
+
+
+def _is_set(value: Any) -> bool:
+    # argparse gives None for an absent option and False for an absent store_true. An empty string
+    # counts as absent too, as `args.x or fallback` and the shell's ${X:-default} both treat it.
+    return value is not None and value is not False and value != ""
+
+
+def repository_values(
+    queue_policy: Optional[Mapping[str, Any]] = None,
+    overlay: Optional[Mapping[str, Any]] = None,
+    memory: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    """Flatten the repository's files into the dotted paths the registry names."""
+    roots: dict[str, Any] = {"queue": {"policy": queue_policy or {}}, "overlay": overlay or {}, "memory": memory or {}}
+    values: dict[str, Any] = {}
+    for path in repository_fields():
+        node: Any = roots
+        for part in path.split("."):
+            node = node.get(part) if isinstance(node, Mapping) else None
+        if node is not None:
+            values[path] = node
+    return values
+
+
+def _narrower(setting: Setting, candidate: Any, current: Any) -> bool:
+    """Whether ``candidate`` is a strictly lower level than ``current`` in the setting's choices."""
+    if not setting.choices or candidate not in setting.choices or current not in setting.choices:
+        return False
+    return setting.choices.index(candidate) < setting.choices.index(current)
+
+
+def resolve(setting_id: str, sources: Sources) -> Resolution:
+    """A setting's effective value, the source that decided it, and its whole precedence chain.
+
+    Kill switch, then flags, then the ``BOUNDROOM_*`` variable, then its legacy names (read only
+    when the new name is unset, SPEC-005), then the operator's file, then the repository, then
+    the default. A ``narrow-only`` repository value is applied last, as a cap: it wins only when
+    it is lower than what the other sources chose, and is refused otherwise.
+    """
+    setting = BY_ID[setting_id]
+    chain: list[Step] = []
+    candidates: list[tuple[str, Any]] = []
+    legacy_in_effect: Optional[str] = None
+
+    for flag in setting.flags:
+        if sources.entry_point is not None and flag.entry_point != sources.entry_point:
+            continue
+        value = sources.flags.get(_dest(flag.options[0]))
+        chain.append(Step("flag", flag.options[0], _is_set(value), value if _is_set(value) else None))
+        if _is_set(value):
+            candidates.append(("flag", value))
+    if setting.env:
+        value = sources.environ.get(setting.env)
+        chain.append(Step("env", setting.env, _is_set(value), value, "empty: treated as unset" if value == "" else ""))
+        if _is_set(value):
+            candidates.append(("env", value))
+    new_is_set = bool(setting.env) and setting.env in sources.environ
+    for name in setting.legacy_env:
+        value = sources.environ.get(name)
+        if not _is_set(value):
+            chain.append(Step("legacy env", name, False))
+        elif new_is_set or legacy_in_effect:
+            chain.append(Step("legacy env", name, True, value, "ignored: a newer name is set"))
+        else:
+            chain.append(Step("legacy env", name, True, value, f"use {setting.env}" if setting.env else ""))
+            candidates.append(("legacy env", value))
+            legacy_in_effect = name
+    if setting.operator_file:
+        value = sources.operator.get(setting.operator_file)
+        chain.append(Step("operator file", setting.operator_file, value is not None, value))
+        if value is not None:
+            candidates.append(("operator file", value))
+    repository: list[tuple[str, Any]] = [
+        (path, sources.repository[path]) for path in setting.repository_fields if path in sources.repository
+    ]
+    if setting.repository_rule == "any":
+        for path, value in repository:
+            chain.append(Step("repository", path, True, value))
+            candidates.append(("repository", value))
+    chain.append(Step("default", "default", True, setting.default))
+
+    source, value = candidates[0] if candidates else ("default", setting.default)
+    if candidates and legacy_in_effect and source != "legacy env":
+        legacy_in_effect = None
+
+    refused: list[str] = []
+    if setting.repository_rule == "narrow-only":
+        for path, candidate in repository:
+            if _narrower(setting, candidate, value):
+                chain.append(Step("repository", path, True, candidate, "applied: the repository may lower this"))
+                source, value = "repository", candidate
+            elif candidate == value:
+                chain.append(Step("repository", path, True, candidate, "same as the effective value"))
+            else:
+                reason = f"{path}={candidate!r} refused: the repository may only lower {setting.id}"
+                chain.append(Step("repository", path, True, candidate, reason))
+                refused.append(reason)
+
+    if setting.kill_switch:
+        kill = resolve(setting.kill_switch, sources)
+        env_off = setting.env is not None and sources.environ.get(setting.env) == setting.off_value
+        if kill.value is True or env_off:
+            name = kill.chain[0].name if kill.value is True else f"{setting.env}={setting.off_value}"
+            chain.insert(0, Step("kill switch", name, True, setting.off_value, "always wins"))
+            source, value = "kill switch", setting.off_value
+
+    return Resolution(setting, value, source, tuple(chain), tuple(refused), legacy_in_effect)
