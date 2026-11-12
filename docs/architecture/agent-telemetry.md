@@ -201,7 +201,7 @@ Four canary slices ran on the owner's machine. Each used a disposable consumer s
   - a failed slice had no `boundroom.board.record` span, although the board was written;
   - the `boundroom.decision` span's `reason` carried the handoff's absolute path, which names the person whose machine it is. Reasons now have the repository's path cut out (`telemetry.without_root`).
 - **The fourth run passed.** It used commit `dbbcde6` of the fix branch. The runner committed and pushed, the supervisor stopped for review, and the board moved the task to `review` with no approval event. The span tree under `boundroom.run` was `select`, `context`, `claim`, `agent_session`, `handoff.evaluate`, `decision` and `board.record`, in that order. All spans shared one `trace_id`, which joins the decision report. The file held ids, digests, counts, verdicts and reason text only: no prompt, handoff or file content, no absolute path, and no username.
-- **Not met by design: the runner's own spans.** In `file` mode the runner gets `TRACEPARENT` and `OTEL_RESOURCE_ATTRIBUTES` only. Claude Code has no file exporter, and adding a local collector would be new software. So no runner span nests under `agent_session`. This criterion can be checked only in the `otlp` canary.
+- **Not met by design: the runner's own spans.** In `file` mode the runner gets `TRACEPARENT` and `OTEL_RESOURCE_ATTRIBUTES` only. Claude Code has no file exporter, and adding a local collector would be new software. So no runner span nests under `agent_session`. This criterion can be checked only in the `otlp` canary. By the owner's decision below, that canary doesn't run on the company machine.
 - **Ambient settings were left alone.** The parent session had `CLAUDE_CODE_ENABLE_TELEMETRY` set. The report listed it under `runner_passthrough`, and Boundroom didn't change it (UD-9).
 
 ## Alternatives considered
@@ -212,6 +212,8 @@ Four canary slices ran on the owner's machine. Each used a disposable consumer s
 - **Parsing session files after the run.** It works without new dependencies and stays possible as a `file`-mode fallback, but it gives no live view and no runner correlation.
 
 ## Open decisions for the owner
+
+**Decided by the owner (2026-11-12):** on the company computer, telemetry runs in `file` mode only; no trace leaves that machine. This settles decision 2 for that machine and decision 1 there (`file`). The `otlp` canary, and with it RA-TEL-007's runner-spans criterion, wait for an approved machine or hosted environment, like the other machine-limited work in the product roadmap. Decisions 3 to 6 apply only once such a destination exists.
 
 1. **Which destinations you'll use for live runs.** Boundroom has no default, so this is your runtime choice, not a code change. The options are `file`, an OTLP backend you run (open source, such as SigNoz, OpenObserve or Jaeger), or a hosted service's OTLP address. Logfire self-hosting is an Enterprise plan.
 2. **Company machine.** On the company computer, only Claude Code is approved. `file` mode needs only the Python package. Sending agent activity from that machine to a hosted service, Logfire or otherwise, is a company data-handling decision, not the agent's.

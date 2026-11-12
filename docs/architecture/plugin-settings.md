@@ -281,7 +281,7 @@ The canaries ran on the owner's machine with Claude Code only, capped at $5 per 
 
 **A resolver fix from the Manual case.** Claude Code 2.1 reports Manual mode as `manual`, which the resolver didn't know, so it fell back to `bounded` without the sandbox. `manual` now resolves like `default`. A mode the code doesn't know now gets the fallback with the sandbox, as PS-17 says for an unknown parent.
 
-**Open item for the owner.** A runner's commits in a consumer carry whatever Git identity the machine has, which on the owner's machine is the owner's name. Whether runner commits should carry an agent identity is a decision for the owner, not a change made here.
+**Runner commits carry the machine's Git identity (owner's decision, 2026-11-12).** A runner's commits in a consumer use whatever Git identity the machine has, which on the owner's machine is the owner's name. The owner chose to keep it that way, so Boundroom sets no author or committer for the runner. The slice id, the handoff and the board record are what show that a commit came from a supervised run.
 
 **The benchmark is unaffected.** Its lanes set `BOUNDROOM_AGENT_RUNNER: hermes`, and the Claude profile applies only to the Claude runner.
 
