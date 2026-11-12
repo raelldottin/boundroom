@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -18,11 +19,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from automation.context import memory
 from automation.context.build_context import build_context_bundle
-from automation.supervisor import board_backend, kanban_projection, kanban_writer, local_board, policy
+from automation.supervisor import board_backend, kanban_projection, kanban_writer, local_board, policy, telemetry_settings
 
 # Time a Kanban claim outlives the agent's handoff timeout, for the validation replay and the record.
 CLAIM_MARGIN_SECONDS = 30 * 60
 EX_USAGE = 64  # sysexits.h; the runner wrapper uses the same code for a bad runner value
+EX_CONFIG = 78  # sysexits.h: required telemetry that can't be enabled
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hermes", default="hermes", help="Command that runs the Hermes CLI, for writes to a Hermes board.")
     parser.add_argument("--memory-config", help="Operator-reviewed Hindsight project-to-bank map (JSON) to recall from.")
     parser.add_argument("--memory-project", help="Project whose granted bank each context bundle recalls from.")
+    telemetry_settings.add_flags(parser)
     return parser
 
 
@@ -148,6 +151,14 @@ def main() -> int:
         store = JsonQueue(repo_root / args.queue)
 
     queue_data = store.load()
+    telemetry = telemetry_settings.resolve(flags=vars(args), environ=os.environ, repository=queue_data["policy"].get("telemetry"))
+    for message in telemetry.messages:
+        print(message, file=sys.stderr)
+    if telemetry.refusal:
+        print(f"stop: {telemetry.refusal}", file=sys.stderr)
+        return EX_CONFIG
+    telemetry_report = telemetry.report()
+
     active = policy.active_slice(queue_data)
     if active is not None:
         print(f"stop: queue already has in_progress slice {active['slice_id']}", file=sys.stderr)
@@ -212,6 +223,7 @@ def main() -> int:
                 "validation_ownership": context_bundle["validation_ownership"],
                 "allowed_paths": next_slice["allowed_paths"],
                 "context_documents": [doc["path"] for doc in context_bundle["documents"]],
+                "telemetry": telemetry_report,
             }
             if args.include_blocked:
                 report["blocked_slices"] = [
@@ -237,7 +249,11 @@ def main() -> int:
         def fail(reason: str, exit_code: int = 2) -> int:
             store.set_status(current, "failed", reason, handoff_path)
             report = make_failure_report(
-                slice_record=current, reason=reason, completed_runs=completed_runs, autonomous_limit=autonomous_limit
+                slice_record=current,
+                reason=reason,
+                completed_runs=completed_runs,
+                autonomous_limit=autonomous_limit,
+                telemetry=telemetry_report,
             )
             print(json.dumps(report, indent=2))
             return exit_code
@@ -305,7 +321,11 @@ def main() -> int:
         print(
             json.dumps(
                 make_decision_report(
-                    slice_record=next_slice, decision=decision, completed_runs=completed_runs, autonomous_limit=autonomous_limit
+                    slice_record=next_slice,
+                    decision=decision,
+                    completed_runs=completed_runs,
+                    autonomous_limit=autonomous_limit,
+                    telemetry=telemetry_report,
                 ),
                 indent=2,
             )
@@ -438,9 +458,13 @@ def format_validation_ownership(validation_ownership: list[dict]) -> str:
 
 
 def make_decision_report(
-    slice_record: dict, decision: policy.CompletionDecision, completed_runs: int, autonomous_limit: int
+    slice_record: dict,
+    decision: policy.CompletionDecision,
+    completed_runs: int,
+    autonomous_limit: int,
+    telemetry: Optional[dict] = None,
 ) -> dict:
-    return {
+    return _with_telemetry(telemetry) | {
         "slice_id": slice_record["slice_id"],
         "queue_status": decision.queue_status,
         "decision": decision.decision,
@@ -459,8 +483,15 @@ def make_decision_report(
     }
 
 
-def make_failure_report(slice_record: dict, reason: str, completed_runs: int, autonomous_limit: int) -> dict:
-    return {
+def _with_telemetry(telemetry: Optional[dict]) -> dict:
+    """The decision report's ``telemetry`` block (SPEC-006), present once a run has resolved it."""
+    return {} if telemetry is None else {"telemetry": telemetry}
+
+
+def make_failure_report(
+    slice_record: dict, reason: str, completed_runs: int, autonomous_limit: int, telemetry: Optional[dict] = None
+) -> dict:
+    return _with_telemetry(telemetry) | {
         "slice_id": slice_record["slice_id"],
         "queue_status": "failed",
         "decision": "stop_failed",

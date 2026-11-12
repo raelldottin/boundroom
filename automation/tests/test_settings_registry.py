@@ -16,7 +16,8 @@ from pydantic import BaseModel
 
 from automation.context.memory import MemoryConfig
 from automation.schemas.models import SliceQueue
-from automation.supervisor import evaluate_handoff, kanban_projection, run_next, settings
+from automation.schemas.models import RepositoryTelemetry
+from automation.supervisor import evaluate_handoff, kanban_projection, run_next, settings, telemetry_settings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUN_AGENT = REPO_ROOT / "automation/supervisor/run_agent.sh"
@@ -108,11 +109,18 @@ class CompletenessTests(unittest.TestCase):
             | fields(policy_model, "queue.policy")
             | fields(kanban_projection.KanbanOverlay, "overlay")
             | fields(policy_model, "overlay.policy")
+            | fields(RepositoryTelemetry, "queue.policy.telemetry")
+            | fields(RepositoryTelemetry, "overlay.policy.telemetry")
             | fields(MemoryConfig, "memory")
             | fields(budgets_model, "memory.budgets")
         )
         self.assertEqual(set(), expected - known, "fields with no registry entry")
         self.assertEqual(set(), known - expected, "registry entries for fields that don't exist")
+
+    def test_every_operator_file_key_is_registered(self) -> None:
+        registered = {setting.operator_file for setting in settings.SETTINGS if setting.operator_file}
+        expected = {f"telemetry.json:{name}" for name in telemetry_settings.OperatorTelemetry.model_fields}
+        self.assertEqual(expected, registered)
 
     def test_ps4_every_flag_a_skill_mentions_is_registered(self) -> None:
         registered = {option for entry_point in settings.ENTRY_POINTS for option in settings.flags_for(entry_point)}

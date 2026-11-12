@@ -1,6 +1,6 @@
 # SPEC-006: Traceable agent runs with Logfire and OpenTelemetry
 
-Status: **accepted (raelldottin/boundroom#196, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request and needs its own approval. Nothing here is implemented yet.
+Status: **accepted (raelldottin/boundroom#196, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request and needs its own approval. RA-TEL-001, the settings model and resolution (`automation/supervisor/telemetry_settings.py`), is implemented; the other slices aren't, so nothing is exported yet.
 
 Owner request recorded here (2026-11-11): use Logfire to make every agent interaction auditable and traceable, in every lane the plugin can start, with the user able to configure it.
 
@@ -56,7 +56,7 @@ Today a supervised run leaves its record in separate places: the queue or board 
 
 **Standard variables set for other tools are ignored.** `OTEL_EXPORTER_OTLP_*`, `OTEL_TRACES_EXPORTER` and `LOGFIRE_*` in the user's shell don't configure Boundroom. A user who set them for another tool hasn't chosen Boundroom telemetry, so their mere presence must not send Boundroom's traces anywhere. See requirement UD-6.
 
-**The repository can reduce telemetry, never redirect or widen it.** The repository's block may only set `mode` to `off`, lower `capture` or `runner` to `metadata` or `off`, or name the `environment`. It can't turn telemetry on, choose a destination, or raise the capture level. A file a slice can edit must not decide where the agent's activity is sent. Claude Code makes the same choice: repository settings there can't enable telemetry or choose its destination.
+**The repository can reduce telemetry, never redirect or widen it.** The repository's block may only set `mode` to `off`, lower `capture` or `runner` to `metadata` or `off`, or name the `environment`. It can't turn telemetry on, choose a destination, or raise the capture level. A file a slice can edit must not decide where the agent's activity is sent. Claude Code makes the same choice: repository settings there can't enable telemetry or choose its destination. Because it can only reduce, the repository's block is applied after the sources above, as a cap: its `mode: off` turns off telemetry that the operator turned on, and its `capture` or `runner` lowers a higher level. It never raises one. Its `environment` applies only when no other source named one. If telemetry is `required` and the repository's block turns it off, the run is refused rather than run unobserved (RA-TEL-001).
 
 **The resolved settings are reported, without secrets.** The decision report gets a `telemetry` block (`mode`, the destination's scheme and host only, `capture`, `runner`, `environment`, `trace_id`, and which source turned it on). `boundroom-status` prints the settings that would apply, or `telemetry: off (default)`. Headers, tokens, URL paths and query strings are never printed.
 
