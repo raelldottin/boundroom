@@ -10,10 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shlex
+import sys
 from pathlib import Path
 from unittest import mock
 
 from automation.supervisor import telemetry
+from automation.supervisor.telemetry_settings import resolve
 from automation.tests import test_run_next_local_board as local
 
 consumer = local.consumer
@@ -89,3 +93,77 @@ def test_an_exporter_failure_changes_neither_the_verdict_nor_the_exit_code(
         traced = outcome(("--telemetry", "file", "--telemetry-file-dir", str(tmp_path / "spans")), "failing")
 
     assert traced == untraced
+
+
+class FakeSession:
+    def get_span_context(self):  # type: ignore[no-untyped-def]
+        return mock.Mock(trace_id=int("ab" * 16, 16), span_id=int("cd" * 8, 16))
+
+
+def settings_for(**flags: object):  # type: ignore[no-untyped-def]
+    return resolve(flags=flags, environ={}, operator_file=None)
+
+
+def test_ud9_off_gives_the_runner_nothing():
+    runner = telemetry.runner_environment(settings_for(), {}, None, "r", "S-1")
+    assert runner.variables == {} and runner.passthrough == ()
+
+
+def test_ud9_on_gives_the_trace_context_and_attributes_only_unless_runner_is_on():
+    settings = settings_for(telemetry="otlp", telemetry_endpoint="https://c.example.test")
+    runner = telemetry.runner_environment(settings, {}, FakeSession(), "r1", "S-1")
+    assert runner.variables == {
+        "TRACEPARENT": f"00-{'ab' * 16}-{'cd' * 8}-01",
+        "OTEL_RESOURCE_ATTRIBUTES": "boundroom.run_id=r1,boundroom.slice_id=S-1",
+    }
+    kept = telemetry.runner_environment(settings, {"OTEL_RESOURCE_ATTRIBUTES": "team=x"}, FakeSession(), "r1", "S-1")
+    assert "OTEL_RESOURCE_ATTRIBUTES" not in kept.variables
+
+
+def test_ud9_runner_metadata_points_claude_code_at_the_users_endpoint_and_never_raw_bodies():
+    settings = settings_for(telemetry="otlp", telemetry_endpoint="https://c.example.test", telemetry_runner="metadata")
+    runner = telemetry.runner_environment(settings, {}, FakeSession(), "r", "S-1")
+    assert runner.variables["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+    assert runner.variables["OTEL_EXPORTER_OTLP_ENDPOINT"] == "https://c.example.test"
+    assert "OTEL_LOG_USER_PROMPTS" not in runner.variables
+    content = settings_for(telemetry="otlp", telemetry_endpoint="https://c.example.test", telemetry_runner="content")
+    detailed = telemetry.runner_environment(content, {}, FakeSession(), "r", "S-1").variables
+    assert detailed["OTEL_LOG_USER_PROMPTS"] == detailed["OTEL_LOG_TOOL_DETAILS"] == "1"
+    assert telemetry.NEVER_SET not in detailed
+
+
+def test_ud9_a_users_own_runner_settings_pass_through_unchanged():
+    settings = settings_for(telemetry="otlp", telemetry_endpoint="https://c.example.test", telemetry_runner="metadata")
+    environ = {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://mine.example.test"}
+    runner = telemetry.runner_environment(settings, environ, FakeSession(), "r", "S-1")
+    assert set(runner.variables) == {"TRACEPARENT", "OTEL_RESOURCE_ATTRIBUTES"}
+    assert runner.passthrough == ("OTEL_EXPORTER_OTLP_ENDPOINT",)
+    assert runner.report()["runner_passthrough"] == ["OTEL_EXPORTER_OTLP_ENDPOINT"]
+
+
+def test_file_mode_sets_no_runner_exporter_and_says_why():
+    settings = settings_for(telemetry="file", telemetry_file_dir="/var/tmp/x", telemetry_runner="metadata")
+    runner = telemetry.runner_environment(settings, {}, FakeSession(), "r", "S-1")
+    assert set(runner.variables) == {"TRACEPARENT", "OTEL_RESOURCE_ATTRIBUTES"}
+    assert "otlp" in runner.note
+
+
+def test_the_runner_sees_the_agent_sessions_trace_context(consumer, agent, no_hermes, monkeypatch, capsys, tmp_path):
+    def run(name: str, extra: tuple[str, ...]) -> tuple[dict, dict]:
+        board = local.Board(tmp_path / name, tasks=1)
+        seen = tmp_path / f"{name}-env.json"
+        code = f"import json, os; json.dump(dict(os.environ), open({json.dumps(str(seen))}, 'w'))"
+        dump = f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
+        command = f"{dump} && {shlex.quote(sys.executable)} {shlex.quote(str(agent))} {{handoff_file}} {{slice_id}} 0"
+        assert local.supervise(monkeypatch, board, agent, extra=(*extra, "--agent-cmd", command)) == 0
+        return json.loads(capsys.readouterr().out), json.loads(seen.read_text(encoding="utf-8"))
+
+    file_dir = tmp_path / "spans"
+    report, env = run("on", ("--telemetry", "file", "--telemetry-file-dir", str(file_dir)))
+    session = next(r for r in spans(file_dir) if r["name"] == "boundroom.agent_session")
+    assert env["TRACEPARENT"] == f"00-{report['telemetry']['trace_id']}-{session['span_id']}-01"
+    assert report["telemetry"]["runner_variables"] == ["OTEL_RESOURCE_ATTRIBUTES", "TRACEPARENT"]
+
+    _, quiet = run("off", ())
+    added = {name for name in quiet if name not in os.environ}
+    assert not {name for name in added if name.startswith(("OTEL_", "CLAUDE_CODE_", "TRACEPARENT"))}

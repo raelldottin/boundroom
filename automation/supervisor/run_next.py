@@ -354,6 +354,11 @@ def _run(args: argparse.Namespace) -> int:
 
             try:
                 with tracer.span("boundroom.agent_session", slice_id=next_slice["slice_id"]) as session:
+                    runner_telemetry = telemetry.runner_environment(
+                        telemetry_settings_resolved, os.environ, session, tracer.run_id, next_slice["slice_id"]
+                    )
+                    if tracer.enabled:
+                        telemetry_report.update(runner_telemetry.report())
                     exit_code = run_agent(
                         repo_root=repo_root,
                         queue_data=queue_data,
@@ -362,6 +367,7 @@ def _run(args: argparse.Namespace) -> int:
                         handoff_path=handoff_path,
                         command_template=agent_command_template,
                         profile=profile,
+                        extra_env=runner_telemetry.variables,
                     )
                     tracer.annotate(session, exit_code=exit_code)
             except Exception as error:  # pragma: no cover - last-resort queue recovery
@@ -457,6 +463,7 @@ def run_agent(
     handoff_path: Path,
     command_template: str,
     profile: Optional[runner_profile.RunnerProfile] = None,
+    extra_env: Optional[dict[str, str]] = None,
 ) -> int:
     timeout_seconds = queue_data["policy"]["handoff_timeout_seconds"]
     prompt_text = render_prompt(
@@ -483,10 +490,13 @@ def run_agent(
     )
 
     try:
+        # Only telemetry's trace context and, when asked for, the runner's exporter (SPEC-006 UD-9).
+        environ = {**os.environ, **extra_env} if extra_env else None
         if profile is None:
-            result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds)
+            result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds, env=environ)
             return result.returncode
-        with runner_profile.runner_environment(slice_record, queue_data["policy"], profile, os.environ) as env:
+        # The profile builds on that environment, so its own variables win (SPEC-008).
+        with runner_profile.runner_environment(slice_record, queue_data["policy"], profile, environ or os.environ) as env:
             result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds, env=env)
             return result.returncode
     finally:

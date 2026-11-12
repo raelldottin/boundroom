@@ -255,3 +255,74 @@ def trace_id(span: Any) -> Optional[str]:
     if span is None:
         return None
     return f"{span.get_span_context().trace_id:032x}"
+
+
+# The variables Claude Code reads to export its own telemetry. If the user exported any of them,
+# they chose their runner's telemetry themselves: Boundroom then sets none of these, so it never
+# adds to or redirects a choice the user made (UD-9).
+RUNNER_DESTINATION_VARIABLES = (
+    "CLAUDE_CODE_ENABLE_TELEMETRY",
+    "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_LOGS_EXPORTER",
+    "OTEL_METRICS_EXPORTER",
+    "OTEL_EXPORTER_OTLP_PROTOCOL",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_HEADERS",
+    "OTEL_LOG_USER_PROMPTS",
+    "OTEL_LOG_TOOL_DETAILS",
+)
+# Exports the whole conversation. Boundroom never sets it, whatever the capture level.
+NEVER_SET = "OTEL_LOG_RAW_API_BODIES"
+
+
+@dataclass(frozen=True)
+class RunnerTelemetry:
+    variables: dict[str, str]  # what Boundroom adds to the runner's environment
+    passthrough: tuple[str, ...]  # runner telemetry variables the user had already exported
+    note: str = ""
+
+    def report(self) -> dict[str, Any]:
+        """Names only, never values: the headers among them are secrets."""
+        return {
+            "runner_variables": sorted(self.variables),
+            "runner_passthrough": list(self.passthrough),
+            "runner_note": self.note,
+        }
+
+
+def runner_environment(settings: TelemetrySettings, environ: Any, session: Any, run_id: str, slice_id: str) -> RunnerTelemetry:
+    """What the runner gets, for its spans to nest under ``boundroom.agent_session`` (RA-TEL-004).
+
+    Nothing at all while Boundroom telemetry is off (UD-1). With it on, the trace context always;
+    the runner's own exporter only when ``runner`` isn't off and the destination is the user's
+    OTLP endpoint (UD-9).
+    """
+    if not settings.enabled or session is None:
+        return RunnerTelemetry({}, ())
+    context = session.get_span_context()
+    variables = {"TRACEPARENT": f"00-{context.trace_id:032x}-{context.span_id:016x}-01"}
+    if "OTEL_RESOURCE_ATTRIBUTES" not in environ:
+        variables["OTEL_RESOURCE_ATTRIBUTES"] = f"boundroom.run_id={run_id},boundroom.slice_id={slice_id}"
+    passthrough = tuple(name for name in (*RUNNER_DESTINATION_VARIABLES, NEVER_SET) if name in environ)
+    if settings.runner == "off":
+        return RunnerTelemetry(variables, passthrough)
+    if passthrough:
+        return RunnerTelemetry(variables, passthrough, "the user set the runner's telemetry; Boundroom left it as it is")
+    if settings.mode != "otlp":
+        return RunnerTelemetry(
+            variables, passthrough, "runner telemetry needs an otlp destination; file mode traces the supervisor only"
+        )
+    variables |= {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+        "OTEL_TRACES_EXPORTER": "otlp",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": str(settings.endpoint),
+    }
+    if settings.headers:
+        variables["OTEL_EXPORTER_OTLP_HEADERS"] = ",".join(f"{name}={value}" for name, value in settings.headers.items())
+    if settings.runner == "content":
+        variables |= {"OTEL_LOG_USER_PROMPTS": "1", "OTEL_LOG_TOOL_DETAILS": "1"}
+    return RunnerTelemetry(variables, passthrough)
