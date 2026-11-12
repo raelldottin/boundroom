@@ -35,7 +35,7 @@ The benchmark's environment allowlists (`automation/benchmark/adapter.py` and `l
 
 | Name | Why it stays |
 | --- | --- |
-| The GitHub App `repo-automation-agent` and its bot `repo-automation-agent[bot]` | The owner controls the app's settings. Renaming it changes the bot's login, which the [control map](../compliance/controls.md), the audit trail and the agent's local configuration all name. That is the owner's change, and it can come later. |
+| The GitHub App `repo-automation-agent` and its bot `repo-automation-agent[bot]` | The owner controls the app's settings. Renaming it changes the bot's login, which the [control map](../compliance/controls.md), the audit trail and the agent's local configuration all name. That is the owner's change, and it can come later. **Done:** renamed to `bound-room-agent`, then to `boundroom-agent` (2026-11-12). The App ID and bot user id are unchanged. |
 | Board actors `repo-automation-supervisor` and `repo-automation-board` in `local_board.py` | They are written into each board's event log. Changing them would split one actor's history in two. |
 | The benchmark's provenance key `repo_automation_sha` | It is stored in every result file, and comparisons across runs read it. |
 | Owlory's `make repo-automation-check` and `make repo-automation-import` | Owlory's `Makefile` defines them, and the sync script never writes a consumer's `Makefile`. Owlory's owner can rename them in an Owlory pull request. |
