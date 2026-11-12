@@ -134,6 +134,9 @@ Live canaries need an approved host, the platform owner's approval for the works
 
 ## Open decisions for the owner
 
+**Decided by the owner (2026-11-12):** decision 2. **An internal Slack app may keep a derived index of its own workspace's messages.** A distributed app may not. This lets RA-KNOW-011, Slack's `source` role, be built. It stays off unless the operator enables it per workspace with `app: "internal"` and the recorded `slack_terms_decision` the configuration already requires (CP-7), and capture still follows part 2's data rules. Decisions 1 and 3 to 6 remain open, so no workspace is connected yet.
+
+
 1. **Which platforms first,** and for which workspaces: a personal Discord guild, a personal Slack workspace, or a company workspace.
 2. **Slack capture under Slack's API terms.** Whether an internal app may keep a derived index of its own workspace's messages. This is a reading of a legal agreement, not a technical call. Until it's recorded, Slack is an `interface` only.
 3. **A company Slack or Discord workspace.** Installing an app there, and storing derived knowledge from it, is the company's decision: its workspace admins, security and legal.
