@@ -312,6 +312,14 @@ Each slice is one pull request by the agent, approved by a person.
 
 ## Open decisions for the owner
 
+**Decided by the owner (2026-11-12):**
+- **Decision 1, the runner's default:** **`bounded`**, not `parent`. From `v0.4.0` (RA-SET-010), a supervised Claude Code runner starts in `bounded`: `dontAsk`, the slice allowlist, and the sandbox with `failIfUnavailable`, whatever the parent session runs, unless the user chooses another profile. `BOUNDROOM_CLAUDE_PERMISSION_MODE` stays an explicit override, and `BOUNDROOM_CLAUDE_PROFILE=unbounded` with `BOUNDROOM_CLAUDE_ISOLATED=1` is the way back to today's behavior. The rest of decision 1 (the `edits` ceiling, the $5 cap, `git push`) stands as proposed.
+- **Decision 2, `userConfig`:** every setting the user may configure is configurable, and telemetry above all is configured only by the user and is **off by default**. RA-SET-006 ships `userConfig` options for the runner profile, its ceiling and each non-secret telemetry setting (mode, `file_dir`, endpoint, capture, runner telemetry), none with a default, so an empty option changes nothing. Headers stay out, because they are secrets.
+- **Canaries:** RA-SET-009 and SPEC-006's RA-TEL-007 may run on the owner's machine with Claude Code on a disposable local board, capped at $5 per slice, **after** their pull requests are merged.
+
+Still open: decision 3 (requiring Claude Code 2.1.271 for fixed-choice pickers; until then the options are free text and the supervisor validates them) and decision 4 as far as hosted destinations go.
+
+
 1. **The runner profile's details,** proposed in [A safer default](#a-safer-default-for-the-claude-code-runner): `parent` as the default after the canary; the default ceiling of `edits` unless isolation is declared, which means a bypass-mode parent's runner gets `edits`; `bounded` as the fallback for an unknown parent; the $5 per-slice cap; allowing `git push`; and `v0.4.0` for the switch.
 2. **Which `userConfig` options to ship:** `claude_profile` after RA-SET-008, and the telemetry options after SPEC-006.
 3. **Whether to require Claude Code 2.1.271** for fixed-choice `options` pickers.
