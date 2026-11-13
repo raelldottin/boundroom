@@ -118,6 +118,49 @@ def test_a_failing_agent_under_single_slice_fails_one_and_leaves_the_second_queu
     assert (report["slice_id"], report["queue_status"], report["autonomous_run_limit"]) == (FIRST, "failed", 1)
 
 
+def git_head(path: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_the_report_names_the_commits_and_can_go_to_a_file(queue, monkeypatch, capsys, tmp_path):
+    """RA-PROD-105: a reviewer gets both commit identities, and a clean JSON copy of the report."""
+    path, _ = queue
+    consumer = path.parents[2]
+    base = git_head(consumer)
+    report_file = tmp_path / "reports.jsonl"
+
+    assert supervise(monkeypatch, "--single-slice", "--report-file", str(report_file)) == 0
+
+    printed = json.loads(capsys.readouterr().out)
+    (written,) = [json.loads(line) for line in report_file.read_text(encoding="utf-8").splitlines()]
+    assert written == printed
+    assert (written["base_sha"], written["head_sha"]) == (base, git_head(consumer))
+
+
+def test_a_failure_report_names_the_commits_too(queue, monkeypatch, capsys, tmp_path):
+    path, log = queue
+    consumer = path.parents[2]
+    base = git_head(consumer)
+    failing = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(3)'"
+
+    assert supervise(monkeypatch, "--single-slice", "--agent-cmd", failing) != 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert (report["queue_status"], report["base_sha"], report["head_sha"]) == ("failed", base, base)
+
+
+def test_a_report_file_inside_the_repository_is_refused_before_claiming(queue, monkeypatch, capsys):
+    path, log = queue
+    before = path.read_bytes()
+
+    assert supervise(monkeypatch, "--single-slice", "--report-file", str(path.parent / "report.jsonl")) == 2
+
+    assert "outside the repository" in capsys.readouterr().err
+    assert runs(log) == [] and path.read_bytes() == before
+
+
 @pytest.mark.parametrize(
     "flags",
     [

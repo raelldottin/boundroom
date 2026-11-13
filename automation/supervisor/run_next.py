@@ -74,6 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--memory-config", help="Operator-reviewed Hindsight project-to-bank map (JSON) to recall from.")
     parser.add_argument("--memory-project", help="Project whose granted bank each context bundle recalls from.")
     parser.add_argument(
+        "--report-file",
+        help="Also append each report, one JSON object per line, to this file outside the repository.",
+    )
+    parser.add_argument(
         "--runner-profile",
         choices=runner_profile.PROFILES,
         help="Claude Code runner profile (SPEC-008). Unset keeps BOUNDROOM_CLAUDE_PERMISSION_MODE's behavior.",
@@ -196,6 +200,7 @@ def _run(args: argparse.Namespace) -> int:
         print(f"stop: {telemetry_settings_resolved.refusal}", file=sys.stderr)
         return EX_CONFIG
     telemetry_report = telemetry_settings_resolved.report()
+    report_file = report_file_for(args.report_file, repo_root)
     profile = None
     if runner_profile.configured(vars(args), os.environ):
         profile = runner_profile.choose(vars(args), os.environ, runner_profile.parent_launch_mode())
@@ -326,7 +331,7 @@ def _run(args: argparse.Namespace) -> int:
                         }
                         for blocked in policy.blocked_slice_reports(queue_data)
                     ]
-                print(json.dumps(report, indent=2))
+                emit(report, report_file)
                 return 0
 
             # The commit the slice starts from, read before anything is claimed: its own commits are
@@ -342,6 +347,10 @@ def _run(args: argparse.Namespace) -> int:
                 tracer.mark("boundroom.decision", verdict="failed", reason=telemetry.without_root(reason, repo_root))
                 store.set_status(current, "failed", reason, handoff_path)
                 tracer.mark("boundroom.board.record", verdict="failed")
+                try:
+                    head_sha: Optional[str] = policy.git_head(repo_root)
+                except Exception:  # the report must still go out if git itself is what failed
+                    head_sha = None
                 report = make_failure_report(
                     slice_record=current,
                     reason=reason,
@@ -349,8 +358,10 @@ def _run(args: argparse.Namespace) -> int:
                     autonomous_limit=autonomous_limit,
                     telemetry=telemetry_report,
                     runner_profile=profile_record,
+                    base_sha=base_commit_sha,
+                    head_sha=head_sha,
                 )
-                print(json.dumps(report, indent=2))
+                emit(report, report_file)
                 return exit_code
 
             try:
@@ -439,6 +450,8 @@ def _run(args: argparse.Namespace) -> int:
                 autonomous_limit=autonomous_limit,
                 telemetry=telemetry_report,
                 runner_profile=profile_record,
+                base_sha=base_commit_sha,
+                head_sha=post_run_commit_sha,
             )
             tracer.mark(
                 "boundroom.decision",
@@ -450,7 +463,7 @@ def _run(args: argparse.Namespace) -> int:
             store.set_status(next_slice, decision.queue_status, decision.stop_reason or decision.decision, handoff_path)
             tracer.mark("boundroom.board.record", verdict=decision.queue_status)
 
-            print(json.dumps(decision_report, indent=2))
+            emit(decision_report, report_file)
 
             if not decision.should_continue:
                 return 0
@@ -609,30 +622,65 @@ def make_decision_report(
     autonomous_limit: int,
     telemetry: Optional[dict] = None,
     runner_profile: Optional[dict] = None,
+    base_sha: Optional[str] = None,
+    head_sha: Optional[str] = None,
 ) -> dict:
-    return _with_telemetry(telemetry, runner_profile) | {
-        "slice_id": slice_record["slice_id"],
-        "queue_status": decision.queue_status,
-        "decision": decision.decision,
-        "reason": decision.stop_reason,
-        "recommended_next_slice": decision.recommended_next_slice,
-        "next_slice_id": decision.next_slice_id,
-        "changed_file_count": decision.changed_file_count,
-        "required_validation_failures": decision.required_validation_failures,
-        "missing_manual_proofs": decision.missing_manual_proofs,
-        "missing_proof_level": decision.missing_proof_level,
-        "supervisor_validation_replays": serialize_validation_replays(decision.supervisor_validation_replays),
-        "dirty_paths_outside_scope": decision.dirty_paths_outside_scope,
-        "files_touched_outside_scope": decision.files_touched_outside_scope,
-        "completed_autonomous_runs": completed_runs,
-        "autonomous_run_limit": autonomous_limit,
-    }
+    return (
+        _with_telemetry(telemetry, runner_profile)
+        | _commits(base_sha, head_sha)
+        | {
+            "slice_id": slice_record["slice_id"],
+            "queue_status": decision.queue_status,
+            "decision": decision.decision,
+            "reason": decision.stop_reason,
+            "recommended_next_slice": decision.recommended_next_slice,
+            "next_slice_id": decision.next_slice_id,
+            "changed_file_count": decision.changed_file_count,
+            "required_validation_failures": decision.required_validation_failures,
+            "missing_manual_proofs": decision.missing_manual_proofs,
+            "missing_proof_level": decision.missing_proof_level,
+            "supervisor_validation_replays": serialize_validation_replays(decision.supervisor_validation_replays),
+            "dirty_paths_outside_scope": decision.dirty_paths_outside_scope,
+            "files_touched_outside_scope": decision.files_touched_outside_scope,
+            "completed_autonomous_runs": completed_runs,
+            "autonomous_run_limit": autonomous_limit,
+        }
+    )
 
 
 def _with_telemetry(telemetry: Optional[dict], runner_profile: Optional[dict] = None) -> dict:
     """The ``telemetry`` block (SPEC-006) and, when a profile was chosen, the ``runner_profile`` block (SPEC-008)."""
     blocks = {} if telemetry is None else {"telemetry": telemetry}
     return blocks if runner_profile is None else blocks | {"runner_profile": runner_profile}
+
+
+def _commits(base_sha: Optional[str], head_sha: Optional[str]) -> dict:
+    """The commit the slice started from and the one it ended at, once a slice was claimed (RA-PROD-105)."""
+    return {} if base_sha is None else {"base_sha": base_sha, "head_sha": head_sha}
+
+
+def emit(report: dict, report_file: Optional[Path]) -> None:
+    """Print a report, and append it as one JSON line to the report file when there is one.
+
+    The agent's own output shares stdout, so a file is the clean way to hand a report to a tool
+    such as handoff_summary.py.
+    """
+    print(json.dumps(report, indent=2))
+    if report_file is not None:
+        with report_file.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(report, sort_keys=True) + "\n")
+
+
+def report_file_for(value: Optional[str], repo_root: Path) -> Optional[Path]:
+    """The report file, refused inside the repository: a write there would dirty the worktree."""
+    if not value:
+        return None
+    path = Path(value).expanduser().resolve()
+    try:
+        path.relative_to(repo_root.resolve())
+    except ValueError:
+        return path
+    raise policy.ConfigError("--report-file must be outside the repository")
 
 
 def make_failure_report(
@@ -642,24 +690,30 @@ def make_failure_report(
     autonomous_limit: int,
     telemetry: Optional[dict] = None,
     runner_profile: Optional[dict] = None,
+    base_sha: Optional[str] = None,
+    head_sha: Optional[str] = None,
 ) -> dict:
-    return _with_telemetry(telemetry, runner_profile) | {
-        "slice_id": slice_record["slice_id"],
-        "queue_status": "failed",
-        "decision": "stop_failed",
-        "reason": reason,
-        "recommended_next_slice": "",
-        "next_slice_id": None,
-        "changed_file_count": 0,
-        "required_validation_failures": [],
-        "missing_manual_proofs": [],
-        "missing_proof_level": False,
-        "supervisor_validation_replays": [],
-        "dirty_paths_outside_scope": [],
-        "files_touched_outside_scope": [],
-        "completed_autonomous_runs": completed_runs,
-        "autonomous_run_limit": autonomous_limit,
-    }
+    return (
+        _with_telemetry(telemetry, runner_profile)
+        | _commits(base_sha, head_sha)
+        | {
+            "slice_id": slice_record["slice_id"],
+            "queue_status": "failed",
+            "decision": "stop_failed",
+            "reason": reason,
+            "recommended_next_slice": "",
+            "next_slice_id": None,
+            "changed_file_count": 0,
+            "required_validation_failures": [],
+            "missing_manual_proofs": [],
+            "missing_proof_level": False,
+            "supervisor_validation_replays": [],
+            "dirty_paths_outside_scope": [],
+            "files_touched_outside_scope": [],
+            "completed_autonomous_runs": completed_runs,
+            "autonomous_run_limit": autonomous_limit,
+        }
+    )
 
 
 def serialize_validation_replays(replay_results: list[policy.ValidationReplayResult]) -> list[dict]:

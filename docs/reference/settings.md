@@ -35,6 +35,7 @@ To see the values in effect, run `python3 automation/supervisor/settings_view.py
 | `board_backend` | essential | `hermes` | `--board-backend` |  | `overlay.backend (any)` | The board's kind; defaults to the overlay's backend and must match it. One of hermes, local. |
 | `hermes_command` | advanced | `hermes` | `--hermes` |  |  | The command that runs the Hermes CLI, for writes to a Hermes board. |
 | `handoff_dir` | advanced | `automation/handoffs` | `--handoff-dir` |  |  | Where handoff artifacts are expected. |
+| `report_file` | advanced |  | `--report-file` |  |  | Also append each report as one JSON line to this file, outside the repository. |
 | `include_blocked` | advanced | `false` | `--include-blocked` |  |  | Report blocked and deferred slices when none is eligible. |
 | `dry_run` | advanced | `false` | `--dry-run` |  |  | Decide without launching an agent or changing the queue. |
 
