@@ -23,6 +23,16 @@ python3 automation/supervisor/run_next.py --single-slice
 
 You may append these flags when the user asks for them: `--dry-run`, `--include-blocked`, `--queue <path>`, `--handoff-dir <path>`, `--board <dir> --kanban-overlay <file>` (also spelled `--kanban-board`), `--board-backend local` or `--board-backend hermes`, `--memory-config <file> --memory-project <name>`.
 
+Your plugin options, set in Claude Code's `/config`, come next. For each line below whose value isn't empty, add its flag with exactly that value. Leave out any line whose value is empty: the supervisor's own default then applies, and telemetry stays off.
+
+- `--runner-profile` `${user_config.claude_profile}`
+- `--runner-profile-ceiling` `${user_config.claude_profile_ceiling}`
+- `--telemetry` `${user_config.telemetry}`
+- `--telemetry-capture` `${user_config.telemetry_capture}`
+- `--telemetry-runner` `${user_config.telemetry_runner}`
+
+These are the user's own standing choices, so passing them is the user asking. Don't add any other telemetry or profile flag unless the user asks for it in this request, and never put a header or token on the command line. If the supervisor refuses a value, report the refusal and don't change the value.
+
 A Kanban board can be a local board, which needs no Hermes, or a Hermes board. The overlay's `backend` says which, and the supervisor refuses a `--board-backend` that disagrees. Report that refusal; don't change the flag to get past it.
 
 Telemetry is off unless the user turns it on. Add a telemetry flag (`--telemetry`, `--telemetry-file-dir`, `--telemetry-endpoint`, `--telemetry-capture`, `--telemetry-runner`, `--telemetry-required` or `--no-telemetry`) only when the user asked for telemetry in this request, with exactly the values they gave. Never choose a destination for them, and never put a header or token on the command line: those come only from the user's own environment or `~/.config/boundroom/telemetry.json`.

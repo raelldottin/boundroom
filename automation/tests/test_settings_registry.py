@@ -7,6 +7,7 @@ can't appear without a registry entry, and the registry can't claim a default th
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import unittest
@@ -148,6 +149,49 @@ class CompletenessTests(unittest.TestCase):
             mentioned = set(re.findall(r"(?<![\w-])--[a-z][a-z-]*", skill.read_text(encoding="utf-8")))
             with self.subTest(skill=skill.parent.name):
                 self.assertEqual(set(), mentioned - registered - OTHER_TOOLS_FLAGS)
+
+
+# Each Claude Code userConfig option and the registry setting it supplies (SPEC-008 RA-SET-006).
+USER_CONFIG = {
+    "claude_profile": "claude_profile",
+    "claude_profile_ceiling": "claude_profile_ceiling",
+    "telemetry": "telemetry_mode",
+    "telemetry_capture": "telemetry_capture",
+    "telemetry_runner": "telemetry_runner",
+}
+
+
+class UserConfigTests(unittest.TestCase):
+    """PS-4: every userConfig option maps to a setting that qualifies, and the skill passes it."""
+
+    def setUp(self) -> None:
+        manifest = json.loads((REPO_ROOT / "plugins/boundroom/.claude-plugin/plugin.json").read_text(encoding="utf-8"))
+        self.options = manifest.get("userConfig", {})
+        self.skill = (REPO_ROOT / "plugins/boundroom/skills/boundroom-run-next/SKILL.md").read_text(encoding="utf-8")
+
+    def test_every_option_maps_to_a_qualifying_setting(self) -> None:
+        self.assertEqual(set(USER_CONFIG), set(self.options))
+        for key, setting_id in USER_CONFIG.items():
+            setting = settings.BY_ID[setting_id]
+            with self.subTest(option=key):
+                self.assertIn(setting.klass, ("security", "essential"))
+                self.assertFalse(setting.secret)
+                # Reachable without Claude Code, so Codex and Hermes users aren't left without it.
+                self.assertTrue(any(flag.entry_point == "run_next" for flag in setting.flags))
+
+    def test_no_option_has_a_default_or_holds_a_secret(self) -> None:
+        """An empty option changes nothing, so telemetry is off until the user sets it (owner's decision)."""
+        for key, option in self.options.items():
+            with self.subTest(option=key):
+                self.assertNotIn("default", option)
+                self.assertNotIn("header", key)
+                self.assertEqual("string", option["type"])
+
+    def test_the_skill_passes_each_option_with_its_settings_flag(self) -> None:
+        for key, setting_id in USER_CONFIG.items():
+            flag = next(f.options[0] for f in settings.BY_ID[setting_id].flags if f.entry_point == "run_next")
+            with self.subTest(option=key):
+                self.assertIn(f"`{flag}` `${{user_config.{key}}}`", self.skill)
 
 
 class DefaultsTests(unittest.TestCase):
