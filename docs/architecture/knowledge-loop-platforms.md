@@ -134,7 +134,16 @@ Live canaries need an approved host, the platform owner's approval for the works
 
 ## Open decisions for the owner
 
-**Decided by the owner (2026-11-12):** decision 2. **An internal Slack app may keep a derived index of its own workspace's messages.** A distributed app may not. This lets RA-KNOW-011, Slack's `source` role, be built. It stays off unless the operator enables it per workspace with `app: "internal"` and the recorded `slack_terms_decision` the configuration already requires (CP-7), and capture still follows part 2's data rules. Decisions 1 and 3 to 6 remain open, so no workspace is connected yet.
+**Decided by the owner (2026-11-12):** decision 2. **An internal Slack app may keep a derived index of its own workspace's messages.** A distributed app may not. This lets RA-KNOW-011, Slack's `source` role, be built. It stays off unless the operator enables it per workspace with `app: "internal"` and the recorded `slack_terms_decision` the configuration already requires (CP-7), and capture still follows part 2's data rules. 
+
+**Decided by the owner (2026-11-13):**
+
+- **Decision 3, company workspaces: never.** The knowledge loop connects to personal workspaces only. No company Slack or Discord workspace is ever connected, whatever its admins approve.
+- **Decision 4, hosting: a personal machine.** The live service runs on a machine the owner owns, never on the company computer.
+- **Decision 5, identity links: none.** No identity is linked across platforms, so a Slack question never draws on Discord evidence, or the reverse. This is the isolation RA-KNOW-010 enforces by default. The configuration's identity links stay unused.
+- **Decision 6, retention: 90 days.** Captured evidence is kept for 90 days, or less where a workspace's own retention policy is shorter.
+
+Decision 1, which personal platform and workspace come first, is deferred. So no workspace is connected yet, and nothing runs until the owner chooses one and deploys the service on that personal machine.
 
 
 1. **Which platforms first,** and for which workspaces: a personal Discord guild, a personal Slack workspace, or a company workspace.
