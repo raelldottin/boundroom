@@ -165,4 +165,7 @@ def test_a_runner_profile_adds_what_the_runner_may_run_to_the_prompt(consumer, a
 
     profiled = prompt_for("edits", ("--runner-profile", "edits"))
     assert "## What you may run" in profiled and "- `Edit(src/loop.py)`" in profiled
+    assert "## What you may run" in prompt_for("default", ())  # bounded by default since v0.4.0 (RA-SET-010)
+    # BOUNDROOM_CLAUDE_PERMISSION_MODE set alone is the one way to run with no profile.
+    monkeypatch.setenv("BOUNDROOM_CLAUDE_PERMISSION_MODE", "bypassPermissions")
     assert "## What you may run" not in prompt_for("plain", ())

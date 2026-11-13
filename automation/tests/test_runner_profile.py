@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from typing import Optional
 
@@ -150,9 +151,34 @@ class ChoiceTests(unittest.TestCase):
         with self.assertRaises(rp.ProfileRefused):
             choose("edits", BOUNDROOM_CLAUDE_PROFILE_CEILING="everything")
 
-    def test_without_a_profile_nothing_is_configured(self) -> None:
-        self.assertFalse(rp.configured({}, {}))
-        self.assertTrue(rp.configured({}, {"BOUNDROOM_CLAUDE_PROFILE": "edits"}))
+    def test_bounded_is_the_default_and_only_the_mode_override_alone_turns_profiles_off(self) -> None:
+        """SPEC-008 decision 1 (2026-11-12): bounded from v0.4.0 (RA-SET-010)."""
+        self.assertTrue(rp.configured({}, {}))
+        default = rp.choose({}, {}, None)
+        self.assertEqual(
+            ("bounded", "default", "dontAsk", True), (default.requested, default.requested_source, default.mode, default.sandbox)
+        )
+        self.assertFalse(rp.configured({}, {"BOUNDROOM_CLAUDE_PERMISSION_MODE": "acceptEdits"}))
+        both = {"BOUNDROOM_CLAUDE_PERMISSION_MODE": "acceptEdits", "BOUNDROOM_CLAUDE_PROFILE": "edits"}
+        self.assertTrue(rp.configured({}, both))
+        self.assertTrue(rp.configured({"runner_profile": "edits"}, {"BOUNDROOM_CLAUDE_PERMISSION_MODE": "acceptEdits"}))
+
+    def test_the_ceiling_flag_wins_over_its_variable(self) -> None:
+        profile = rp.choose(
+            {"runner_profile": "edits", "runner_profile_ceiling": "bounded"}, {"BOUNDROOM_CLAUDE_PROFILE_CEILING": "edits"}, None
+        )
+        self.assertEqual(("bounded", "flag --runner-profile-ceiling"), (profile.effective, profile.ceiling_source))
+
+    def test_the_process_tree_is_read_only_for_the_parent_profile(self) -> None:
+        with unittest.mock.patch.object(rp, "parent_launch_mode", side_effect=AssertionError("walked the tree")):
+            rp.choose({}, {})
+        with unittest.mock.patch.object(rp, "parent_launch_mode", return_value="acceptEdits") as walk:
+            self.assertEqual("edits", rp.choose({"runner_profile": "parent"}, {}).effective)
+        walk.assert_called_once()
+
+    def test_the_way_back_to_bypass_is_unbounded_and_isolated(self) -> None:
+        profile = rp.choose({}, {"BOUNDROOM_CLAUDE_PROFILE": "unbounded", "BOUNDROOM_CLAUDE_ISOLATED": "1"}, None)
+        self.assertEqual("bypassPermissions", profile.mode)
 
     def test_ps21_the_record_names_every_step(self) -> None:
         record = choose("parent", "bypassPermissions").record()

@@ -99,12 +99,14 @@ def warnings(resolutions: Mapping[str, settings.Resolution], environ: Mapping[st
         found += resolution.refused
     if resolutions["sync_allow_unverified_source"].value:
         found.append("--allow-unverified-source skips every source check; AGENTS.md forbids agents from using it")
-    profile = resolutions["claude_profile"]
-    if profile.value is None and resolutions["claude_permission_mode"].value == "bypassPermissions":
-        found.append("a Claude runner starts in bypassPermissions; choose a profile with BOUNDROOM_CLAUDE_PROFILE")
-    elif profile.value is not None:
+    if not runner_profile.configured({}, environ):
+        mode = resolutions["claude_permission_mode"].value
+        found.append(
+            f"BOUNDROOM_CLAUDE_PERMISSION_MODE={mode} overrides the Claude runner profile: no allowlist, sandbox or budget cap"
+        )
+    else:
         try:
-            chosen = runner_profile.choose({}, environ, runner_profile.parent_launch_mode())
+            chosen = runner_profile.choose({}, environ)
             if chosen.effective == "unbounded":
                 found.append("the Claude runner profile is unbounded: permission checks are bypassed")
         except runner_profile.ProfileRefused as error:
@@ -164,14 +166,14 @@ def quick_view(resolutions: Mapping[str, settings.Resolution], environ: Mapping[
         resolution = resolutions[setting_id]
         value = shown(resolution.setting, resolution.value, environ)
         if setting_id == "claude_profile":
-            if resolution.value is None:
+            if not runner_profile.configured({}, environ):
                 mode = resolutions["claude_permission_mode"]
-                add(label, f"none: {mode.value}", _source(mode))
+                add(label, f"overridden: {mode.value}", _source(mode))
             else:
                 try:
                     add(
                         label,
-                        runner_profile.choose({}, environ, runner_profile.parent_launch_mode()).chain(),
+                        runner_profile.choose({}, environ).chain(),
                         _source(resolution),
                     )
                 except runner_profile.ProfileRefused:

@@ -147,27 +147,43 @@ def parent_launch_mode(start_pid: Optional[int] = None) -> Optional[str]:
 # --- choosing the profile -------------------------------------------------------------------------
 
 
+# The default since v0.4.0, by the owner's decision (SPEC-008 decision 1, 2026-11-12).
+DEFAULT_PROFILE = "bounded"
+LEGACY_MODE_ENV = "BOUNDROOM_CLAUDE_PERMISSION_MODE"
+_ASK_PS = object()  # choose() walks the process tree only when the profile is parent
+
+
 def configured(flags: Mapping[str, Any], environ: Mapping[str, str]) -> bool:
-    """Whether the operator chose a profile at all. Without one, nothing changes (PS-10)."""
-    return bool(flags.get("runner_profile") or environ.get(PROFILE_ENV))
+    """Whether a profile applies. It always does, unless the operator set only the mode override.
+
+    ``BOUNDROOM_CLAUDE_PERMISSION_MODE`` on its own keeps its old meaning, the runner's permission
+    mode and nothing else, so an operator who set it gets exactly what they asked for.
+    """
+    chose_profile = bool(flags.get("runner_profile") or environ.get(PROFILE_ENV))
+    return chose_profile or not environ.get(LEGACY_MODE_ENV)
 
 
-def choose(flags: Mapping[str, Any], environ: Mapping[str, str], parent_mode: Optional[str]) -> RunnerProfile:
+def choose(flags: Mapping[str, Any], environ: Mapping[str, str], parent_mode: Any = _ASK_PS) -> RunnerProfile:
     """Requested profile, parent resolution, then the ceiling. Raises ProfileRefused (PS-13, PS-19)."""
     reasons: list[str] = []
     if flags.get("runner_profile"):
         requested, requested_source = flags["runner_profile"], "flag --runner-profile"
+    elif environ.get(PROFILE_ENV):
+        requested, requested_source = environ[PROFILE_ENV], f"env {PROFILE_ENV}"
     else:
-        requested, requested_source = environ.get(PROFILE_ENV, ""), f"env {PROFILE_ENV}"
+        requested, requested_source = DEFAULT_PROFILE, "default"
+    if parent_mode is _ASK_PS:
+        parent_mode = parent_launch_mode() if requested == "parent" else None
     if requested not in PROFILES:
         raise ProfileRefused(f"unknown Claude runner profile {requested!r}; choose one of {', '.join(PROFILES)}")
 
     isolated = environ.get(ISOLATED_ENV) == "1"
-    explicit_ceiling = environ.get(CEILING_ENV, "")
+    explicit_ceiling = flags.get("runner_profile_ceiling") or environ.get(CEILING_ENV, "")
     if explicit_ceiling:
         if explicit_ceiling not in CEILINGS:
-            raise ProfileRefused(f"unknown {CEILING_ENV} {explicit_ceiling!r}; choose one of {', '.join(CEILINGS)}")
-        ceiling, ceiling_source = explicit_ceiling, f"env {CEILING_ENV}"
+            raise ProfileRefused(f"unknown Claude runner ceiling {explicit_ceiling!r}; choose one of {', '.join(CEILINGS)}")
+        source = "flag --runner-profile-ceiling" if flags.get("runner_profile_ceiling") else f"env {CEILING_ENV}"
+        ceiling, ceiling_source = explicit_ceiling, source
     elif isolated:
         ceiling, ceiling_source = "unbounded", f"default with {ISOLATED_ENV}=1"
     else:
