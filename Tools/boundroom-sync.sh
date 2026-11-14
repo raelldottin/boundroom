@@ -1009,6 +1009,9 @@ class NoTelemetry:
     def annotate(self, span: Any, **attributes: Any) -> None:
         return None
 
+    def fail(self, span: Any, code: str) -> None:
+        return None
+
     def flush(self) -> bool:
         return True
 
@@ -1103,6 +1106,7 @@ def traced(tracer: Any, name: str, **attributes: Any) -> Iterator[Any]:
         except SyncError as error:
             refusal = error
             tracer.annotate(span, result="refused", reason=without_credentials(str(error).splitlines()[0])[:_REASON_CHARS])
+            tracer.fail(span, "refused")
     if refusal is not None:
         raise refusal
 
@@ -1172,6 +1176,8 @@ def main(argv: list[str]) -> int:
         with traced(tracer, "boundroom.run", entry="sync", run_id=tracer.run_id, mode=mode) as run:
             code = sync_run(args, source_root, target_root, tracer)
             tracer.annotate(run, exit_code=code)
+            if code != 0:
+                tracer.fail(run, "exit_nonzero")
             return code
     finally:
         tracer.flush()

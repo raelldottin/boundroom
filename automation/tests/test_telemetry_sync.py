@@ -143,6 +143,7 @@ class SyncSpanTests(SyncCase):
             ("sync", "sync", 0), (root["attributes"]["entry"], root["attributes"]["mode"], root["attributes"]["exit_code"])
         )
         self.assertTrue(root["attributes"]["run_id"])
+        self.assertEqual({"UNSET"}, {record["status"] for record in records})
         self.assertEqual({root["trace_id"]}, {record["trace_id"] for record in records})
         self.assertEqual(["boundroom.sync.verify", "boundroom.sync.plan", "boundroom.sync.write"], [r["name"] for r in children])
 
@@ -162,6 +163,7 @@ class SyncSpanTests(SyncCase):
         self.assertEqual(1, result.returncode, result.stderr)  # drift found
         _, root, children = self.tree()
         self.assertEqual(("check", 1), (root["attributes"]["mode"], root["attributes"]["exit_code"]))
+        self.assertEqual(("ERROR", "exit_nonzero"), (root["status"], root["status_description"]))
         self.assertEqual(["boundroom.sync.verify", "boundroom.sync.plan"], [r["name"] for r in children])
         self.assertEqual("unpinned drift report", children[0]["attributes"]["result"])
         self.assertNotIn("pin", children[0]["attributes"])
@@ -180,6 +182,9 @@ class SyncSpanTests(SyncCase):
         self.assertEqual("refused", children[0]["attributes"]["result"])
         self.assertIn("not at the pinned commit", children[0]["attributes"]["reason"])
         self.assertEqual("refused", root["attributes"]["result"])
+        # Both spans fail with the reason code, never the refusal's text (SPEC-006 span status).
+        self.assertEqual(("ERROR", "refused"), (children[0]["status"], children[0]["status_description"]))
+        self.assertEqual(("ERROR", "refused"), (root["status"], root["status_description"]))
         self.assertFalse((self.target / "vendored" / "two.txt").exists())
         self.assertTrue((self.target / "vendored" / "gone.txt").exists())
 

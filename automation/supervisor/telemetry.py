@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import sys
 import tempfile
@@ -45,6 +46,7 @@ class Telemetry:
     run_id: str
     _logfire: Any = None
     _processor: Any = None
+    _trace_id: Optional[str] = None
     messages: list[str] = field(default_factory=list)
 
     @property
@@ -54,18 +56,48 @@ class Telemetry:
     def span(self, name: str, **attributes: Any) -> ContextManager[Any]:
         if self._logfire is None:
             return nullcontext()
-        return self._logfire.span(name, **attributes)
+        return self._guarded(name, attributes)
 
-    def mark(self, name: str, **attributes: Any) -> None:
-        """A span for a step that is over as soon as it is recorded: a selection, a claim, a verdict."""
+    @contextmanager
+    def _guarded(self, name: str, attributes: dict[str, Any]) -> Generator[Any, None, None]:
+        """A span that an exception leaves by its type only.
+
+        The SDK would record an escaping exception's message and stack trace, and put the message
+        in the span's status. Either can quote a path, a URL or a token. So the exception is caught
+        here, recorded as its class and the function it came from, and raised again unchanged
+        once the span has ended.
+        """
+        escaped: Optional[BaseException] = None
+        with self._logfire.span(name, **attributes) as span:
+            if self._trace_id is None:
+                self._trace_id = trace_id(span)
+            try:
+                yield span
+            except BaseException as error:  # noqa: BLE001 - raised again below, unchanged
+                escaped = error
+                record_exception(span, error)
+        if escaped is not None:
+            raise escaped
+
+    def mark(self, name: str, error_code: Optional[str] = None, **attributes: Any) -> None:
+        """A span for a step that is over as soon as it is recorded: a selection, a claim, a verdict.
+
+        ``error_code`` marks the step as failed, with that reason code as the span's status.
+        """
         if self._logfire is not None:
-            with self._logfire.span(name, **attributes):
-                pass
+            with self._logfire.span(name, **attributes) as span:
+                if error_code:
+                    set_error(span, error_code)
 
     def annotate(self, span: Any, **attributes: Any) -> None:
         if span is not None and self._logfire is not None:
             for key, value in attributes.items():
                 span.set_attribute(key, value)
+
+    def fail(self, span: Any, code: str) -> None:
+        """Give a span the ERROR status, described by a reason code, never by a message."""
+        if span is not None and self._logfire is not None:
+            set_error(span, code)
 
     def flush(self) -> bool:
         """Flush for at most five seconds, then drop what's left and say so (bounded flush)."""
@@ -241,8 +273,57 @@ def _span_record(span: Any) -> dict[str, Any]:
         "start_time_unix_nano": span.start_time,
         "end_time_unix_nano": span.end_time,
         "status": span.status.status_code.name,
+        "status_description": span.status.description,
         "attributes": dict(span.attributes or {}),
+        "events": [{"name": event.name, "attributes": dict(event.attributes or {})} for event in span.events],
     }
+
+
+# A status description is a reason code: lower case and short, optionally followed by an
+# exception's class name (``exception:ValueError``). Never a message, path or URL.
+_REASON_CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,31}(:[A-Za-z_][A-Za-z0-9_]{0,63})?$")
+# Verdicts that end a slice without its work being accepted. ``failed`` is run_next's own stop
+# before an evaluation; ``reject`` is evaluate_handoff's.
+ERROR_VERDICTS = frozenset({"failed", "stop_failed", "stop_blocked", "reject"})
+
+
+def reason_code(code: str) -> str:
+    """``code`` when it has the shape of a reason code, otherwise the plain word ``error``."""
+    return code if _REASON_CODE.match(code) else "error"
+
+
+def set_error(span: Any, code: str) -> None:
+    """The ERROR status with a reason code as its description (SPEC-006 span status)."""
+    from opentelemetry.trace import Status, StatusCode  # noqa: PLC0415 - only reached when telemetry is on
+
+    span.set_status(Status(StatusCode.ERROR, reason_code(code)))
+
+
+def exception_type(error: BaseException) -> str:
+    kind = type(error)
+    return kind.__qualname__ if kind.__module__ == "builtins" else f"{kind.__module__}.{kind.__qualname__}"
+
+
+def exception_where(error: BaseException) -> str:
+    """The module and function the exception was raised in. No file path and no line text."""
+    trace = error.__traceback__
+    if trace is None:
+        return "unknown"
+    while trace.tb_next is not None:
+        trace = trace.tb_next
+    frame = trace.tb_frame
+    return f"{frame.f_globals.get('__name__', 'unknown')}.{frame.f_code.co_name}"
+
+
+def record_exception(span: Any, error: BaseException) -> None:
+    """Record an exception by its class and where it was raised, never by its message or stack."""
+    span.add_event("exception", {"exception.type": exception_type(error), "boundroom.exception.where": exception_where(error)})
+    set_error(span, f"exception:{type(error).__name__}")
+
+
+def verdict_error(verdict: Optional[str]) -> Optional[str]:
+    """The verdict as the span's reason code when it is a failure or a block, else None."""
+    return verdict if verdict in ERROR_VERDICTS else None
 
 
 def without_root(text: Optional[str], repo_root: Path) -> Optional[str]:
