@@ -34,6 +34,7 @@ TOP_LEVEL_KEYS = {
     "blocked_slices",
     "waiting_on_dependencies",
     "refusals",
+    "telemetry",
     "provenance",
 }
 
@@ -432,3 +433,76 @@ def test_the_status_writes_nothing(repo, board, capsys):
     capsys.readouterr()
 
     assert snapshot(repo, board_dir, overlay) == before
+
+
+# --- the telemetry block (SPEC-006 RA-TEL-013) ----------------------------------------------------
+
+ENDPOINT = "https://collector.example.test/tenant-path?token=query-secret"
+HEADER_SECRET = "Bearer header-secret-value"
+LABEL_VALUE = "payments-label-value"
+
+
+def test_telemetry_is_reported_off_by_default_with_nothing_read(tmp_path):
+    status = operator_status.collect(
+        REPO_ROOT, queue="automation/examples/example-slices.json", environ={}, operator_file=tmp_path / "absent.json"
+    )
+    assert status["telemetry"] == {
+        "mode": "off",
+        "destination_kind": "off",
+        "source": "default",
+        "capture": "metadata",
+        "runner": "off",
+        "required": False,
+        "environment": "local",
+        "offline": False,
+        "resource_attribute_keys": [],
+        "operator_file": "absent",
+        "refusal": None,
+    }
+    assert "telemetry: off (default), offline off" in operator_status.render_text(status)
+
+
+def test_telemetry_block_shows_kinds_and_keys_never_endpoint_headers_or_values(tmp_path):
+    operator = tmp_path / "telemetry.json"
+    operator.write_text(json.dumps({"headers": {"authorization": HEADER_SECRET}}), encoding="utf-8")
+    environ = {
+        "BOUNDROOM_TELEMETRY": "otlp",
+        "BOUNDROOM_TELEMETRY_ENDPOINT": ENDPOINT,
+        "BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES": f"team.name={LABEL_VALUE}",
+    }
+    status = operator_status.collect(
+        REPO_ROOT, queue="automation/examples/example-slices.json", environ=environ, operator_file=operator
+    )
+    block = status["telemetry"]
+    assert (block["mode"], block["destination_kind"], block["source"]) == ("otlp", "otlp", "env")
+    assert (block["resource_attribute_keys"], block["operator_file"], block["offline"]) == (["team.name"], "read", False)
+
+    shown = json.dumps(status) + operator_status.render_text(status)
+    for secret in ("collector.example.test", "tenant-path", "query-secret", "header-secret-value", LABEL_VALUE, str(tmp_path)):
+        assert secret not in shown
+
+
+def test_telemetry_block_reports_offline_and_the_refusal():
+    environ = {
+        "BOUNDROOM_OFFLINE": "1",
+        "BOUNDROOM_TELEMETRY": "otlp",
+        "BOUNDROOM_TELEMETRY_ENDPOINT": ENDPOINT,
+        "BOUNDROOM_TELEMETRY_REQUIRED": "true",
+    }
+    status = operator_status.collect(
+        REPO_ROOT, queue="automation/examples/example-slices.json", environ=environ, operator_file=None
+    )
+    block = status["telemetry"]
+    assert (block["mode"], block["source"], block["offline"]) == ("off", "offline", True)
+    assert "refusing to start" in block["refusal"]
+    text = operator_status.render_text(status)
+    assert "offline on" in text and "would refuse" in text
+    assert "collector.example.test" not in json.dumps(status) + text
+
+
+def test_an_invalid_operator_file_is_reported_as_ignored(tmp_path):
+    operator = tmp_path / "telemetry.json"
+    operator.write_text("{not json", encoding="utf-8")
+    block = operator_status.telemetry_status(None, {}, operator)
+    assert block["operator_file"] == "ignored"
+    assert block["mode"] == "off"
