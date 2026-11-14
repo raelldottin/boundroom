@@ -45,6 +45,7 @@ nav:
   - Settings reference: reference/settings.md
   - Traceable Agent Runs with Logfire: architecture/agent-telemetry.md
   - Plugin Settings You Can See: architecture/plugin-settings.md
+  - Enterprise Readiness (proposed): architecture/enterprise-readiness.md
   - Agentic SDLC and GitOps Standard (draft): architecture/agentic-gitops-sdlc-standard.md
   - Product Roadmap: product-roadmap.md
   - CIS and SOC 2 Control Map: compliance/controls.md
