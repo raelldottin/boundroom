@@ -345,7 +345,11 @@ The points below describe where the harness is heading. None of them changes wha
 - A repository's queue policy may hold a `telemetry` block that only reduces: turn it off, lower capture or runner telemetry, or name the environment. It can't choose a destination or turn telemetry on.
 - `OTEL_*` and `LOGFIRE_*` variables set for other tools are ignored.
 - The SDK is the optional `boundroom[telemetry]` extra; without it, telemetry stays off with a warning, or the run refuses to start when `--telemetry-required` is set.
-- Every report carries a `telemetry` block naming the mode, the destination's scheme and host only, and which source turned it on.
+- Every report carries a `telemetry` block naming the mode, the destination's scheme and host only, the keys of your resource attributes, and which source turned it on.
+- Metrics come with the spans, from one catalogue in SPEC-006: run counts and durations, slice decisions, agent session durations, validation replays and sync changes. File mode writes `<run_id>.metrics.jsonl` beside `<run_id>.spans.jsonl`; otlp mode sends them once, at the end of the run, to your endpoint's `/v1/metrics`.
+- A failed or blocked step's span has the ERROR status with a short reason code. An exception is recorded by its class only, never its message.
+- `BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES=team.name=payments,...`, or `resource_attributes` in the operator file, labels every span and data point. The repository can't set it.
+- `BOUNDROOM_OFFLINE=1` refuses every connection Boundroom itself would make: otlp telemetry and the Hindsight memory client. File mode still works. A run that requires otlp telemetry stops before anything is claimed.
 
 ## Bootstrap Status
 
