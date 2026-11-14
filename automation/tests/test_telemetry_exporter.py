@@ -144,7 +144,7 @@ class SdkConfigurationTests(ExporterCase):
         self.assertIs(False, kwargs["metrics"])
         self.assertIs(False, kwargs["inspect_arguments"])
         self.assertIs(True, kwargs["local"])
-        self.assertEqual("boundroom-supervisor", kwargs["service_name"])
+        self.assertEqual("boundroom", kwargs["service_name"])
         self.assertFalse(telemetry._inside(Path(kwargs["data_dir"]), REPO_ROOT))
         self.assertEqual(1, len(kwargs["additional_span_processors"]))
 

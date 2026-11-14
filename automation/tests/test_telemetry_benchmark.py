@@ -107,8 +107,8 @@ class TracedCase(unittest.TestCase):
         real = telemetry.json_lines_exporter
         exported = self.exported
 
-        def keeping(path: Path) -> Any:
-            exporter = real(path)
+        def keeping(path: Path, **options: Any) -> Any:
+            exporter = real(path, **options)
             write = exporter.export
 
             def export(spans: Any) -> Any:

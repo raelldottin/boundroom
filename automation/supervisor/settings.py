@@ -497,6 +497,16 @@ SETTINGS: tuple[Setting, ...] = (
         repository_rule="any",
         operator_file="telemetry.json:environment",
     ),
+    Setting(
+        "telemetry_resource_attributes",
+        "telemetry",
+        "advanced",
+        "Your own labels on every span and data point, as key=value pairs: at most 16, lower-case dotted keys, "
+        "values of at most 256 characters. Not settable by the repository.",
+        default={},
+        env="BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES",
+        operator_file="telemetry.json:resource_attributes",
+    ),
     # --- evaluate_handoff ------------------------------------------------------------------------
     Setting(
         "evaluate_slice_id", "evaluate", "advanced", "The slice to evaluate.", flags=(_flag("evaluate_handoff", "--slice-id"),)
