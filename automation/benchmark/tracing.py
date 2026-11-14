@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-from contextlib import nullcontext
+import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Any, ContextManager, Mapping, Optional
+from typing import Any, ContextManager, Generator, Mapping, Optional
 
+from automation.supervisor import egress
 from automation.supervisor.telemetry import Telemetry
 from automation.supervisor.telemetry_settings import ENV, TelemetrySettings, resolve
 
@@ -44,6 +46,9 @@ def benchmark_settings(flags: Mapping[str, Any], environ: Mapping[str, str]) -> 
         passed[ENV["mode"]] = "off"
     if environ.get(ENV["headers"]):
         passed[ENV["headers"]] = environ[ENV["headers"]]
+    # The offline switch can only refuse a destination, so it applies here too (RA-TEL-011).
+    if egress.OFFLINE_ENV in environ:
+        passed[egress.OFFLINE_ENV] = environ[egress.OFFLINE_ENV]
     settings = resolve(flags=flags, environ=passed, operator_file=None)
     refusal = settings.refusal
     if flags.get("telemetry_runner") not in (None, "off"):
@@ -78,6 +83,31 @@ def annotate(handle: Optional[Telemetry], target: Any, **attributes: Any) -> Non
         handle.annotate(target, **{key: value for key, value in attributes.items() if value is not None})
 
 
+def fail(handle: Optional[Telemetry], target: Any, code: str) -> None:
+    """The ERROR status on a span, described by a reason code."""
+    if handle is not None:
+        handle.fail(target, code)
+
+
+def metric(handle: Optional[Telemetry], name: str, value: float = 1, **attributes: Any) -> None:
+    """One data point for a catalogued instrument (SPEC-006 RA-TEL-010), or nothing at all."""
+    if handle is not None:
+        handle.metric(name, value, **attributes)
+
+
+@contextmanager
+def recorded_run(handle: Optional[Telemetry]) -> Generator[None, None, None]:
+    """The experiment's run counter and duration: ok when it returns, error when it raises."""
+    started = time.monotonic()
+    outcome = "error"
+    try:
+        yield
+        outcome = "ok"
+    finally:
+        if handle is not None:
+            handle.record_run("benchmark", outcome, time.monotonic() - started)
+
+
 def file_sha256(path: Path) -> Optional[str]:
     """The digest of a record a span describes, so an auditor can check the one against the other."""
     try:
@@ -92,7 +122,10 @@ __all__ = [
     "annotate",
     "benchmark_settings",
     "enabled",
+    "fail",
     "file_sha256",
+    "metric",
+    "recorded_run",
     "span",
     "untraced",
 ]

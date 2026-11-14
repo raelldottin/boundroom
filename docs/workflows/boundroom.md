@@ -251,7 +251,8 @@ It reports:
 - the mode: the JSON queue, or a board projected through its overlay, with the board's revision;
 - the next eligible slice, the blocked and deferred slices with their entry conditions and unblockers, and queued slices still waiting on dependencies. It selects with the same functions as `run_next.py --dry-run --include-blocked`;
 - the reasons `run_next.py` would refuse to start: a slice already in progress, nothing eligible, a dirty path outside the next slice's scope, no agent command, or a board inside the repository;
-- provenance: the HEAD commit, whether the worktree is clean, and every file it read.
+- telemetry: the mode a run started now would use, the destination's kind (`off`, `file` or `otlp`), capture and runner levels, whether `BOUNDROOM_OFFLINE` is on, the keys of your resource attributes, whether your operator file was read, and any refusal. It never shows the endpoint, a header or an attribute's value. The operator file lives in your home directory, so its path is left out of the files read;
+- provenance: the HEAD commit, whether the worktree is clean, and every repository file it read.
 
 `--json` prints one object whose `schema` is `boundroom.operator-status/1`. The command writes nothing: no queue, board, handoff, lock or state file. Its only subprocesses are the read-only `git rev-parse`, `git diff` and `git ls-files` calls the supervisor already uses. Run as a file path, it writes no bytecode either; under `python3 -m`, set `PYTHONDONTWRITEBYTECODE=1` for the same. It exits 0 when it printed the report, and 1 when it printed it but could not read the queue, the board or git.
 
@@ -344,7 +345,11 @@ The points below describe where the harness is heading. None of them changes wha
 - A repository's queue policy may hold a `telemetry` block that only reduces: turn it off, lower capture or runner telemetry, or name the environment. It can't choose a destination or turn telemetry on.
 - `OTEL_*` and `LOGFIRE_*` variables set for other tools are ignored.
 - The SDK is the optional `boundroom[telemetry]` extra; without it, telemetry stays off with a warning, or the run refuses to start when `--telemetry-required` is set.
-- Every report carries a `telemetry` block naming the mode, the destination's scheme and host only, and which source turned it on.
+- Every report carries a `telemetry` block naming the mode, the destination's scheme and host only, the keys of your resource attributes, and which source turned it on.
+- Metrics come with the spans, from one catalogue in SPEC-006: run counts and durations, slice decisions, agent session durations, validation replays and sync changes. File mode writes `<run_id>.metrics.jsonl` beside `<run_id>.spans.jsonl`; otlp mode sends them once, at the end of the run, to your endpoint's `/v1/metrics`.
+- A failed or blocked step's span has the ERROR status with a short reason code. An exception is recorded by its class only, never its message.
+- `BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES=team.name=payments,...`, or `resource_attributes` in the operator file, labels every span and data point. The repository can't set it.
+- `BOUNDROOM_OFFLINE=1` refuses every connection Boundroom itself would make: otlp telemetry and the Hindsight memory client. File mode still works. A run that requires otlp telemetry stops before anything is claimed.
 
 ## Bootstrap Status
 

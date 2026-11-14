@@ -36,7 +36,19 @@ QUICK = (
     ("telemetry", "telemetry_mode"),
 )
 URL_SETTINGS = {"telemetry_endpoint", "memory_endpoint"}
-AREA_ORDER = ("runner", "work source", "policy", "sync", "memory", "telemetry", "evaluate", "projection", "status", "internal")
+AREA_ORDER = (
+    "runner",
+    "work source",
+    "policy",
+    "sync",
+    "memory",
+    "network",
+    "telemetry",
+    "evaluate",
+    "projection",
+    "status",
+    "internal",
+)
 
 
 def _host_only(value: Any) -> Any:

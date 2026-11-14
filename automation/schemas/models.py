@@ -90,6 +90,7 @@ REPOSITORY_TELEMETRY_REFUSALS = {
     "file_dir": "the repository can't choose a telemetry destination",
     "headers": "the repository can't hold telemetry credentials",
     "required": "the repository can't require telemetry",
+    "resource_attributes": "the repository can't label the operator's telemetry",
 }
 
 

@@ -4,9 +4,9 @@
 ``span`` is free when telemetry is off. Off means no SDK import, no file and no connection (UD-1).
 
 When it is on, the Logfire SDK is imported lazily and configured only from those settings:
-``send_to_logfire=False`` always (UD-3), no console, no metrics, no argument inspection, its
-``data_dir`` outside the repository, and spans go only to Boundroom's own exporter for the user's
-destination. Logfire reads ``OTEL_EXPORTER_OTLP_*`` from the environment while it configures and
+``send_to_logfire=False`` always (UD-3), no console, no argument inspection, its ``data_dir``
+outside the repository, spans only to Boundroom's own exporter for the user's destination, and
+metrics only to Boundroom's own in-memory reader, collected once at flush (RA-TEL-010). Logfire reads ``OTEL_EXPORTER_OTLP_*`` from the environment while it configures and
 would add an exporter for them, so those variables, and ``LOGFIRE_*``, are hidden from it for the
 duration (UD-6). A setting someone made for another tool must not send Boundroom's traces anywhere.
 """
@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import sys
 import tempfile
+import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -25,9 +27,14 @@ from pathlib import Path
 from typing import Any, ContextManager, Generator, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
+from automation.supervisor import egress, telemetry_metrics
 from automation.supervisor.telemetry_settings import TelemetrySettings
 
-SERVICE_NAME = "boundroom-supervisor"
+SERVICE_NAME = "boundroom"
+# The resource keys Boundroom sets on every span (RA-TEL-009). File mode writes these and the
+# operator's own keys on each line; the rest of the SDK's resource, such as the host name and
+# process id, goes only to an OTLP destination, as it always has.
+STANDARD_RESOURCE_KEYS = ("service.name", "service.version", "deployment.environment.name")
 FLUSH_TIMEOUT_SECONDS = 5
 STARTUP_TIMEOUT_SECONDS = 5
 AMBIENT_PREFIXES = ("OTEL_", "LOGFIRE_")
@@ -45,6 +52,14 @@ class Telemetry:
     run_id: str
     _logfire: Any = None
     _processor: Any = None
+    _trace_id: Optional[str] = None
+    # Metrics (RA-TEL-010): an in-memory reader collected once, at flush, and written to
+    # ``_metrics_path`` in file mode or sent through ``_metric_exporter`` in otlp mode.
+    _metric_reader: Any = None
+    _metrics_path: Optional[Path] = None
+    _metric_exporter: Any = None
+    _instruments: dict[str, Any] = field(default_factory=dict)
+    _resource_keys: tuple[str, ...] = ()
     messages: list[str] = field(default_factory=list)
 
     @property
@@ -54,29 +69,125 @@ class Telemetry:
     def span(self, name: str, **attributes: Any) -> ContextManager[Any]:
         if self._logfire is None:
             return nullcontext()
-        return self._logfire.span(name, **attributes)
+        return self._guarded(name, attributes)
 
-    def mark(self, name: str, **attributes: Any) -> None:
-        """A span for a step that is over as soon as it is recorded: a selection, a claim, a verdict."""
+    @contextmanager
+    def _guarded(self, name: str, attributes: dict[str, Any]) -> Generator[Any, None, None]:
+        """A span that an exception leaves by its type only.
+
+        The SDK would record an escaping exception's message and stack trace, and put the message
+        in the span's status. Either can quote a path, a URL or a token. So the exception is caught
+        here, recorded as its class and the function it came from, and raised again unchanged
+        once the span has ended.
+        """
+        escaped: Optional[BaseException] = None
+        with self._logfire.span(name, **attributes) as span:
+            if self._trace_id is None:
+                self._trace_id = trace_id(span)
+            try:
+                yield span
+            except BaseException as error:  # noqa: BLE001 - raised again below, unchanged
+                escaped = error
+                record_exception(span, error)
+        if escaped is not None:
+            raise escaped
+
+    def mark(self, name: str, error_code: Optional[str] = None, **attributes: Any) -> None:
+        """A span for a step that is over as soon as it is recorded: a selection, a claim, a verdict.
+
+        ``error_code`` marks the step as failed, with that reason code as the span's status.
+        """
         if self._logfire is not None:
-            with self._logfire.span(name, **attributes):
-                pass
+            with self._logfire.span(name, **attributes) as span:
+                if error_code:
+                    set_error(span, error_code)
 
     def annotate(self, span: Any, **attributes: Any) -> None:
         if span is not None and self._logfire is not None:
             for key, value in attributes.items():
                 span.set_attribute(key, value)
 
+    def fail(self, span: Any, code: str) -> None:
+        """Give a span the ERROR status, described by a reason code, never by a message."""
+        if span is not None and self._logfire is not None:
+            set_error(span, code)
+
+    def metric(self, name: str, value: float = 1, **attributes: Any) -> None:
+        """One data point for an instrument in ``telemetry_metrics.CATALOGUE``; nothing when off.
+
+        Attributes outside the instrument's vocabulary are bounded first. A failure to record is
+        said on stderr and never raised: telemetry can't change an outcome.
+        """
+        if self._logfire is None:
+            return
+        try:
+            instrument = telemetry_metrics.BY_NAME[name]
+            recorder = self._instruments.get(name)
+            if recorder is None:
+                make = self._logfire.metric_counter if instrument.kind == "counter" else self._logfire.metric_histogram
+                recorder = self._instruments[name] = make(name, unit=instrument.unit, description=instrument.description)
+            bounded = telemetry_metrics.bounded(instrument, attributes)
+            if instrument.kind == "counter":
+                recorder.add(value, bounded)
+            else:
+                recorder.record(value, bounded)
+        except Exception:  # noqa: BLE001 - a metric must never stop a run
+            print(f"telemetry: metric {name} was not recorded", file=sys.stderr)
+
+    def record_run(self, entry: str, outcome: str, seconds: float) -> None:
+        """The run counter and the run duration, which every entry point records the same way."""
+        self.metric("boundroom.runs", entry=entry, outcome=outcome)
+        self.metric("boundroom.run.duration", seconds, entry=entry, outcome=outcome)
+
     def flush(self) -> bool:
-        """Flush for at most five seconds, then drop what's left and say so (bounded flush)."""
-        if self._processor is None:
-            return True
-        flushed = bool(self._processor.force_flush(timeout_millis=FLUSH_TIMEOUT_SECONDS * 1000))
-        if not flushed:
-            print(f"telemetry: flush did not finish within {FLUSH_TIMEOUT_SECONDS}s; the rest was dropped", file=sys.stderr)
-        self._processor.shutdown()
-        self._processor = None
+        """Flush for at most five seconds in all, then drop what's left and say so (bounded flush).
+
+        Spans go first. Metrics are collected once and get whatever time the spans left.
+        """
+        deadline = time.monotonic() + FLUSH_TIMEOUT_SECONDS
+        flushed = True
+        if self._processor is not None:
+            flushed = bool(self._processor.force_flush(timeout_millis=FLUSH_TIMEOUT_SECONDS * 1000))
+            if not flushed:
+                print(f"telemetry: flush did not finish within {FLUSH_TIMEOUT_SECONDS}s; the rest was dropped", file=sys.stderr)
+            self._processor.shutdown()
+            self._processor = None
+        if self._metric_reader is not None:
+            flushed = self._flush_metrics(deadline) and flushed
         return flushed
+
+    def _flush_metrics(self, deadline: float) -> bool:
+        reader, self._metric_reader = self._metric_reader, None
+        exporter, self._metric_exporter = self._metric_exporter, None
+        try:
+            data = reader.get_metrics_data()
+            records = list(metric_records(data, self.run_id, self._trace_id, self._resource_keys))
+            if not records:
+                return True
+            if self._metrics_path is not None:
+                self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
+                with self._metrics_path.open("a", encoding="utf-8") as handle:
+                    for record in records:
+                        handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+                return True
+            if exporter is None:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print("telemetry: no time was left to send metrics; they were dropped", file=sys.stderr)
+                return False
+            from opentelemetry.sdk.metrics.export import MetricExportResult  # noqa: PLC0415
+
+            sent = exporter.export(data, timeout_millis=remaining * 1000) == MetricExportResult.SUCCESS
+            if not sent:
+                print("telemetry: the endpoint didn't take the metrics; they were dropped", file=sys.stderr)
+            return sent
+        except Exception:  # noqa: BLE001 - an exporter failure never changes a verdict or exit code
+            print("telemetry: metrics could not be written; they were dropped", file=sys.stderr)
+            return False
+        finally:
+            if exporter is not None:
+                exporter.shutdown()
 
 
 def configure(
@@ -97,29 +208,49 @@ def configure(
     if not settings.enabled:
         return handle
     try:
-        processor, data_dir = _exporter(settings, (repo_root, *outside), run_id)
+        # An OTLP exporter reads OTEL_EXPORTER_OTLP_* (headers, certificates, compression) when it
+        # is built and its argument is empty, so the ambient settings are hidden here too (UD-6).
+        with _hidden_ambient_settings():
+            processor, data_dir = _exporter(settings, (repo_root, *outside), run_id)
+            metric_exporter, note = (None, "") if settings.mode == "file" else _otlp_metric_exporter(settings)
         if settings.required:
             _startup_check(settings)
         logfire = _import_logfire()
+        reader = _metric_reader()
+        handle._resource_keys = (*STANDARD_RESOURCE_KEYS, *sorted(settings.resource_attributes))
+        if settings.mode == "file":
+            handle._metrics_path = Path(str(settings.file_dir)) / f"{run_id}.metrics.jsonl"
+        handle._metric_exporter = metric_exporter
+        if note:
+            handle.messages.append(note)
         with _hidden_ambient_settings():
             handle._logfire = logfire.configure(
                 local=True,
                 send_to_logfire=False,
                 console=False,
-                metrics=False,
+                # Only Boundroom's own reader: nothing is exported on a timer, and no reader for
+                # the ambient OTEL_* settings is added, because they are hidden here (UD-6).
+                metrics=logfire.MetricsOptions(additional_readers=[reader]),
                 inspect_arguments=False,
                 service_name=SERVICE_NAME,
                 service_version=service_version or None,
                 environment=settings.environment,
+                resource_attributes=dict(settings.resource_attributes),
                 data_dir=data_dir,
                 additional_span_processors=[processor],
                 distributed_tracing=False,
             )
         handle._processor = processor
+        handle._metric_reader = reader
     except TelemetryRefused:
         if settings.required:
             raise
         handle.messages.append("telemetry: could not be enabled; continuing with telemetry off")
+    except egress.EgressRefused as error:
+        # resolve() already turns otlp off when offline; this is the chokepoint's own refusal.
+        if settings.required:
+            raise TelemetryRefused(f"{error}; refusing to start because telemetry is required") from error
+        handle.messages.append(f"telemetry: {error}; continuing with telemetry off")
     except _Unavailable as error:
         if settings.required:
             raise TelemetryRefused(f"{error}; refusing to start because telemetry is required") from error
@@ -169,10 +300,13 @@ def _exporter(settings: TelemetrySettings, roots: Sequence[Path], run_id: str) -
         if any(_inside(file_dir, root) for root in roots):
             # A write there would dirty the worktree and break the clean stop.
             raise _Unavailable("telemetry: file_dir must be outside the repository")
-        return BatchSpanProcessor(json_lines_exporter(file_dir / f"{run_id}.spans.jsonl")), str(file_dir / ".logfire")
+        resource_keys = (*STANDARD_RESOURCE_KEYS, *sorted(settings.resource_attributes))
+        exporter = json_lines_exporter(file_dir / f"{run_id}.spans.jsonl", resource_keys=resource_keys)
+        return BatchSpanProcessor(exporter), str(file_dir / ".logfire")
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # noqa: PLC0415
 
-    exporter = OTLPSpanExporter(endpoint=traces_url(str(settings.endpoint)), headers=dict(settings.headers))
+    endpoint = egress.guard_egress("telemetry", traces_url(str(settings.endpoint)))
+    exporter = OTLPSpanExporter(endpoint=endpoint, headers=dict(settings.headers))
     return BatchSpanProcessor(exporter), tempfile.mkdtemp(prefix="boundroom-logfire-")
 
 
@@ -182,6 +316,72 @@ def traces_url(endpoint: str) -> str:
     if parts.path in ("", "/"):
         return urlunsplit((parts.scheme, parts.netloc, "/v1/traces", parts.query, ""))
     return endpoint
+
+
+def metrics_url(endpoint: str) -> Optional[str]:
+    """The metrics path beside the traces one: a bare host gets ``/v1/metrics``, and a path ending
+    in ``/v1/traces`` gets ``/v1/metrics`` in its place. Any other path names a traces URL whose
+    metrics URL Boundroom can't know, so None."""
+    parts = urlsplit(endpoint)
+    if parts.path in ("", "/"):
+        path = "/v1/metrics"
+    elif parts.path.rstrip("/").endswith("/v1/traces"):
+        path = parts.path.rstrip("/")[: -len("/v1/traces")] + "/v1/metrics"
+    else:
+        return None
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+
+def _metric_reader() -> Any:
+    try:
+        from opentelemetry.sdk.metrics.export import InMemoryMetricReader  # noqa: PLC0415
+    except ImportError as error:
+        raise _Unavailable("telemetry: the opentelemetry SDK isn't installed (pip install 'boundroom[telemetry]')") from error
+    return InMemoryMetricReader()
+
+
+def _otlp_metric_exporter(settings: TelemetrySettings) -> tuple[Any, str]:
+    """The OTLP/HTTP metric exporter for the user's endpoint, with the same headers as traces."""
+    url = metrics_url(str(settings.endpoint))
+    if url is None:
+        return None, "telemetry: the endpoint names a traces path, so metrics aren't sent; give a bare endpoint for both"
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter  # noqa: PLC0415
+
+    endpoint = egress.guard_egress("telemetry", url)
+    return OTLPMetricExporter(endpoint=endpoint, headers=dict(settings.headers), timeout=FLUSH_TIMEOUT_SECONDS), ""
+
+
+def metric_records(data: Any, run_id: str, trace: Optional[str], resource_keys: Sequence[str]) -> Generator[dict, None, None]:
+    """One JSON object per data point of a catalogued instrument, for the metrics file.
+
+    A counter gives its ``value``; a histogram gives its ``count``, ``sum``, ``min`` and ``max``.
+    """
+    if data is None:
+        return
+    for resource_metrics in data.resource_metrics:
+        attributes = dict(resource_metrics.resource.attributes)
+        resource = {key: attributes[key] for key in resource_keys if key in attributes}
+        for scope_metrics in resource_metrics.scope_metrics:
+            for metric in scope_metrics.metrics:
+                instrument = telemetry_metrics.BY_NAME.get(metric.name)
+                if instrument is None:
+                    continue
+                for point in metric.data.data_points:
+                    record: dict[str, Any] = {
+                        "name": metric.name,
+                        "kind": instrument.kind,
+                        "unit": metric.unit,
+                        "attributes": dict(point.attributes or {}),
+                        "time_unix_nano": point.time_unix_nano,
+                        "run_id": run_id,
+                        "trace_id": trace,
+                        "resource": resource,
+                    }
+                    if instrument.kind == "counter":
+                        record["value"] = point.value
+                    else:
+                        record["histogram"] = {"count": point.count, "sum": point.sum, "min": point.min, "max": point.max}
+                    yield record
 
 
 def _startup_check(settings: TelemetrySettings) -> None:
@@ -198,7 +398,8 @@ def _startup_check(settings: TelemetrySettings) -> None:
     import urllib.error  # noqa: PLC0415 - only a required otlp run probes its endpoint
     import urllib.request  # noqa: PLC0415
 
-    request = urllib.request.Request(traces_url(str(settings.endpoint)), method="POST", data=b"", headers=dict(settings.headers))
+    url = egress.guard_egress("telemetry", traces_url(str(settings.endpoint)))
+    request = urllib.request.Request(url, method="POST", data=b"", headers=dict(settings.headers))
     try:
         urllib.request.urlopen(request, timeout=STARTUP_TIMEOUT_SECONDS).close()
     except urllib.error.HTTPError:
@@ -208,7 +409,7 @@ def _startup_check(settings: TelemetrySettings) -> None:
         raise TelemetryRefused(f"telemetry: the endpoint at {host} didn't answer") from error
 
 
-def json_lines_exporter(path: Path) -> Any:
+def json_lines_exporter(path: Path, resource_keys: Sequence[str] = STANDARD_RESOURCE_KEYS) -> Any:
     """A span exporter that writes each finished span as one JSON line, to the user's file only.
 
     The class is built here rather than at module level, so importing this module loads no
@@ -222,7 +423,7 @@ def json_lines_exporter(path: Path) -> Any:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a", encoding="utf-8") as handle:
                     for span in spans:
-                        handle.write(json.dumps(_span_record(span), sort_keys=True, default=str) + "\n")
+                        handle.write(json.dumps(_span_record(span, resource_keys), sort_keys=True, default=str) + "\n")
             except OSError:
                 return SpanExportResult.FAILURE
             return SpanExportResult.SUCCESS
@@ -230,9 +431,10 @@ def json_lines_exporter(path: Path) -> Any:
     return JsonLinesExporter()
 
 
-def _span_record(span: Any) -> dict[str, Any]:
+def _span_record(span: Any, resource_keys: Sequence[str] = STANDARD_RESOURCE_KEYS) -> dict[str, Any]:
     context = span.get_span_context()
     parent = span.parent
+    resource = dict(span.resource.attributes) if getattr(span, "resource", None) is not None else {}
     return {
         "name": span.name,
         "trace_id": f"{context.trace_id:032x}",
@@ -241,8 +443,58 @@ def _span_record(span: Any) -> dict[str, Any]:
         "start_time_unix_nano": span.start_time,
         "end_time_unix_nano": span.end_time,
         "status": span.status.status_code.name,
+        "status_description": span.status.description,
         "attributes": dict(span.attributes or {}),
+        "events": [{"name": event.name, "attributes": dict(event.attributes or {})} for event in span.events],
+        "resource": {key: resource[key] for key in resource_keys if key in resource},
     }
+
+
+# A status description is a reason code: lower case and short, optionally followed by an
+# exception's class name (``exception:ValueError``). Never a message, path or URL.
+_REASON_CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,31}(:[A-Za-z_][A-Za-z0-9_]{0,63})?$")
+# Verdicts that end a slice without its work being accepted. ``failed`` is run_next's own stop
+# before an evaluation; ``reject`` is evaluate_handoff's.
+ERROR_VERDICTS = frozenset({"failed", "stop_failed", "stop_blocked", "reject"})
+
+
+def reason_code(code: str) -> str:
+    """``code`` when it has the shape of a reason code, otherwise the plain word ``error``."""
+    return code if _REASON_CODE.match(code) else "error"
+
+
+def set_error(span: Any, code: str) -> None:
+    """The ERROR status with a reason code as its description (SPEC-006 span status)."""
+    from opentelemetry.trace import Status, StatusCode  # noqa: PLC0415 - only reached when telemetry is on
+
+    span.set_status(Status(StatusCode.ERROR, reason_code(code)))
+
+
+def exception_type(error: BaseException) -> str:
+    kind = type(error)
+    return kind.__qualname__ if kind.__module__ == "builtins" else f"{kind.__module__}.{kind.__qualname__}"
+
+
+def exception_where(error: BaseException) -> str:
+    """The module and function the exception was raised in. No file path and no line text."""
+    trace = error.__traceback__
+    if trace is None:
+        return "unknown"
+    while trace.tb_next is not None:
+        trace = trace.tb_next
+    frame = trace.tb_frame
+    return f"{frame.f_globals.get('__name__', 'unknown')}.{frame.f_code.co_name}"
+
+
+def record_exception(span: Any, error: BaseException) -> None:
+    """Record an exception by its class and where it was raised, never by its message or stack."""
+    span.add_event("exception", {"exception.type": exception_type(error), "boundroom.exception.where": exception_where(error)})
+    set_error(span, f"exception:{type(error).__name__}")
+
+
+def verdict_error(verdict: Optional[str]) -> Optional[str]:
+    """The verdict as the span's reason code when it is a failure or a block, else None."""
+    return verdict if verdict in ERROR_VERDICTS else None
 
 
 def without_root(text: Optional[str], repo_root: Path) -> Optional[str]:

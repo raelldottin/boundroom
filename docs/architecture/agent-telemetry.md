@@ -1,6 +1,6 @@
 # SPEC-006: Traceable agent runs with Logfire and OpenTelemetry
 
-Status: **accepted (raelldottin/boundroom#196, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request and needs its own approval. RA-TEL-001, the settings model and resolution (`automation/supervisor/telemetry_settings.py`), and RA-TEL-002, the exporter (`automation/supervisor/telemetry.py`, with `logfire==5.4.0` as the `telemetry` extra), are implemented, and so is RA-TEL-006's text: the run-next skill's telemetry rule, the workflow doc's Telemetry section and the control-map row. RA-TEL-003 is implemented too: `run_next.py` and `evaluate_handoff.py` emit the supervised lane's span tree under one `boundroom.run`, and the decision report's `telemetry.trace_id` joins a trace to its record. The handoff's own provenance doesn't carry the trace id yet, because the handoff is written by the agent; the board's run record and the decision report do. RA-TEL-004 is implemented as well: the runner gets `TRACEPARENT` for `boundroom.agent_session` and, unless the user set their own `OTEL_RESOURCE_ATTRIBUTES`, the run and slice ids. With `runner` on and an `otlp` destination, Claude Code's exporter is pointed at the user's endpoint; with any runner telemetry variable already exported by the user, Boundroom sets none of its own. In `file` mode the runner's own spans aren't exported, because Claude Code has no file exporter; the report says so. The decision report lists the variable names Boundroom set and the ones it passed through, never their values. RA-TEL-005's code is implemented too: the sync tool's Python core emits the sync lane's spans and takes the same telemetry flags, and the benchmark's `lanes` command emits the experiment, cell, phase, session and score spans, with one settings report in every cell's `run.json`. Its overhead measurement against `LANE_CEILING_SECONDS` is a benchmark run, which needs a person's approval, so it hasn't been done; see [Lane invariance](#lane-invariance-benchmark).
+Status: **accepted (raelldottin/boundroom#196, merged 2026-11-12 after the owner's approval).** Each delivery slice below is still its own pull request and needs its own approval. RA-TEL-001, the settings model and resolution (`automation/supervisor/telemetry_settings.py`), and RA-TEL-002, the exporter (`automation/supervisor/telemetry.py`, with `logfire==5.4.0` as the `telemetry` extra), are implemented, and so is RA-TEL-006's text: the run-next skill's telemetry rule, the workflow doc's Telemetry section and the control-map row. RA-TEL-003 is implemented too: `run_next.py` and `evaluate_handoff.py` emit the supervised lane's span tree under one `boundroom.run`, and the decision report's `telemetry.trace_id` joins a trace to its record. The handoff's own provenance doesn't carry the trace id yet, because the handoff is written by the agent; the board's run record and the decision report do. RA-TEL-004 is implemented as well: the runner gets `TRACEPARENT` for `boundroom.agent_session` and, unless the user set their own `OTEL_RESOURCE_ATTRIBUTES`, the run and slice ids. With `runner` on and an `otlp` destination, Claude Code's exporter is pointed at the user's endpoint; with any runner telemetry variable already exported by the user, Boundroom sets none of its own. In `file` mode the runner's own spans aren't exported, because Claude Code has no file exporter; the report says so. The decision report lists the variable names Boundroom set and the ones it passed through, never their values. RA-TEL-005's code is implemented too: the sync tool's Python core emits the sync lane's spans and takes the same telemetry flags, and the benchmark's `lanes` command emits the experiment, cell, phase, session and score spans, with one settings report in every cell's `run.json`. Its overhead measurement against `LANE_CEILING_SECONDS` is a benchmark run, which needs a person's approval, so it hasn't been done; see [Lane invariance](#lane-invariance-benchmark). RA-TEL-008 to RA-TEL-013 are implemented as well: [span status](#span-status-and-safe-errors), [resource attributes](#resource-attributes), [metrics](#metrics), the [offline switch](#offline-switch-and-egress-chokepoint), the [GenAI note](#genai-semantic-conventions) and the operator status's telemetry block.
 
 Owner request recorded here (2026-11-11): use Logfire to make every agent interaction auditable and traceable, in every lane the plugin can start, with the user able to configure it.
 
@@ -43,13 +43,14 @@ Today a supervised run leaves its record in separate places: the queue or board 
 | `runner` | `off`, `metadata`, `content` | `off` | Whether the runner's own telemetry joins the trace. See [Runner sessions](#runner-sessions). |
 | `required` | `true`, `false` | `false` | `true` refuses to start a run whose exporter fails its startup check. |
 | `environment` | a short name | `local` | Recorded on every span, such as `local`, `ci` or `benchmark`. |
+| `resource_attributes` | `key=value` pairs | none | Your own labels on every span and data point, such as a team. From the environment or the operator file only. See [Resource attributes](#resource-attributes). |
 
 ### Where each setting comes from
 
 **The kill switch always wins:** `--no-telemetry` or `BOUNDROOM_TELEMETRY=off` turns telemetry off, whatever any source below says, including the operator's file. Below the kill switch, from highest precedence to lowest:
 
 1. `run_next.py` and `evaluate_handoff.py` flags: `--telemetry <mode>`, `--telemetry-file-dir`, `--telemetry-endpoint`, `--telemetry-capture`, `--telemetry-runner`, `--telemetry-required`. Headers have no flag, so a token never appears in a process list or shell history.
-2. Environment variables in Boundroom's own namespace: `BOUNDROOM_TELEMETRY`, `BOUNDROOM_TELEMETRY_FILE_DIR`, `BOUNDROOM_TELEMETRY_ENDPOINT`, `BOUNDROOM_TELEMETRY_HEADERS`, `BOUNDROOM_TELEMETRY_CAPTURE`, `BOUNDROOM_TELEMETRY_RUNNER`, `BOUNDROOM_TELEMETRY_REQUIRED`, `BOUNDROOM_TELEMETRY_ENVIRONMENT`.
+2. Environment variables in Boundroom's own namespace: `BOUNDROOM_TELEMETRY`, `BOUNDROOM_TELEMETRY_FILE_DIR`, `BOUNDROOM_TELEMETRY_ENDPOINT`, `BOUNDROOM_TELEMETRY_HEADERS`, `BOUNDROOM_TELEMETRY_CAPTURE`, `BOUNDROOM_TELEMETRY_RUNNER`, `BOUNDROOM_TELEMETRY_REQUIRED`, `BOUNDROOM_TELEMETRY_ENVIRONMENT`, `BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES`.
 3. The operator's file, `~/.config/boundroom/telemetry.json`, validated by a pydantic model like the overlay.
 4. The repository's policy: an optional `telemetry` block in the queue policy or Kanban overlay.
 5. The default: `off`, with no destination.
@@ -72,7 +73,7 @@ These requirements carry the 2026-11-12 owner requirement. Each has an acceptanc
 | UD-4 | **The only connection is to the user's endpoint.** With `otlp` on, the supervisor connects to `endpoint`'s host and nowhere else for telemetry. | An egress test points `endpoint` at a local sink, blocks everything else and checks that the spans arrive and nothing else was attempted. |
 | UD-5 | **A kill switch that always wins.** `--no-telemetry` or `BOUNDROOM_TELEMETRY=off` turns telemetry off whatever the operator file, repository or other flags say. | Precedence tests with every other source turned on. |
 | UD-6 | **Ambient settings don't enable anything.** `OTEL_EXPORTER_OTLP_*`, `OTEL_TRACES_EXPORTER` and `LOGFIRE_*` in the environment neither turn Boundroom telemetry on nor change its destination. When telemetry is on, the SDK is configured only from Boundroom's resolved settings. | With those variables pointing at a sink and Boundroom off, the sink receives nothing. With Boundroom on to a different endpoint, only that endpoint receives spans. |
-| UD-7 | **The repository can't choose or turn on a destination.** A repository `telemetry` block may only turn telemetry off or reduce it. A block naming `endpoint`, `file_dir` or `headers`, or setting `mode` to anything but `off`, is refused with a named reason. | Policy-load tests for each refused field. |
+| UD-7 | **The repository can't choose or turn on a destination.** A repository `telemetry` block may only turn telemetry off or reduce it. A block naming `endpoint`, `file_dir`, `headers` or `resource_attributes`, or setting `mode` to anything but `off`, is refused with a named reason. | Policy-load tests for each refused field. |
 | UD-8 | **The plugin never enables telemetry.** The skills pass telemetry flags only when the user asked for them in that request, and contain no endpoint, example host or token. | The UD-3 scan, plus a review checklist item on each skill change. |
 | UD-9 | **Runner telemetry follows the same rule.** Boundroom sets runner telemetry variables only when `runner` isn't `off` *and* Boundroom telemetry is on, and only to the user's own destination. A runner setting the user exported themselves passes through unchanged, and is never added to or redirected. Its names, not its values, are listed in the decision report. | Runner-environment tests for each combination. |
 | UD-10 | **Insecure transport only to the user's own machine.** An `http://` endpoint is accepted only for a loopback host. Otherwise it's `https://`. | Validation tests. |
@@ -122,12 +123,97 @@ boundroom.benchmark.experiment     run dir, lanes, repeats, instance count, repo
 - ProgramBench scores a `<lane>/r<repeat>` directory after the whole matrix has run, so each `score` span is a child of the experiment, beside the cells, with the lane, repeat, report digest and treatment validity.
 - Every agent session gets a `phase` span, including lanes A and B's single implement session and the compaction sessions of D and E. A phase that owes an artifact carries its digest; implement's output is the submission, whose digest is on the cell, with the cell's `run.json` digest.
 - The benchmark reads telemetry only from the `lanes` command line. The operator file and `BOUNDROOM_TELEMETRY_*` configure live runs and are ignored, except the kill switch and the headers, which have no flag. Runner telemetry is refused, and the agent gets no trace context, so a runner's spans don't nest under `agent_session` here.
-- `environment: benchmark` is the resource's `deployment.environment.name`, so it applies to every span but isn't repeated in file mode's per-span lines.
+- `environment: benchmark` is the resource's `deployment.environment.name`, so it applies to every span. File mode's lines carry it in their `resource` object (RA-TEL-009).
+- The benchmark doesn't read `resource_attributes`, which configure live runs. It does honor `BOUNDROOM_OFFLINE`, which can only refuse a destination.
+
+### Span status and safe errors
+
+A span whose step failed or was blocked gets the OpenTelemetry status ERROR. Its description is a short reason code, never a message, path, URL or stack trace. Anything not shaped like a code is replaced by the word `error`. Spans that succeed keep the status UNSET.
+
+| Span | ERROR when | Reason code |
+| --- | --- | --- |
+| `boundroom.decision` | the verdict is `failed`, `stop_failed`, `stop_blocked` or `reject` | the verdict, or for run_next's own stops `agent_exit_nonzero`, `agent_timeout`, `handoff_missing`, `handoff_invalid`, `handoff_slice_mismatch`, `git_error` or `supervisor_error` |
+| `boundroom.agent_session` | the runner exits non-zero | `agent_exit_nonzero`, or `agent_timeout` for exit 124 |
+| `boundroom.run` | the process exits non-zero, including the sync tool's `--check` finding drift | `exit_nonzero`; `refused` for a sync refusal |
+| `boundroom.sync.*` | the step was refused | `refused` |
+| any span | an exception escapes it | `exception:<ClassName>` |
+
+An exception that escapes a span is caught before the SDK sees it, because the SDK would record its message and stack trace and put the message in the status. The span gets one `exception` event with `exception.type` (the class) and `boundroom.exception.where` (the module and function it was raised in). Then the exception is raised again unchanged. File mode's lines carry `status`, `status_description` and `events`.
+
+### Resource attributes
+
+Every span and data point carries these resource attributes:
+
+- `service.name`: `boundroom`. Before RA-TEL-009 it was `boundroom-supervisor`.
+- `service.version`: the Boundroom version from `pyproject.toml`, when the checkout has one.
+- `deployment.environment.name`: the `environment` setting.
+- the operator's own `resource_attributes`.
+
+`resource_attributes` comes from `BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES` (`key=value,key=value`) or the operator file's `resource_attributes` object. It has no flag, no `userConfig` option and no repository field: a file a slice can edit must not label the operator's telemetry. The rules, each refused with a named reason:
+
+- at most 16 pairs (`too_many`);
+- keys match `^[a-z][a-z0-9_.]{0,63}$` (`bad_key`);
+- not `service.name`, `service.version`, `deployment.environment.name` or a `boundroom.` key, which Boundroom sets itself (`reserved_key`);
+- values of at most 256 characters, with no control character (`bad_value`);
+- every pair is `key=value` (`not_key_value`), and no key repeats (`duplicate_key`).
+
+A refusal never echoes the key or value. An invalid variable is ignored with a stderr message, and an invalid operator file is ignored whole, as for the other settings. Reports show the keys, never the values. File mode writes the three standard keys and the operator's keys in each line's `resource` object. The SDK's other resource attributes, such as the host name and process id, go only to an OTLP destination, as before.
+
+### GenAI semantic conventions
+
+Boundroom sets no `gen_ai.*` attribute. OpenTelemetry's GenAI conventions describe a model call: `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.operation.name` and the like. Boundroom never makes a model call. It starts a runner, and the runner talks to its model. The supervisor doesn't see which model answered, how many tokens it used or which provider served it, so any value it wrote there would be a guess. A guess in a trace reads as a fact, which an audit index must not do.
+
+What Boundroom does know goes under `boundroom.*` names on `boundroom.agent_session`: `boundroom.runner.requested`, the runner the caller asked for (`auto`, `claude`, `codex` or `hermes`; `auto` stays `auto`, because `run_agent.sh` picks the runner later), and `boundroom.runner.profile`, the runner profile in effect (SPEC-008), when one was chosen. A runner that exports its own telemetry, such as Claude Code with `runner` on, sets its own GenAI attributes on its own spans, under `agent_session`.
 
 ### Joining a trace to the record
 
 - The decision report and the handoff's supervisor provenance gain a `telemetry.trace_id`. Both are additive, optional schema fields, and a record without them stays valid.
 - Each span that reads or writes a record carries that record's SHA-256 digest. An auditor can compare a trace with the record it claims to describe.
+
+## Metrics
+
+Metrics are recorded only when telemetry is on, through the same off-by-default path as spans. With telemetry off, no instrument is created and nothing is imported. Every instrument is declared once, in `automation/supervisor/telemetry_metrics.py`:
+
+| Name | Kind | Unit | Attributes | Meaning |
+| --- | --- | --- | --- | --- |
+| `boundroom.runs` | counter | `1` | `entry`, `outcome` | One per run of an entry point. |
+| `boundroom.run.duration` | histogram | `s` | `entry`, `outcome` | Wall-clock time of the run's root span. |
+| `boundroom.slice.decisions` | counter | `1` | `decision`, `queue_status` | One per slice verdict, with the queue status written. |
+| `boundroom.agent_session.duration` | histogram | `s` | `entry`, `outcome`, `runner` | Wall-clock time of one agent session, as the supervisor timed it. |
+| `boundroom.validation.replays` | counter | `1` | `entry`, `success` | One per validation command the supervisor replayed. |
+| `boundroom.sync.changes` | counter | `1` | `kind` | Files the sync tool wrote into a consumer, or removed from it. |
+
+Each attribute has a fixed vocabulary:
+
+- `entry`: `run_next`, `evaluate_handoff`, `sync`, `benchmark`.
+- `outcome` on runs: `ok` (exit 0), `failed` (any other exit code), `refused` (a sync refusal), `error` (an exception escaped). It describes the process, not the slice: run_next exits 0 after a `stop_failed` verdict, which `boundroom.slice.decisions` records.
+- `outcome` on sessions: `ok`, `nonzero`, `timeout` (exit 124, or the supervisor's own session timeout), `error`.
+- `decision`: `continue`, `stop`, `stop_for_review`, `stop_blocked`, `stop_failed`, `failed`, `accept`, `reject`.
+- `queue_status`: `queued`, `in_progress`, `blocked`, `deferred`, `done`, `failed`.
+- `runner`: `auto`, `claude`, `codex`, `hermes`. It is the runner asked for; `auto` stays `auto`.
+- `success`: `true`, `false`. `kind`: `synced`, `removed`.
+
+A value outside its vocabulary is recorded as `other`, and a key outside the list is dropped, so the number of series stays bounded. No id, path, slice name, command or free text is a metric attribute; those belong on spans. A test fails when code records an instrument the catalogue lacks, or the catalogue lists one nothing records.
+
+**Where metrics go.** They are held in an in-memory reader and collected once, when the run flushes. Nothing is exported on a timer.
+
+- `file`: one JSON object per data point in `<run_id>.metrics.jsonl`, beside the spans file. A counter gives `value`. A histogram gives `histogram` with `count`, `sum`, `min` and `max`. Each line also has `name`, `kind`, `unit`, `attributes`, `time_unix_nano`, `run_id`, `trace_id` and `resource`.
+- `otlp`: OTLP/HTTP to the endpoint's `/v1/metrics`, with the same headers as traces. A bare endpoint gets `/v1/metrics`. One ending in `/v1/traces` gets `/v1/metrics` in its place. Any other path names a traces URL whose metrics URL Boundroom can't know, so metrics aren't sent, and stderr says so. `run_id` and `trace_id` aren't data-point attributes here, because they would make every run its own series.
+
+The flush still takes at most five seconds in all. Spans go first; metrics get what is left, and are dropped with a stderr message if nothing is. A failure to record or export a metric is reported on stderr and never changes a verdict or exit code. Logfire is configured with `metrics=MetricsOptions(additional_readers=[<that reader>])`, so it adds no reader of its own.
+
+## Offline switch and egress chokepoint
+
+`BOUNDROOM_OFFLINE` refuses every network connection Boundroom itself would make, before it is tried. Any value but empty, `0` or `false` turns it on, so a typo fails closed. It is a registered setting (`offline`), read from the environment only.
+
+- **Telemetry.** `otlp` mode is refused when settings are resolved, with the reason `offline`. With `required`, the run stops with exit code 78 before anything is claimed. Otherwise telemetry is off and stderr says why. `file` mode needs no network and stays allowed.
+- **Memory.** The Hindsight client raises `MemoryOffline`, so a context bundle's `memory` section says `unavailable` with the reason.
+
+All of Boundroom's network paths go through one function, `automation/supervisor/egress.py: guard_egress(purpose, url)`. It returns the URL unchanged, or raises `EgressRefused`. The refusal names the purpose and the reason, never the URL. The OTLP span and metric exporters, the `required` startup probe and the Hindsight client all pass their URL through it. A meta-test parses every module in `automation/` and `Tools/`. It fails on a module that imports a network module (`urllib.request`, `http.client`, `socket`, `requests`, `httpx` and others) or an OTLP exporter without calling the guard, and on a function that connects without calling it. Its allowlist is empty.
+
+**What it doesn't cover.** A child process Boundroom starts does its own networking: the runner talking to its model provider, `git`, `hermes`, the sync tool's quality command (`uv run` may fetch packages) and the benchmark's external tools. The switch is about Boundroom's own Python code.
+
+The OTLP exporters are built with the ambient `OTEL_*` variables hidden, as `logfire.configure` already was. An exporter with no headers otherwise reads `OTEL_EXPORTER_OTLP_HEADERS` and sends those headers to the user's endpoint (UD-6).
 
 ## Runner sessions
 
@@ -161,10 +247,10 @@ boundroom.benchmark.experiment     run dir, lanes, repeats, instance count, repo
 - **No files in the worktree.** `file_dir`, and Logfire's own `data_dir`, must be outside the repository. A path inside it is refused, the same rule `board_for` applies to a board directory, because a write there would dirty the worktree and break the clean stop.
 - **Bounded flush.** The final flush waits at most 5 seconds, then drops what's left and says so on stderr.
 
-The SDK is configured explicitly, never from its defaults or the ambient environment: `send_to_logfire=False` always (it defaults to sending to Pydantic's hosted service), spans go only to Boundroom's own exporter for the user's destination, and `console=False`, `fleet=False`, `inspect_arguments=False`, `data_dir` outside the repository, and `service_name="boundroom-supervisor"`. `service_version` is the Boundroom version and commit.
+The SDK is configured explicitly, never from its defaults or the ambient environment: `send_to_logfire=False` always (it defaults to sending to Pydantic's hosted service), spans go only to Boundroom's own exporter for the user's destination, and `console=False`, `fleet=False`, `inspect_arguments=False`, `data_dir` outside the repository, and `service_name="boundroom"`. `service_version` is the Boundroom version.
 
 **As built (RA-TEL-002, Logfire 5.4.0):**
-- Logfire 5.4.0 has no `fleet` parameter, so there is nothing to set; the other settings above are passed as written, with `local=True` so no global tracer provider is installed, `metrics=False` and `distributed_tracing=False`.
+- Logfire 5.4.0 has no `fleet` parameter, so there is nothing to set; the other settings above are passed as written, with `local=True` so no global tracer provider is installed, and `distributed_tracing=False`. RA-TEL-002 passed `metrics=False`; since RA-TEL-010, metrics go only to Boundroom's own reader (see [Metrics](#metrics)).
 - `logfire.configure` reads `OTEL_EXPORTER_OTLP_*` from the environment and adds an exporter for them. `configure` hides every `OTEL_*` and `LOGFIRE_*` variable while it runs and restores them afterwards, which is what makes UD-6 hold.
 - Logfire registers a pydantic plugin, and pydantic imports every installed plugin the first time a model is built, so an installed extra would import the SDK on every run. `automation/schemas/models.py` switches that one plugin off while pydantic loads its plugins and restores the environment, so UD-1 holds with the extra installed and no child process inherits the switch.
 - `logfire` is also in the dev group, at the same pin, so CI exercises the exporter.
@@ -173,7 +259,7 @@ The SDK is configured explicitly, never from its defaults or the ambient environ
 
 - **[SPEC-002](agent-plugin.md):** skill text only. `boundroom-run-next` and `boundroom-evaluate-handoff` list the flags. `boundroom-status` reports the resolved settings. Each skill reports the `trace_id` from the decision report. No plugin code.
 - **[SPEC-001](control-plane.md) and [SPEC-003](discord-knowledge-loop.md):** no new authority. The knowledge loop gets no telemetry write path, and telemetry never dispatches or approves anything.
-- **Performance (AGENTS.md):** this adds file and network work to the supervisor path when telemetry is on. It grows with the number of validations replayed per slice, not with queue or repository size. Each implementing pull request must say so.
+- **Performance (AGENTS.md):** this adds file and network work to the supervisor path when telemetry is on. It grows with the number of validations replayed per slice, not with queue or repository size. Each implementing pull request must say so. Metrics add a few in-memory counter updates per slice and one collection at flush, inside the same five-second bound. The offline check is one environment read per connection.
 - **[Control map](../compliance/controls.md):** adds a monitoring row (SOC 2 CC7.2, CIS 2) once RA-TEL-003 ships, stated as Process, because exporting is optional.
 
 ## Delivery slices
@@ -189,6 +275,13 @@ Each slice is one pull request by the agent, approved by a person, with tests in
 | RA-TEL-005 | The sync and benchmark spans. | The benchmark gives every lane identical settings, recorded in `run.json`. The agent's prompt and workspace are byte-identical with telemetry on and off. Sync spans cover verify, plan and write. |
 | RA-TEL-006 | Plugin skill text, the workflow doc, and the control-map row. A plugin version bump ships with a release a person approves. | UD-8 and the UD-3 scan. The SPEC-002 manifest-version check passes. The skills contain no code, no endpoint and no example host. |
 | RA-TEL-007 | Canary: one slice on a disposable local board with Claude Code as parent and runner, in `file` mode on the owner's machine. No new software and no network egress. | The trace tree is complete and joins the decision report through `trace_id`. The runner's spans nest under `agent_session` when `runner: metadata` with a file-backed exporter. Nothing sensitive appears in the files. Recorded in this spec. |
+
+| RA-TEL-008 | Span status and safe errors: ERROR status with a reason code on failed or blocked spans; exceptions recorded by class and function only. **Implemented.** | A planted secret in an exception message never reaches the span file. Failed, blocked, refused and non-zero spans carry ERROR; passing runs stay UNSET. Doesn't cover: the runner's own spans, which Boundroom doesn't export; the existing `reason` attribute on `decision` keeps its text with the repository path cut out. |
+| RA-TEL-009 | Resource attributes: `service.name=boundroom`, `service.version`, `deployment.environment.name` and the operator's `resource_attributes`. **Implemented.** | Each limit is refused with a named reason; the repository can't set them; reports show keys only; file mode writes them on every line. Doesn't cover: the benchmark, which doesn't read them. |
+| RA-TEL-010 | Metrics from one catalogue, to the metrics file or the endpoint's `/v1/metrics`. **Implemented.** | Unknown values become `other`; every recorded instrument is catalogued; off records nothing; otlp sends once at flush with the same headers and no ambient ones. Doesn't cover: a custom traces path, for which metrics aren't sent; token or cost metrics, which Boundroom can't see. |
+| RA-TEL-011 | `BOUNDROOM_OFFLINE` and the `guard_egress` chokepoint. **Implemented.** | otlp refused at resolve time (78 when required); memory refused before a socket; the meta-test finds every network path guarded. Doesn't cover: child processes' own networking. |
+| RA-TEL-012 | `boundroom.runner.*` on `agent_session`, and no `gen_ai.*` values. **Implemented.** | The requested runner is recorded; no span has a `gen_ai.*` key. Doesn't cover: the resolved runner when `auto`, which `run_agent.sh` picks later. |
+| RA-TEL-013 | A `telemetry` block in the read-only operator status. **Implemented.** | Mode, destination kind, capture, runner, offline, resource keys and any refusal; no endpoint, header or value appears. Doesn't cover: the `boundroom-status` skill's text, which is unchanged. |
 
 An `otlp` canary, against a destination the user names, comes after the owner's decisions below.
 

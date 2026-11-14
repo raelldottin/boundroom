@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -30,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from automation.supervisor import policy, runner_profile, telemetry, telemetry_settings
+from automation.supervisor import policy, runner_profile, telemetry, telemetry_metrics, telemetry_settings
 
 
 # ---------------------------------------------------------------------------
@@ -529,6 +530,8 @@ def main() -> int:
     for message in tracer.messages:
         print(message, file=sys.stderr)
     telemetry_block = resolved.report()
+    started = time.monotonic()
+    code: Optional[int] = None
     try:
         with tracer.span("boundroom.run", entry="evaluate_handoff", run_id=tracer.run_id, slice_id=args.slice_id) as root:
             telemetry_block["trace_id"] = telemetry.trace_id(root)
@@ -543,19 +546,28 @@ def main() -> int:
             )
             for replay in report.supervisor_validation_replays:
                 tracer.mark("boundroom.validation.replay", command=replay.get("command"), success=replay.get("success"))
+                tracer.metric("boundroom.validation.replays", entry="evaluate_handoff", success=replay.get("success"))
             result = report_to_dict(report) | {"telemetry": telemetry_block}
             tracer.mark(
                 "boundroom.decision",
+                error_code=telemetry.verdict_error(report.decision),
                 verdict=report.decision,
                 reason=report.reason,
                 changed_file_count=report.changed_file_count,
                 report_sha256=hashlib.sha256(json.dumps(result, sort_keys=True).encode("utf-8")).hexdigest(),
             )
+            tracer.metric("boundroom.slice.decisions", decision=report.decision, queue_status=report.queue_status)
+            code = 0 if report.queue_status == "done" else 1
+            tracer.annotate(root, exit_code=code)
+            if code != 0:
+                tracer.fail(root, "exit_nonzero")
     finally:
+        outcome = "error" if code is None else telemetry_metrics.run_outcome(code)
+        tracer.record_run("evaluate_handoff", outcome, time.monotonic() - started)
         tracer.flush()
 
     print(json.dumps(result, indent=2))
-    return 0 if report.queue_status == "done" else 1
+    return code
 
 
 if __name__ == "__main__":

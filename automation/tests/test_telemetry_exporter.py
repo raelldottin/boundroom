@@ -81,7 +81,8 @@ from automation.supervisor import telemetry
 from automation.supervisor.telemetry_settings import resolve
 handle = telemetry.configure(resolve(environ={}, operator_file=None), repo_root=Path(sys.argv[1]), run_id="r1")
 with handle.span("anything", x=1):
-    pass
+    handle.metric("boundroom.runs", entry="run_next", outcome="ok")
+    handle.record_run("run_next", "ok", 0.1)
 assert handle.flush()
 loaded = [m for m in sys.modules if m.startswith(("logfire", "opentelemetry", "urllib.request", "http.client"))]
 assert not loaded, loaded
@@ -141,10 +142,13 @@ class SdkConfigurationTests(ExporterCase):
         kwargs = fake.configure.call_args.kwargs
         self.assertIs(False, kwargs["send_to_logfire"])
         self.assertIs(False, kwargs["console"])
-        self.assertIs(False, kwargs["metrics"])
+        # Metrics go only to Boundroom's own in-memory reader, collected once at flush (RA-TEL-010).
+        self.assertIs(fake.MetricsOptions.return_value, kwargs["metrics"])
+        self.assertEqual({"additional_readers"}, set(fake.MetricsOptions.call_args.kwargs))
+        self.assertEqual(1, len(fake.MetricsOptions.call_args.kwargs["additional_readers"]))
         self.assertIs(False, kwargs["inspect_arguments"])
         self.assertIs(True, kwargs["local"])
-        self.assertEqual("boundroom-supervisor", kwargs["service_name"])
+        self.assertEqual("boundroom", kwargs["service_name"])
         self.assertFalse(telemetry._inside(Path(kwargs["data_dir"]), REPO_ROOT))
         self.assertEqual(1, len(kwargs["additional_span_processors"]))
 
