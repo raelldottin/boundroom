@@ -78,6 +78,12 @@ def annotate(handle: Optional[Telemetry], target: Any, **attributes: Any) -> Non
         handle.annotate(target, **{key: value for key, value in attributes.items() if value is not None})
 
 
+def fail(handle: Optional[Telemetry], target: Any, code: str) -> None:
+    """The ERROR status on a span, described by a reason code."""
+    if handle is not None:
+        handle.fail(target, code)
+
+
 def file_sha256(path: Path) -> Optional[str]:
     """The digest of a record a span describes, so an auditor can check the one against the other."""
     try:
@@ -92,6 +98,7 @@ __all__ = [
     "annotate",
     "benchmark_settings",
     "enabled",
+    "fail",
     "file_sha256",
     "span",
     "untraced",

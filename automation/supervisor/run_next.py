@@ -233,245 +233,291 @@ def _run(args: argparse.Namespace) -> int:
         )
         telemetry_report["trace_id"] = telemetry.trace_id(root)
 
-        active = policy.active_slice(queue_data)
-        if active is not None:
-            print(f"stop: queue already has in_progress slice {active['slice_id']}", file=sys.stderr)
+        code = _supervise(
+            args,
+            repo_root=repo_root,
+            handoff_dir=handoff_dir,
+            memory_config=memory_config,
+            store=store,
+            queue_data=queue_data,
+            tracer=tracer,
+            telemetry_settings_resolved=telemetry_settings_resolved,
+            telemetry_report=telemetry_report,
+            content=content,
+            profile=profile,
+            profile_record=profile_record,
+            report_file=report_file,
+        )
+        tracer.annotate(root, exit_code=code)
+        if code != 0:
+            tracer.fail(root, "exit_nonzero")
+        return code
+
+
+def _supervise(
+    args: argparse.Namespace,
+    *,
+    repo_root: Path,
+    handoff_dir: Path,
+    memory_config: Optional[memory.MemoryConfig],
+    store: JsonQueue | KanbanQueue,
+    queue_data: dict,
+    tracer: telemetry.Telemetry,
+    telemetry_settings_resolved: telemetry_settings.TelemetrySettings,
+    telemetry_report: dict,
+    content: bool,
+    profile: Optional[runner_profile.RunnerProfile],
+    profile_record: Optional[dict],
+    report_file: Optional[Path],
+) -> int:
+    """Select, claim, run and judge slices under the run's root span; returns the exit code."""
+    active = policy.active_slice(queue_data)
+    if active is not None:
+        print(f"stop: queue already has in_progress slice {active['slice_id']}", file=sys.stderr)
+        return 2
+
+    # Read through the settings registry (SPEC-008), which reports where each value came from.
+    setting_sources = settings.Sources(
+        entry_point="run_next",
+        flags=vars(args),
+        environ=os.environ,
+        repository=settings.repository_values(queue_data["policy"]),
+    )
+    agent_command_template = settings.resolve("agent_command", setting_sources).value
+    if not args.dry_run and not agent_command_template.strip():
+        print(
+            "stop: no agent command template configured. Pass --agent-cmd or set policy.agent_command_template.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # A limit of 0 has always fallen back to the policy's, so it still does.
+    autonomous_limit = (
+        1
+        if args.single_slice
+        else settings.resolve("autonomous_limit", setting_sources).value or queue_data["policy"]["consecutive_autonomous_limit"]
+    )
+    completed_runs = 0
+
+    while True:
+        queue_data = store.load()
+        next_slice = policy.select_next_slice(queue_data)
+        if next_slice is None:
+            tracer.mark("boundroom.select", result="none eligible")
+            print("stop: no eligible queued slice found.")
+            if args.include_blocked:
+                reports = policy.blocked_slice_reports(queue_data)
+                if reports:
+                    print()
+                    print("blocked/deferred slices:")
+                    for report in reports:
+                        print(f"- {report.status}: {report.slice_id}")
+                        print(f"  missing entry condition: {report.entry_condition}")
+                        if report.recommended_unblocker:
+                            print(f"  recommended unblocker: {report.recommended_unblocker}")
+                        else:
+                            print("  recommended unblocker: <none recorded>")
+            return 0
+
+        tracer.mark("boundroom.select", slice_id=next_slice["slice_id"])
+        dirty_paths_before_run = policy.git_dirty_paths(repo_root)
+        unexpected_dirty = policy.out_of_scope_paths(
+            dirty_paths_before_run, next_slice["allowed_paths"], queue_data["policy"]["supervisor_owned_paths"]
+        )
+        if unexpected_dirty:
+            print("stop: repo is dirty outside the next slice scope:\n- " + "\n- ".join(unexpected_dirty), file=sys.stderr)
             return 2
 
-        # Read through the settings registry (SPEC-008), which reports where each value came from.
-        setting_sources = settings.Sources(
-            entry_point="run_next",
-            flags=vars(args),
-            environ=os.environ,
-            repository=settings.repository_values(queue_data["policy"]),
+        timestamp_token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        handoff_filename = policy.make_handoff_filename(next_slice["slice_id"], timestamp_token)
+        handoff_path = handoff_dir / handoff_filename
+        context_bundle = build_context_bundle(
+            repo_root=repo_root,
+            queue_path=repo_root / args.queue,
+            handoff_dir=handoff_dir,
+            slice_id=next_slice["slice_id"],
+            memory_config=memory_config,
+            memory_project=args.memory_project,
+            queue_data=queue_data,
         )
-        agent_command_template = settings.resolve("agent_command", setting_sources).value
-        if not args.dry_run and not agent_command_template.strip():
-            print(
-                "stop: no agent command template configured. Pass --agent-cmd or set policy.agent_command_template.",
-                file=sys.stderr,
-            )
-            return 2
-
-        # A limit of 0 has always fallen back to the policy's, so it still does.
-        autonomous_limit = (
-            1
-            if args.single_slice
-            else settings.resolve("autonomous_limit", setting_sources).value
-            or queue_data["policy"]["consecutive_autonomous_limit"]
+        bundle_text = json.dumps(context_bundle, sort_keys=True, ensure_ascii=False)
+        tracer.mark(
+            "boundroom.context",
+            document_count=len(context_bundle["documents"]),
+            bundle_sha256=hashlib.sha256(bundle_text.encode("utf-8")).hexdigest(),
+            **({"bundle_text": bundle_text} if content else {}),
         )
-        completed_runs = 0
 
-        while True:
-            queue_data = store.load()
-            next_slice = policy.select_next_slice(queue_data)
-            if next_slice is None:
-                tracer.mark("boundroom.select", result="none eligible")
-                print("stop: no eligible queued slice found.")
-                if args.include_blocked:
-                    reports = policy.blocked_slice_reports(queue_data)
-                    if reports:
-                        print()
-                        print("blocked/deferred slices:")
-                        for report in reports:
-                            print(f"- {report.status}: {report.slice_id}")
-                            print(f"  missing entry condition: {report.entry_condition}")
-                            if report.recommended_unblocker:
-                                print(f"  recommended unblocker: {report.recommended_unblocker}")
-                            else:
-                                print("  recommended unblocker: <none recorded>")
-                return 0
+        if args.dry_run:
+            report = {
+                "selected_slice": next_slice["slice_id"],
+                "handoff_path": str(handoff_path),
+                "required_validations": next_slice["required_validations"],
+                "supervisor_replayable_validations": policy.supervisor_replayable_validations(next_slice["required_validations"]),
+                "validation_ownership": context_bundle["validation_ownership"],
+                "allowed_paths": next_slice["allowed_paths"],
+                "context_documents": [doc["path"] for doc in context_bundle["documents"]],
+                "telemetry": telemetry_report,
+            }
+            if profile_record:
+                report["runner_profile"] = profile_record
+            if args.include_blocked:
+                report["blocked_slices"] = [
+                    {
+                        "slice_id": blocked.slice_id,
+                        "status": blocked.status,
+                        "entry_condition": blocked.entry_condition,
+                        "recommended_unblocker": blocked.recommended_unblocker,
+                    }
+                    for blocked in policy.blocked_slice_reports(queue_data)
+                ]
+            emit(report, report_file)
+            return 0
 
-            tracer.mark("boundroom.select", slice_id=next_slice["slice_id"])
-            dirty_paths_before_run = policy.git_dirty_paths(repo_root)
-            unexpected_dirty = policy.out_of_scope_paths(
-                dirty_paths_before_run, next_slice["allowed_paths"], queue_data["policy"]["supervisor_owned_paths"]
-            )
-            if unexpected_dirty:
-                print("stop: repo is dirty outside the next slice scope:\n- " + "\n- ".join(unexpected_dirty), file=sys.stderr)
-                return 2
+        # The commit the slice starts from, read before anything is claimed: its own commits are
+        # measured from here, for the scope check and the git diff --check replay.
+        base_commit_sha = policy.git_head(repo_root)
+        store.set_status(next_slice, "in_progress")
+        queue_data = policy.set_slice_status(queue_data, next_slice["slice_id"], "in_progress")
+        tracer.mark("boundroom.claim", slice_id=next_slice["slice_id"], base_sha=base_commit_sha, result="claimed")
 
-            timestamp_token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            handoff_filename = policy.make_handoff_filename(next_slice["slice_id"], timestamp_token)
-            handoff_path = handoff_dir / handoff_filename
-            context_bundle = build_context_bundle(
-                repo_root=repo_root,
-                queue_path=repo_root / args.queue,
-                handoff_dir=handoff_dir,
-                slice_id=next_slice["slice_id"],
-                memory_config=memory_config,
-                memory_project=args.memory_project,
-                queue_data=queue_data,
-            )
-            bundle_text = json.dumps(context_bundle, sort_keys=True, ensure_ascii=False)
-            tracer.mark(
-                "boundroom.context",
-                document_count=len(context_bundle["documents"]),
-                bundle_sha256=hashlib.sha256(bundle_text.encode("utf-8")).hexdigest(),
-                **({"bundle_text": bundle_text} if content else {}),
-            )
+        current = next_slice
 
-            if args.dry_run:
-                report = {
-                    "selected_slice": next_slice["slice_id"],
-                    "handoff_path": str(handoff_path),
-                    "required_validations": next_slice["required_validations"],
-                    "supervisor_replayable_validations": policy.supervisor_replayable_validations(
-                        next_slice["required_validations"]
-                    ),
-                    "validation_ownership": context_bundle["validation_ownership"],
-                    "allowed_paths": next_slice["allowed_paths"],
-                    "context_documents": [doc["path"] for doc in context_bundle["documents"]],
-                    "telemetry": telemetry_report,
-                }
-                if profile_record:
-                    report["runner_profile"] = profile_record
-                if args.include_blocked:
-                    report["blocked_slices"] = [
-                        {
-                            "slice_id": blocked.slice_id,
-                            "status": blocked.status,
-                            "entry_condition": blocked.entry_condition,
-                            "recommended_unblocker": blocked.recommended_unblocker,
-                        }
-                        for blocked in policy.blocked_slice_reports(queue_data)
-                    ]
-                emit(report, report_file)
-                return 0
-
-            # The commit the slice starts from, read before anything is claimed: its own commits are
-            # measured from here, for the scope check and the git diff --check replay.
-            base_commit_sha = policy.git_head(repo_root)
-            store.set_status(next_slice, "in_progress")
-            queue_data = policy.set_slice_status(queue_data, next_slice["slice_id"], "in_progress")
-            tracer.mark("boundroom.claim", slice_id=next_slice["slice_id"], base_sha=base_commit_sha, result="claimed")
-
-            current = next_slice
-
-            def fail(reason: str, exit_code: int = 2) -> int:
-                tracer.mark("boundroom.decision", verdict="failed", reason=telemetry.without_root(reason, repo_root))
-                store.set_status(current, "failed", reason, handoff_path)
-                tracer.mark("boundroom.board.record", verdict="failed")
-                try:
-                    head_sha: Optional[str] = policy.git_head(repo_root)
-                except Exception:  # the report must still go out if git itself is what failed
-                    head_sha = None
-                report = make_failure_report(
-                    slice_record=current,
-                    reason=reason,
-                    completed_runs=completed_runs,
-                    autonomous_limit=autonomous_limit,
-                    telemetry=telemetry_report,
-                    runner_profile=profile_record,
-                    base_sha=base_commit_sha,
-                    head_sha=head_sha,
-                )
-                emit(report, report_file)
-                return exit_code
-
+        def fail(reason: str, code: str, exit_code: int = 2) -> int:
+            """Fail the slice. ``code`` is the reason code the decision span's status carries."""
+            tracer.mark("boundroom.decision", error_code=code, verdict="failed", reason=telemetry.without_root(reason, repo_root))
+            store.set_status(current, "failed", reason, handoff_path)
+            tracer.mark("boundroom.board.record", verdict="failed")
             try:
-                with tracer.span("boundroom.agent_session", slice_id=next_slice["slice_id"]) as session:
-                    runner_telemetry = telemetry.runner_environment(
-                        telemetry_settings_resolved, os.environ, session, tracer.run_id, next_slice["slice_id"]
-                    )
-                    if tracer.enabled:
-                        telemetry_report.update(runner_telemetry.report())
-                    exit_code = run_agent(
-                        repo_root=repo_root,
-                        queue_data=queue_data,
-                        slice_record=next_slice,
-                        context_bundle=context_bundle,
-                        handoff_path=handoff_path,
-                        command_template=agent_command_template,
-                        profile=profile,
-                        extra_env=runner_telemetry.variables,
-                    )
-                    tracer.annotate(session, exit_code=exit_code)
-            except Exception as error:  # pragma: no cover - last-resort queue recovery
-                return fail(f"Supervisor error while running slice: {error}")
-
-            if exit_code != 0:
-                return fail(f"Agent command exited with code {exit_code} for slice {next_slice['slice_id']}.", exit_code)
-
-            if not handoff_path.exists():
-                return fail(f"Missing handoff artifact for slice {next_slice['slice_id']} at {handoff_path}")
-
-            try:
-                handoff = policy.load_handoff(handoff_path)
-            except ValueError as error:
-                return fail(f"Invalid handoff artifact: {error}")
-
-            handoff_bytes = handoff_path.read_bytes()
-            tracer.mark(
-                "boundroom.handoff.evaluate",
-                handoff_sha256=hashlib.sha256(handoff_bytes).hexdigest(),
-                status=handoff["status"],
-                schema_result="valid",
-                **({"handoff_text": handoff_bytes.decode("utf-8", errors="replace")} if content else {}),
-            )
-            if handoff["slice_id"] != next_slice["slice_id"]:
-                return fail("Handoff slice_id does not match the in-progress slice.")
-
-            dirty_paths_after_run = policy.git_dirty_paths(repo_root)
-            try:
-                committed_paths = policy.git_committed_paths(repo_root, base_commit_sha)
-            except policy.ConfigError as error:
-                return fail(str(error))
-
-            post_run_commit_sha = subprocess.run(
-                ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True, cwd=repo_root
-            ).stdout.strip()
-
-            validation_replays: list[policy.ValidationReplayResult] = []
-            if handoff["status"] == "done":
-                validation_replays = policy.replay_validation_commands(
-                    repo_root=repo_root,
-                    required_validations=next_slice["required_validations"],
-                    validations_passed=handoff["validations_passed"],
-                    base_sha=base_commit_sha,
-                )
-            for replay in validation_replays:
-                tracer.mark(
-                    "boundroom.validation.replay", command=replay.command, base_sha=base_commit_sha, success=replay.success
-                )
-            completed_runs += 1
-            decision = policy.evaluate_completion(
-                queue_data=queue_data,
-                slice_record=next_slice,
-                handoff=handoff,
-                dirty_paths_before_run=dirty_paths_before_run,
-                dirty_paths_after_run=dirty_paths_after_run,
-                completed_autonomous_runs=completed_runs,
-                run_limit=autonomous_limit,
-                validation_replays=validation_replays,
-                post_run_commit_sha=post_run_commit_sha,
-                committed_paths=committed_paths,
-            )
-
-            decision_report = make_decision_report(
-                slice_record=next_slice,
-                decision=decision,
+                head_sha: Optional[str] = policy.git_head(repo_root)
+            except Exception:  # the report must still go out if git itself is what failed
+                head_sha = None
+            report = make_failure_report(
+                slice_record=current,
+                reason=reason,
                 completed_runs=completed_runs,
                 autonomous_limit=autonomous_limit,
                 telemetry=telemetry_report,
                 runner_profile=profile_record,
                 base_sha=base_commit_sha,
-                head_sha=post_run_commit_sha,
+                head_sha=head_sha,
             )
-            tracer.mark(
-                "boundroom.decision",
-                verdict=decision.decision,
-                reason=telemetry.without_root(decision.stop_reason, repo_root),
-                changed_file_count=decision.changed_file_count,
-                report_sha256=hashlib.sha256(json.dumps(decision_report, sort_keys=True).encode("utf-8")).hexdigest(),
+            emit(report, report_file)
+            return exit_code
+
+        try:
+            with tracer.span("boundroom.agent_session", slice_id=next_slice["slice_id"]) as session:
+                runner_telemetry = telemetry.runner_environment(
+                    telemetry_settings_resolved, os.environ, session, tracer.run_id, next_slice["slice_id"]
+                )
+                if tracer.enabled:
+                    telemetry_report.update(runner_telemetry.report())
+                exit_code = run_agent(
+                    repo_root=repo_root,
+                    queue_data=queue_data,
+                    slice_record=next_slice,
+                    context_bundle=context_bundle,
+                    handoff_path=handoff_path,
+                    command_template=agent_command_template,
+                    profile=profile,
+                    extra_env=runner_telemetry.variables,
+                )
+                tracer.annotate(session, exit_code=exit_code)
+                if exit_code != 0:
+                    tracer.fail(session, session_error(exit_code))
+        except Exception as error:  # pragma: no cover - last-resort queue recovery
+            return fail(f"Supervisor error while running slice: {error}", "supervisor_error")
+
+        if exit_code != 0:
+            return fail(
+                f"Agent command exited with code {exit_code} for slice {next_slice['slice_id']}.",
+                session_error(exit_code),
+                exit_code,
             )
-            store.set_status(next_slice, decision.queue_status, decision.stop_reason or decision.decision, handoff_path)
-            tracer.mark("boundroom.board.record", verdict=decision.queue_status)
 
-            emit(decision_report, report_file)
+        if not handoff_path.exists():
+            return fail(f"Missing handoff artifact for slice {next_slice['slice_id']} at {handoff_path}", "handoff_missing")
 
-            if not decision.should_continue:
-                return 0
+        try:
+            handoff = policy.load_handoff(handoff_path)
+        except ValueError as error:
+            return fail(f"Invalid handoff artifact: {error}", "handoff_invalid")
+
+        handoff_bytes = handoff_path.read_bytes()
+        tracer.mark(
+            "boundroom.handoff.evaluate",
+            handoff_sha256=hashlib.sha256(handoff_bytes).hexdigest(),
+            status=handoff["status"],
+            schema_result="valid",
+            **({"handoff_text": handoff_bytes.decode("utf-8", errors="replace")} if content else {}),
+        )
+        if handoff["slice_id"] != next_slice["slice_id"]:
+            return fail("Handoff slice_id does not match the in-progress slice.", "handoff_slice_mismatch")
+
+        dirty_paths_after_run = policy.git_dirty_paths(repo_root)
+        try:
+            committed_paths = policy.git_committed_paths(repo_root, base_commit_sha)
+        except policy.ConfigError as error:
+            return fail(str(error), "git_error")
+
+        post_run_commit_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True, cwd=repo_root
+        ).stdout.strip()
+
+        validation_replays: list[policy.ValidationReplayResult] = []
+        if handoff["status"] == "done":
+            validation_replays = policy.replay_validation_commands(
+                repo_root=repo_root,
+                required_validations=next_slice["required_validations"],
+                validations_passed=handoff["validations_passed"],
+                base_sha=base_commit_sha,
+            )
+        for replay in validation_replays:
+            tracer.mark("boundroom.validation.replay", command=replay.command, base_sha=base_commit_sha, success=replay.success)
+        completed_runs += 1
+        decision = policy.evaluate_completion(
+            queue_data=queue_data,
+            slice_record=next_slice,
+            handoff=handoff,
+            dirty_paths_before_run=dirty_paths_before_run,
+            dirty_paths_after_run=dirty_paths_after_run,
+            completed_autonomous_runs=completed_runs,
+            run_limit=autonomous_limit,
+            validation_replays=validation_replays,
+            post_run_commit_sha=post_run_commit_sha,
+            committed_paths=committed_paths,
+        )
+
+        decision_report = make_decision_report(
+            slice_record=next_slice,
+            decision=decision,
+            completed_runs=completed_runs,
+            autonomous_limit=autonomous_limit,
+            telemetry=telemetry_report,
+            runner_profile=profile_record,
+            base_sha=base_commit_sha,
+            head_sha=post_run_commit_sha,
+        )
+        tracer.mark(
+            "boundroom.decision",
+            error_code=telemetry.verdict_error(decision.decision),
+            verdict=decision.decision,
+            reason=telemetry.without_root(decision.stop_reason, repo_root),
+            changed_file_count=decision.changed_file_count,
+            report_sha256=hashlib.sha256(json.dumps(decision_report, sort_keys=True).encode("utf-8")).hexdigest(),
+        )
+        store.set_status(next_slice, decision.queue_status, decision.stop_reason or decision.decision, handoff_path)
+        tracer.mark("boundroom.board.record", verdict=decision.queue_status)
+
+        emit(decision_report, report_file)
+
+        if not decision.should_continue:
+            return 0
+
+
+def session_error(exit_code: int) -> str:
+    """The reason code for an agent session that didn't exit 0. 124 is timeout(1)'s exit code."""
+    return "agent_timeout" if exit_code == 124 else "agent_exit_nonzero"
 
 
 def run_agent(

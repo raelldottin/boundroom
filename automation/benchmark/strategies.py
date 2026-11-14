@@ -810,6 +810,8 @@ def run_phase(
             returncode = ctx.runner(command, ctx.workspace, ctx.env, budget)
             elapsed = time.monotonic() - started
             tracing.annotate(tracer, session, exit_code=returncode, duration_seconds=round(elapsed, 3))
+            if returncode != 0:
+                tracing.fail(tracer, session, "agent_timeout" if returncode == AGENT_TIMEOUT_RETURNCODE else "agent_exit_nonzero")
         if tracing.enabled(tracer):
             # Read, never written, and only when traced: the next phase sees the same bytes.
             artifact = PHASE_ARTIFACTS.get(phase)

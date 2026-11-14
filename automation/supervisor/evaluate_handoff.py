@@ -546,16 +546,21 @@ def main() -> int:
             result = report_to_dict(report) | {"telemetry": telemetry_block}
             tracer.mark(
                 "boundroom.decision",
+                error_code=telemetry.verdict_error(report.decision),
                 verdict=report.decision,
                 reason=report.reason,
                 changed_file_count=report.changed_file_count,
                 report_sha256=hashlib.sha256(json.dumps(result, sort_keys=True).encode("utf-8")).hexdigest(),
             )
+            code = 0 if report.queue_status == "done" else 1
+            tracer.annotate(root, exit_code=code)
+            if code != 0:
+                tracer.fail(root, "exit_nonzero")
     finally:
         tracer.flush()
 
     print(json.dumps(result, indent=2))
-    return 0 if report.queue_status == "done" else 1
+    return code
 
 
 if __name__ == "__main__":
