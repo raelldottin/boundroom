@@ -693,16 +693,19 @@ def run_experiment(
     handle = telemetry or tracing.untraced()
     traced = tracing.enabled(handle)
 
-    with tracing.span(
-        handle,
-        "boundroom.benchmark.experiment",
-        run_dir=str(run_dir),
-        lanes=list(lanes),
-        repeats=repeats,
-        instance_count=len(instances),
-        # A git call per experiment, so only when someone will read it.
-        repo_sha=_repo_sha(repo_root) if traced else None,
-    ) as experiment:
+    with (
+        tracing.recorded_run(handle),
+        tracing.span(
+            handle,
+            "boundroom.benchmark.experiment",
+            run_dir=str(run_dir),
+            lanes=list(lanes),
+            repeats=repeats,
+            instance_count=len(instances),
+            # A git call per experiment, so only when someone will read it.
+            repo_sha=_repo_sha(repo_root) if traced else None,
+        ) as experiment,
+    ):
         # Built once and handed to every cell, so no lane can record different settings.
         settings = handle.settings.report(trace_id=telemetry_module.trace_id(experiment))
         for cell in interleave(instances, lanes, repeats):

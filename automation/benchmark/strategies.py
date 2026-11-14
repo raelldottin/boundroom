@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol
 
 from automation.supervisor import run_next
+from automation.supervisor.telemetry_metrics import session_outcome
 
 from . import jspace as jspace_module
 from . import tracing
@@ -812,6 +813,14 @@ def run_phase(
             tracing.annotate(tracer, session, exit_code=returncode, duration_seconds=round(elapsed, 3))
             if returncode != 0:
                 tracing.fail(tracer, session, "agent_timeout" if returncode == AGENT_TIMEOUT_RETURNCODE else "agent_exit_nonzero")
+        tracing.metric(
+            tracer,
+            "boundroom.agent_session.duration",
+            elapsed,
+            entry="benchmark",
+            outcome=session_outcome(returncode),
+            runner=ctx.env.get("BOUNDROOM_AGENT_RUNNER"),
+        )
         if tracing.enabled(tracer):
             # Read, never written, and only when traced: the next phase sees the same bytes.
             artifact = PHASE_ARTIFACTS.get(phase)

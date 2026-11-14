@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -30,6 +31,7 @@ from automation.supervisor import (
     runner_profile,
     settings,
     telemetry,
+    telemetry_metrics,
     telemetry_settings,
 )
 
@@ -233,21 +235,27 @@ def _run(args: argparse.Namespace) -> int:
         )
         telemetry_report["trace_id"] = telemetry.trace_id(root)
 
-        code = _supervise(
-            args,
-            repo_root=repo_root,
-            handoff_dir=handoff_dir,
-            memory_config=memory_config,
-            store=store,
-            queue_data=queue_data,
-            tracer=tracer,
-            telemetry_settings_resolved=telemetry_settings_resolved,
-            telemetry_report=telemetry_report,
-            content=content,
-            profile=profile,
-            profile_record=profile_record,
-            report_file=report_file,
-        )
+        started = time.monotonic()
+        code: Optional[int] = None
+        try:
+            code = _supervise(
+                args,
+                repo_root=repo_root,
+                handoff_dir=handoff_dir,
+                memory_config=memory_config,
+                store=store,
+                queue_data=queue_data,
+                tracer=tracer,
+                telemetry_settings_resolved=telemetry_settings_resolved,
+                telemetry_report=telemetry_report,
+                content=content,
+                profile=profile,
+                profile_record=profile_record,
+                report_file=report_file,
+            )
+        finally:
+            outcome = "error" if code is None else telemetry_metrics.run_outcome(code)
+            tracer.record_run("run_next", outcome, time.monotonic() - started)
         tracer.annotate(root, exit_code=code)
         if code != 0:
             tracer.fail(root, "exit_nonzero")
@@ -284,6 +292,8 @@ def _supervise(
         repository=settings.repository_values(queue_data["policy"]),
     )
     agent_command_template = settings.resolve("agent_command", setting_sources).value
+    # The runner the caller asked for. run_agent.sh resolves auto later, so auto stays auto here.
+    requested_runner = settings.resolve("runner", setting_sources).value
     if not args.dry_run and not agent_command_template.strip():
         print(
             "stop: no agent command template configured. Pass --agent-cmd or set policy.agent_command_template.",
@@ -386,6 +396,7 @@ def _supervise(
         def fail(reason: str, code: str, exit_code: int = 2) -> int:
             """Fail the slice. ``code`` is the reason code the decision span's status carries."""
             tracer.mark("boundroom.decision", error_code=code, verdict="failed", reason=telemetry.without_root(reason, repo_root))
+            tracer.metric("boundroom.slice.decisions", decision="failed", queue_status="failed")
             store.set_status(current, "failed", reason, handoff_path)
             tracer.mark("boundroom.board.record", verdict="failed")
             try:
@@ -405,6 +416,8 @@ def _supervise(
             emit(report, report_file)
             return exit_code
 
+        session_started = time.monotonic()
+        session_outcome = "error"
         try:
             with tracer.span("boundroom.agent_session", slice_id=next_slice["slice_id"]) as session:
                 runner_telemetry = telemetry.runner_environment(
@@ -422,11 +435,22 @@ def _supervise(
                     profile=profile,
                     extra_env=runner_telemetry.variables,
                 )
+                session_outcome = telemetry_metrics.session_outcome(exit_code)
                 tracer.annotate(session, exit_code=exit_code)
                 if exit_code != 0:
                     tracer.fail(session, session_error(exit_code))
         except Exception as error:  # pragma: no cover - last-resort queue recovery
+            if isinstance(error, subprocess.TimeoutExpired):
+                session_outcome = "timeout"
             return fail(f"Supervisor error while running slice: {error}", "supervisor_error")
+        finally:
+            tracer.metric(
+                "boundroom.agent_session.duration",
+                time.monotonic() - session_started,
+                entry="run_next",
+                outcome=session_outcome,
+                runner=requested_runner,
+            )
 
         if exit_code != 0:
             return fail(
@@ -474,6 +498,7 @@ def _supervise(
             )
         for replay in validation_replays:
             tracer.mark("boundroom.validation.replay", command=replay.command, base_sha=base_commit_sha, success=replay.success)
+            tracer.metric("boundroom.validation.replays", entry="run_next", success=replay.success)
         completed_runs += 1
         decision = policy.evaluate_completion(
             queue_data=queue_data,
@@ -508,6 +533,7 @@ def _supervise(
         )
         store.set_status(next_slice, decision.queue_status, decision.stop_reason or decision.decision, handoff_path)
         tracer.mark("boundroom.board.record", verdict=decision.queue_status)
+        tracer.metric("boundroom.slice.decisions", decision=decision.decision, queue_status=decision.queue_status)
 
         emit(decision_report, report_file)
 

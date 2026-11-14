@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -517,6 +518,8 @@ def sync_entries(
             if entry.kind == "directory" and entry.delete_stale:
                 remove_empty_dirs(resolve_under(target_root_resolved, entry.destination, must_exist=False))
         tracer.annotate(write, written=len(writes), removed=len(deletions))
+        tracer.metric("boundroom.sync.changes", len(writes), kind="synced")
+        tracer.metric("boundroom.sync.changes", len(deletions), kind="removed")
 
     if changes:
         print(f"result: synced {changes} change(s)")
@@ -1012,6 +1015,12 @@ class NoTelemetry:
     def fail(self, span: Any, code: str) -> None:
         return None
 
+    def metric(self, name: str, value: float = 1, **attributes: Any) -> None:
+        return None
+
+    def record_run(self, entry: str, outcome: str, seconds: float) -> None:
+        return None
+
     def flush(self) -> bool:
         return True
 
@@ -1171,6 +1180,8 @@ def main(argv: list[str]) -> int:
     target_root = Path(args.target).expanduser()
     tracer = start_telemetry(telemetry, telemetry_settings, args, (target_root, source_root, repo_root))
     # Flushed however the run ends; the flush is bounded and never changes the exit code.
+    started = time.monotonic()
+    outcome = "error"
     try:
         mode = "sync" if args.sync else "status" if args.status else "check"
         with traced(tracer, "boundroom.run", entry="sync", run_id=tracer.run_id, mode=mode) as run:
@@ -1178,8 +1189,13 @@ def main(argv: list[str]) -> int:
             tracer.annotate(run, exit_code=code)
             if code != 0:
                 tracer.fail(run, "exit_nonzero")
+            outcome = "ok" if code == 0 else "failed"
             return code
+    except SyncError:
+        outcome = "refused"
+        raise
     finally:
+        tracer.record_run("sync", outcome, time.monotonic() - started)
         tracer.flush()
 
 

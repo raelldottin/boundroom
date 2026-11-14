@@ -223,6 +223,13 @@ class SpanTreeTests(TracedCase):
         self.assertTrue(sessions)
         self.assertEqual({("ERROR", "agent_timeout")}, {(s["status"], s["status_description"]) for s in sessions})
 
+        lines = (self.spans_dir / "exp-1.metrics.jsonl").read_text(encoding="utf-8").splitlines()
+        points = [json.loads(line) for line in lines]
+        durations = [p for p in points if p["name"] == "boundroom.agent_session.duration"]
+        self.assertEqual({("benchmark", "timeout")}, {(p["attributes"]["entry"], p["attributes"]["outcome"]) for p in durations})
+        (runs,) = [p for p in points if p["name"] == "boundroom.runs"]
+        self.assertEqual({"entry": "benchmark", "outcome": "ok"}, runs["attributes"])
+
     def test_benchmark_spans_carry_the_benchmark_environment(self) -> None:
         self.experiment(self.traced(), ("A",))
         self.assertTrue(self.exported)
