@@ -66,6 +66,9 @@ def test_a_traced_slice_has_the_full_tree_joined_to_its_records(consumer, agent,
     report_digest = hashlib.sha256(json.dumps(report, sort_keys=True).encode("utf-8")).hexdigest()
     assert by_name["boundroom.decision"]["attributes"]["report_sha256"] == report_digest
     assert by_name["boundroom.agent_session"]["attributes"]["exit_code"] == 0
+    # The runner Boundroom was asked for, under a boundroom.* name; nothing it can't know.
+    assert by_name["boundroom.agent_session"]["attributes"]["boundroom.runner.requested"] in ("auto", "claude", "codex", "hermes")
+    assert not [key for record in records for key in record["attributes"] if key.startswith("gen_ai.")]
     assert by_name["boundroom.select"]["attributes"]["slice_id"] == board.slice_id(task)
 
     text = (file_dir / next(p.name for p in file_dir.glob("*.spans.jsonl"))).read_text(encoding="utf-8")

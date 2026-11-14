@@ -124,6 +124,12 @@ boundroom.benchmark.experiment     run dir, lanes, repeats, instance count, repo
 - The benchmark reads telemetry only from the `lanes` command line. The operator file and `BOUNDROOM_TELEMETRY_*` configure live runs and are ignored, except the kill switch and the headers, which have no flag. Runner telemetry is refused, and the agent gets no trace context, so a runner's spans don't nest under `agent_session` here.
 - `environment: benchmark` is the resource's `deployment.environment.name`, so it applies to every span but isn't repeated in file mode's per-span lines.
 
+### GenAI semantic conventions
+
+Boundroom sets no `gen_ai.*` attribute. OpenTelemetry's GenAI conventions describe a model call: `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.operation.name` and the like. Boundroom never makes a model call. It starts a runner, and the runner talks to its model. The supervisor doesn't see which model answered, how many tokens it used or which provider served it, so any value it wrote there would be a guess. A guess in a trace reads as a fact, which an audit index must not do.
+
+What Boundroom does know goes under `boundroom.*` names on `boundroom.agent_session`: `boundroom.runner.requested`, the runner the caller asked for (`auto`, `claude`, `codex` or `hermes`; `auto` stays `auto`, because `run_agent.sh` picks the runner later), and `boundroom.runner.profile`, the runner profile in effect (SPEC-008), when one was chosen. A runner that exports its own telemetry, such as Claude Code with `runner` on, sets its own GenAI attributes on its own spans, under `agent_session`.
+
 ### Joining a trace to the record
 
 - The decision report and the handoff's supervisor provenance gain a `telemetry.trace_id`. Both are additive, optional schema fields, and a record without them stays valid.

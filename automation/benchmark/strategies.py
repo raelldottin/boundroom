@@ -804,6 +804,7 @@ def run_phase(
             "boundroom.agent_session",
             slice_id=f"{ctx.task.public_id}:{phase}",
             runner=ctx.env.get("BOUNDROOM_AGENT_RUNNER"),
+            **{"boundroom.runner.requested": ctx.env.get("BOUNDROOM_AGENT_RUNNER")},
             budget_seconds=budget,
         ) as session:
             # Timed inside both spans, so the phase's charge is exactly the session's, as before.
