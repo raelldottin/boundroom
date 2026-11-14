@@ -18,6 +18,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, ContextManager, Generator, Mapping, Optional
 
+from automation.supervisor import egress
 from automation.supervisor.telemetry import Telemetry
 from automation.supervisor.telemetry_settings import ENV, TelemetrySettings, resolve
 
@@ -45,6 +46,9 @@ def benchmark_settings(flags: Mapping[str, Any], environ: Mapping[str, str]) -> 
         passed[ENV["mode"]] = "off"
     if environ.get(ENV["headers"]):
         passed[ENV["headers"]] = environ[ENV["headers"]]
+    # The offline switch can only refuse a destination, so it applies here too (RA-TEL-011).
+    if egress.OFFLINE_ENV in environ:
+        passed[egress.OFFLINE_ENV] = environ[egress.OFFLINE_ENV]
     settings = resolve(flags=flags, environ=passed, operator_file=None)
     refusal = settings.refusal
     if flags.get("telemetry_runner") not in (None, "off"):

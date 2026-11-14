@@ -86,6 +86,12 @@ To see the values in effect, run `python3 automation/supervisor/settings_view.py
 | `memory_budget_max_snapshot_memories` | advanced |  |  |  | `memory.budgets.max_snapshot_memories (any)` | Memory budget: max snapshot memories. |
 | `memory_projects` | advanced |  |  |  | `memory.projects (any)` | Which bank each project may use, and for which operations. |
 
+## Network
+
+| Setting | Class | Default | Flags | Variables | Repository | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `offline` | security | `false` |  | `BOUNDROOM_OFFLINE` |  | Refuse every network connection Boundroom itself would make: otlp telemetry and the Hindsight memory client. Any value but empty, 0 or false turns it on. File-mode telemetry stays allowed. |
+
 ## Telemetry
 
 | Setting | Class | Default | Flags | Variables | Repository | Description |
