@@ -30,6 +30,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, ValidationError, field_validator
 
 from automation.schemas.models import Contract, Omittable
+from automation.supervisor import egress
 
 Mode = Literal["off", "file", "otlp"]
 Capture = Literal["metadata", "content"]
@@ -318,6 +319,14 @@ def resolve(
         values["mode"], sources["mode"] = "off", "kill switch"
 
     refusal = None
+    if values["mode"] == "otlp" and egress.offline(environ):
+        # BOUNDROOM_OFFLINE refuses every connection Boundroom would make (RA-TEL-011). File mode
+        # needs none and stays allowed.
+        message = f"telemetry: otlp mode refused ({egress.REASON}): {egress.OFFLINE_ENV} is set; telemetry is off"
+        messages.append(message)
+        if values["required"]:
+            refusal = message.replace("; telemetry is off", "; refusing to start because telemetry is required")
+        values["mode"], sources["mode"] = "off", egress.REASON
     missing = {"file": "file_dir", "otlp": "endpoint"}.get(values["mode"])
     if missing and not values[missing]:
         message = f"telemetry: {values['mode']} mode needs {missing}; telemetry is off"

@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, ContextManager, Generator, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
-from automation.supervisor import telemetry_metrics
+from automation.supervisor import egress, telemetry_metrics
 from automation.supervisor.telemetry_settings import TelemetrySettings
 
 SERVICE_NAME = "boundroom"
@@ -246,6 +246,11 @@ def configure(
         if settings.required:
             raise
         handle.messages.append("telemetry: could not be enabled; continuing with telemetry off")
+    except egress.EgressRefused as error:
+        # resolve() already turns otlp off when offline; this is the chokepoint's own refusal.
+        if settings.required:
+            raise TelemetryRefused(f"{error}; refusing to start because telemetry is required") from error
+        handle.messages.append(f"telemetry: {error}; continuing with telemetry off")
     except _Unavailable as error:
         if settings.required:
             raise TelemetryRefused(f"{error}; refusing to start because telemetry is required") from error
@@ -300,7 +305,8 @@ def _exporter(settings: TelemetrySettings, roots: Sequence[Path], run_id: str) -
         return BatchSpanProcessor(exporter), str(file_dir / ".logfire")
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # noqa: PLC0415
 
-    exporter = OTLPSpanExporter(endpoint=traces_url(str(settings.endpoint)), headers=dict(settings.headers))
+    endpoint = egress.guard_egress("telemetry", traces_url(str(settings.endpoint)))
+    exporter = OTLPSpanExporter(endpoint=endpoint, headers=dict(settings.headers))
     return BatchSpanProcessor(exporter), tempfile.mkdtemp(prefix="boundroom-logfire-")
 
 
@@ -341,7 +347,8 @@ def _otlp_metric_exporter(settings: TelemetrySettings) -> tuple[Any, str]:
         return None, "telemetry: the endpoint names a traces path, so metrics aren't sent; give a bare endpoint for both"
     from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter  # noqa: PLC0415
 
-    return OTLPMetricExporter(endpoint=url, headers=dict(settings.headers), timeout=FLUSH_TIMEOUT_SECONDS), ""
+    endpoint = egress.guard_egress("telemetry", url)
+    return OTLPMetricExporter(endpoint=endpoint, headers=dict(settings.headers), timeout=FLUSH_TIMEOUT_SECONDS), ""
 
 
 def metric_records(data: Any, run_id: str, trace: Optional[str], resource_keys: Sequence[str]) -> Generator[dict, None, None]:
@@ -391,7 +398,8 @@ def _startup_check(settings: TelemetrySettings) -> None:
     import urllib.error  # noqa: PLC0415 - only a required otlp run probes its endpoint
     import urllib.request  # noqa: PLC0415
 
-    request = urllib.request.Request(traces_url(str(settings.endpoint)), method="POST", data=b"", headers=dict(settings.headers))
+    url = egress.guard_egress("telemetry", traces_url(str(settings.endpoint)))
+    request = urllib.request.Request(url, method="POST", data=b"", headers=dict(settings.headers))
     try:
         urllib.request.urlopen(request, timeout=STARTUP_TIMEOUT_SECONDS).close()
     except urllib.error.HTTPError:
