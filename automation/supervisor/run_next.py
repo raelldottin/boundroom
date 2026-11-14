@@ -419,7 +419,12 @@ def _supervise(
         session_started = time.monotonic()
         session_outcome = "error"
         try:
-            with tracer.span("boundroom.agent_session", slice_id=next_slice["slice_id"]) as session:
+            # What Boundroom knows for certain about the runner, under boundroom.* names. The model,
+            # tokens and provider are the runner's, unseen here, so no gen_ai.* attribute is set.
+            runner_attributes = {"boundroom.runner.requested": requested_runner}
+            if profile is not None:
+                runner_attributes["boundroom.runner.profile"] = profile.effective
+            with tracer.span("boundroom.agent_session", slice_id=next_slice["slice_id"], **runner_attributes) as session:
                 runner_telemetry = telemetry.runner_environment(
                     telemetry_settings_resolved, os.environ, session, tracer.run_id, next_slice["slice_id"]
                 )
