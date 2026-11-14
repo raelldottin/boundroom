@@ -14,6 +14,7 @@ import os
 import shlex
 import sys
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from automation.supervisor import telemetry
@@ -112,8 +113,8 @@ def test_an_exporter_failure_changes_neither_the_verdict_nor_the_exit_code(
 
     untraced = outcome((), "off")
 
-    def failing_exporter(path: Path):  # type: ignore[no-untyped-def]
-        exporter = real(path)
+    def failing_exporter(path: Path, **options: Any):  # type: ignore[no-untyped-def]
+        exporter = real(path, **options)
         exporter.export = mock.Mock(side_effect=OSError("disk full"))
         return exporter
 

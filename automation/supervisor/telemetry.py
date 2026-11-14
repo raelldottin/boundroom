@@ -28,7 +28,11 @@ from urllib.parse import urlsplit, urlunsplit
 
 from automation.supervisor.telemetry_settings import TelemetrySettings
 
-SERVICE_NAME = "boundroom-supervisor"
+SERVICE_NAME = "boundroom"
+# The resource keys Boundroom sets on every span (RA-TEL-009). File mode writes these and the
+# operator's own keys on each line; the rest of the SDK's resource, such as the host name and
+# process id, goes only to an OTLP destination, as it always has.
+STANDARD_RESOURCE_KEYS = ("service.name", "service.version", "deployment.environment.name")
 FLUSH_TIMEOUT_SECONDS = 5
 STARTUP_TIMEOUT_SECONDS = 5
 AMBIENT_PREFIXES = ("OTEL_", "LOGFIRE_")
@@ -143,6 +147,7 @@ def configure(
                 service_name=SERVICE_NAME,
                 service_version=service_version or None,
                 environment=settings.environment,
+                resource_attributes=dict(settings.resource_attributes),
                 data_dir=data_dir,
                 additional_span_processors=[processor],
                 distributed_tracing=False,
@@ -201,7 +206,9 @@ def _exporter(settings: TelemetrySettings, roots: Sequence[Path], run_id: str) -
         if any(_inside(file_dir, root) for root in roots):
             # A write there would dirty the worktree and break the clean stop.
             raise _Unavailable("telemetry: file_dir must be outside the repository")
-        return BatchSpanProcessor(json_lines_exporter(file_dir / f"{run_id}.spans.jsonl")), str(file_dir / ".logfire")
+        resource_keys = (*STANDARD_RESOURCE_KEYS, *sorted(settings.resource_attributes))
+        exporter = json_lines_exporter(file_dir / f"{run_id}.spans.jsonl", resource_keys=resource_keys)
+        return BatchSpanProcessor(exporter), str(file_dir / ".logfire")
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # noqa: PLC0415
 
     exporter = OTLPSpanExporter(endpoint=traces_url(str(settings.endpoint)), headers=dict(settings.headers))
@@ -240,7 +247,7 @@ def _startup_check(settings: TelemetrySettings) -> None:
         raise TelemetryRefused(f"telemetry: the endpoint at {host} didn't answer") from error
 
 
-def json_lines_exporter(path: Path) -> Any:
+def json_lines_exporter(path: Path, resource_keys: Sequence[str] = STANDARD_RESOURCE_KEYS) -> Any:
     """A span exporter that writes each finished span as one JSON line, to the user's file only.
 
     The class is built here rather than at module level, so importing this module loads no
@@ -254,7 +261,7 @@ def json_lines_exporter(path: Path) -> Any:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a", encoding="utf-8") as handle:
                     for span in spans:
-                        handle.write(json.dumps(_span_record(span), sort_keys=True, default=str) + "\n")
+                        handle.write(json.dumps(_span_record(span, resource_keys), sort_keys=True, default=str) + "\n")
             except OSError:
                 return SpanExportResult.FAILURE
             return SpanExportResult.SUCCESS
@@ -262,9 +269,10 @@ def json_lines_exporter(path: Path) -> Any:
     return JsonLinesExporter()
 
 
-def _span_record(span: Any) -> dict[str, Any]:
+def _span_record(span: Any, resource_keys: Sequence[str] = STANDARD_RESOURCE_KEYS) -> dict[str, Any]:
     context = span.get_span_context()
     parent = span.parent
+    resource = dict(span.resource.attributes) if getattr(span, "resource", None) is not None else {}
     return {
         "name": span.name,
         "trace_id": f"{context.trace_id:032x}",
@@ -276,6 +284,7 @@ def _span_record(span: Any) -> dict[str, Any]:
         "status_description": span.status.description,
         "attributes": dict(span.attributes or {}),
         "events": [{"name": event.name, "attributes": dict(event.attributes or {})} for event in span.events],
+        "resource": {key: resource[key] for key in resource_keys if key in resource},
     }
 
 
