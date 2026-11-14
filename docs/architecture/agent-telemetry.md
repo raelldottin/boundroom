@@ -172,7 +172,7 @@ The SDK is configured explicitly, never from its defaults or the ambient environ
 ## Effects on other specs and rules
 
 - **[SPEC-002](agent-plugin.md):** skill text only. `boundroom-run-next` and `boundroom-evaluate-handoff` list the flags. `boundroom-status` reports the resolved settings. Each skill reports the `trace_id` from the decision report. No plugin code.
-- **[SPEC-001](control-plane.md) and [SPEC-003](discord-knowledge-loop.md):** no new authority. The knowledge loop gets no telemetry write path, and telemetry never dispatches or approves anything.
+- **[SPEC-001](control-plane.md):** no new authority. Telemetry never dispatches or approves anything.
 - **Performance (AGENTS.md):** this adds file and network work to the supervisor path when telemetry is on. It grows with the number of validations replayed per slice, not with queue or repository size. Each implementing pull request must say so.
 - **[Control map](../compliance/controls.md):** adds a monitoring row (SOC 2 CC7.2, CIS 2) once RA-TEL-003 ships, stated as Process, because exporting is optional.
 

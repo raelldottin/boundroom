@@ -1,7 +1,0 @@
-{
-  "type": "disconnect",
-  "reason": "link_disabled",
-  "debug_info": {
-    "host": "applink-synthetic-1"
-  }
-}
