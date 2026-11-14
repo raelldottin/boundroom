@@ -4,9 +4,9 @@
 ``span`` is free when telemetry is off. Off means no SDK import, no file and no connection (UD-1).
 
 When it is on, the Logfire SDK is imported lazily and configured only from those settings:
-``send_to_logfire=False`` always (UD-3), no console, no metrics, no argument inspection, its
-``data_dir`` outside the repository, and spans go only to Boundroom's own exporter for the user's
-destination. Logfire reads ``OTEL_EXPORTER_OTLP_*`` from the environment while it configures and
+``send_to_logfire=False`` always (UD-3), no console, no argument inspection, its ``data_dir``
+outside the repository, spans only to Boundroom's own exporter for the user's destination, and
+metrics only to Boundroom's own in-memory reader, collected once at flush (RA-TEL-010). Logfire reads ``OTEL_EXPORTER_OTLP_*`` from the environment while it configures and
 would add an exporter for them, so those variables, and ``LOGFIRE_*``, are hidden from it for the
 duration (UD-6). A setting someone made for another tool must not send Boundroom's traces anywhere.
 """
