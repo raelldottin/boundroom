@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-from contextlib import nullcontext
+import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Any, ContextManager, Mapping, Optional
+from typing import Any, ContextManager, Generator, Mapping, Optional
 
 from automation.supervisor.telemetry import Telemetry
 from automation.supervisor.telemetry_settings import ENV, TelemetrySettings, resolve
@@ -84,6 +85,25 @@ def fail(handle: Optional[Telemetry], target: Any, code: str) -> None:
         handle.fail(target, code)
 
 
+def metric(handle: Optional[Telemetry], name: str, value: float = 1, **attributes: Any) -> None:
+    """One data point for a catalogued instrument (SPEC-006 RA-TEL-010), or nothing at all."""
+    if handle is not None:
+        handle.metric(name, value, **attributes)
+
+
+@contextmanager
+def recorded_run(handle: Optional[Telemetry]) -> Generator[None, None, None]:
+    """The experiment's run counter and duration: ok when it returns, error when it raises."""
+    started = time.monotonic()
+    outcome = "error"
+    try:
+        yield
+        outcome = "ok"
+    finally:
+        if handle is not None:
+            handle.record_run("benchmark", outcome, time.monotonic() - started)
+
+
 def file_sha256(path: Path) -> Optional[str]:
     """The digest of a record a span describes, so an auditor can check the one against the other."""
     try:
@@ -100,6 +120,8 @@ __all__ = [
     "enabled",
     "fail",
     "file_sha256",
+    "metric",
+    "recorded_run",
     "span",
     "untraced",
 ]

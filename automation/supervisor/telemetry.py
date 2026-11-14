@@ -19,6 +19,7 @@ import re
 import secrets
 import sys
 import tempfile
+import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Any, ContextManager, Generator, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
+from automation.supervisor import telemetry_metrics
 from automation.supervisor.telemetry_settings import TelemetrySettings
 
 SERVICE_NAME = "boundroom"
@@ -51,6 +53,13 @@ class Telemetry:
     _logfire: Any = None
     _processor: Any = None
     _trace_id: Optional[str] = None
+    # Metrics (RA-TEL-010): an in-memory reader collected once, at flush, and written to
+    # ``_metrics_path`` in file mode or sent through ``_metric_exporter`` in otlp mode.
+    _metric_reader: Any = None
+    _metrics_path: Optional[Path] = None
+    _metric_exporter: Any = None
+    _instruments: dict[str, Any] = field(default_factory=dict)
+    _resource_keys: tuple[str, ...] = ()
     messages: list[str] = field(default_factory=list)
 
     @property
@@ -103,16 +112,82 @@ class Telemetry:
         if span is not None and self._logfire is not None:
             set_error(span, code)
 
+    def metric(self, name: str, value: float = 1, **attributes: Any) -> None:
+        """One data point for an instrument in ``telemetry_metrics.CATALOGUE``; nothing when off.
+
+        Attributes outside the instrument's vocabulary are bounded first. A failure to record is
+        said on stderr and never raised: telemetry can't change an outcome.
+        """
+        if self._logfire is None:
+            return
+        try:
+            instrument = telemetry_metrics.BY_NAME[name]
+            recorder = self._instruments.get(name)
+            if recorder is None:
+                make = self._logfire.metric_counter if instrument.kind == "counter" else self._logfire.metric_histogram
+                recorder = self._instruments[name] = make(name, unit=instrument.unit, description=instrument.description)
+            bounded = telemetry_metrics.bounded(instrument, attributes)
+            if instrument.kind == "counter":
+                recorder.add(value, bounded)
+            else:
+                recorder.record(value, bounded)
+        except Exception:  # noqa: BLE001 - a metric must never stop a run
+            print(f"telemetry: metric {name} was not recorded", file=sys.stderr)
+
+    def record_run(self, entry: str, outcome: str, seconds: float) -> None:
+        """The run counter and the run duration, which every entry point records the same way."""
+        self.metric("boundroom.runs", entry=entry, outcome=outcome)
+        self.metric("boundroom.run.duration", seconds, entry=entry, outcome=outcome)
+
     def flush(self) -> bool:
-        """Flush for at most five seconds, then drop what's left and say so (bounded flush)."""
-        if self._processor is None:
-            return True
-        flushed = bool(self._processor.force_flush(timeout_millis=FLUSH_TIMEOUT_SECONDS * 1000))
-        if not flushed:
-            print(f"telemetry: flush did not finish within {FLUSH_TIMEOUT_SECONDS}s; the rest was dropped", file=sys.stderr)
-        self._processor.shutdown()
-        self._processor = None
+        """Flush for at most five seconds in all, then drop what's left and say so (bounded flush).
+
+        Spans go first. Metrics are collected once and get whatever time the spans left.
+        """
+        deadline = time.monotonic() + FLUSH_TIMEOUT_SECONDS
+        flushed = True
+        if self._processor is not None:
+            flushed = bool(self._processor.force_flush(timeout_millis=FLUSH_TIMEOUT_SECONDS * 1000))
+            if not flushed:
+                print(f"telemetry: flush did not finish within {FLUSH_TIMEOUT_SECONDS}s; the rest was dropped", file=sys.stderr)
+            self._processor.shutdown()
+            self._processor = None
+        if self._metric_reader is not None:
+            flushed = self._flush_metrics(deadline) and flushed
         return flushed
+
+    def _flush_metrics(self, deadline: float) -> bool:
+        reader, self._metric_reader = self._metric_reader, None
+        exporter, self._metric_exporter = self._metric_exporter, None
+        try:
+            data = reader.get_metrics_data()
+            records = list(metric_records(data, self.run_id, self._trace_id, self._resource_keys))
+            if not records:
+                return True
+            if self._metrics_path is not None:
+                self._metrics_path.parent.mkdir(parents=True, exist_ok=True)
+                with self._metrics_path.open("a", encoding="utf-8") as handle:
+                    for record in records:
+                        handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+                return True
+            if exporter is None:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print("telemetry: no time was left to send metrics; they were dropped", file=sys.stderr)
+                return False
+            from opentelemetry.sdk.metrics.export import MetricExportResult  # noqa: PLC0415
+
+            sent = exporter.export(data, timeout_millis=remaining * 1000) == MetricExportResult.SUCCESS
+            if not sent:
+                print("telemetry: the endpoint didn't take the metrics; they were dropped", file=sys.stderr)
+            return sent
+        except Exception:  # noqa: BLE001 - an exporter failure never changes a verdict or exit code
+            print("telemetry: metrics could not be written; they were dropped", file=sys.stderr)
+            return False
+        finally:
+            if exporter is not None:
+                exporter.shutdown()
 
 
 def configure(
@@ -133,16 +208,29 @@ def configure(
     if not settings.enabled:
         return handle
     try:
-        processor, data_dir = _exporter(settings, (repo_root, *outside), run_id)
+        # An OTLP exporter reads OTEL_EXPORTER_OTLP_* (headers, certificates, compression) when it
+        # is built and its argument is empty, so the ambient settings are hidden here too (UD-6).
+        with _hidden_ambient_settings():
+            processor, data_dir = _exporter(settings, (repo_root, *outside), run_id)
+            metric_exporter, note = (None, "") if settings.mode == "file" else _otlp_metric_exporter(settings)
         if settings.required:
             _startup_check(settings)
         logfire = _import_logfire()
+        reader = _metric_reader()
+        handle._resource_keys = (*STANDARD_RESOURCE_KEYS, *sorted(settings.resource_attributes))
+        if settings.mode == "file":
+            handle._metrics_path = Path(str(settings.file_dir)) / f"{run_id}.metrics.jsonl"
+        handle._metric_exporter = metric_exporter
+        if note:
+            handle.messages.append(note)
         with _hidden_ambient_settings():
             handle._logfire = logfire.configure(
                 local=True,
                 send_to_logfire=False,
                 console=False,
-                metrics=False,
+                # Only Boundroom's own reader: nothing is exported on a timer, and no reader for
+                # the ambient OTEL_* settings is added, because they are hidden here (UD-6).
+                metrics=logfire.MetricsOptions(additional_readers=[reader]),
                 inspect_arguments=False,
                 service_name=SERVICE_NAME,
                 service_version=service_version or None,
@@ -153,6 +241,7 @@ def configure(
                 distributed_tracing=False,
             )
         handle._processor = processor
+        handle._metric_reader = reader
     except TelemetryRefused:
         if settings.required:
             raise
@@ -221,6 +310,71 @@ def traces_url(endpoint: str) -> str:
     if parts.path in ("", "/"):
         return urlunsplit((parts.scheme, parts.netloc, "/v1/traces", parts.query, ""))
     return endpoint
+
+
+def metrics_url(endpoint: str) -> Optional[str]:
+    """The metrics path beside the traces one: a bare host gets ``/v1/metrics``, and a path ending
+    in ``/v1/traces`` gets ``/v1/metrics`` in its place. Any other path names a traces URL whose
+    metrics URL Boundroom can't know, so None."""
+    parts = urlsplit(endpoint)
+    if parts.path in ("", "/"):
+        path = "/v1/metrics"
+    elif parts.path.rstrip("/").endswith("/v1/traces"):
+        path = parts.path.rstrip("/")[: -len("/v1/traces")] + "/v1/metrics"
+    else:
+        return None
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+
+def _metric_reader() -> Any:
+    try:
+        from opentelemetry.sdk.metrics.export import InMemoryMetricReader  # noqa: PLC0415
+    except ImportError as error:
+        raise _Unavailable("telemetry: the opentelemetry SDK isn't installed (pip install 'boundroom[telemetry]')") from error
+    return InMemoryMetricReader()
+
+
+def _otlp_metric_exporter(settings: TelemetrySettings) -> tuple[Any, str]:
+    """The OTLP/HTTP metric exporter for the user's endpoint, with the same headers as traces."""
+    url = metrics_url(str(settings.endpoint))
+    if url is None:
+        return None, "telemetry: the endpoint names a traces path, so metrics aren't sent; give a bare endpoint for both"
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter  # noqa: PLC0415
+
+    return OTLPMetricExporter(endpoint=url, headers=dict(settings.headers), timeout=FLUSH_TIMEOUT_SECONDS), ""
+
+
+def metric_records(data: Any, run_id: str, trace: Optional[str], resource_keys: Sequence[str]) -> Generator[dict, None, None]:
+    """One JSON object per data point of a catalogued instrument, for the metrics file.
+
+    A counter gives its ``value``; a histogram gives its ``count``, ``sum``, ``min`` and ``max``.
+    """
+    if data is None:
+        return
+    for resource_metrics in data.resource_metrics:
+        attributes = dict(resource_metrics.resource.attributes)
+        resource = {key: attributes[key] for key in resource_keys if key in attributes}
+        for scope_metrics in resource_metrics.scope_metrics:
+            for metric in scope_metrics.metrics:
+                instrument = telemetry_metrics.BY_NAME.get(metric.name)
+                if instrument is None:
+                    continue
+                for point in metric.data.data_points:
+                    record: dict[str, Any] = {
+                        "name": metric.name,
+                        "kind": instrument.kind,
+                        "unit": metric.unit,
+                        "attributes": dict(point.attributes or {}),
+                        "time_unix_nano": point.time_unix_nano,
+                        "run_id": run_id,
+                        "trace_id": trace,
+                        "resource": resource,
+                    }
+                    if instrument.kind == "counter":
+                        record["value"] = point.value
+                    else:
+                        record["histogram"] = {"count": point.count, "sum": point.sum, "min": point.min, "max": point.max}
+                    yield record
 
 
 def _startup_check(settings: TelemetrySettings) -> None:
