@@ -29,7 +29,7 @@
 | The agent acts under its own identity | **In place, by process.** Since 2026-11-10 the agent writes as a GitHub App installed only on this repository, now `boundroom-agent[bot]`. It has write access to contents, pull requests, workflows and issues, read access to checks, statuses and actions, and no administration permission, so it can't change rulesets or settings, and it isn't the admin role the release-tag bypass names. Each command uses an installation token that expires after one hour, and the private key stays in the owner's keychain. Nothing technically stops the agent from using the owner's own `gh` login on the same machine, so using the bot is a process rule. #180–#189 were merged under the owner's token on 2026-11-10, before these controls. | Actor on each event: bot user id `354874784`, App ID `5696200`. Its login was `repo-automation-agent[bot]`, then `bound-room-agent[bot]`, and is `boundroom-agent[bot]` since 2026-11-12. |
 | The agent's identity can't bypass `main` | Enforced: the `main` ruleset has no bypass actors | `current_user_can_bypass: never` for the app's token |
 | Multi-factor authentication on accounts with write access | Unverified: an account setting the owner's `gh` token can't read | GitHub account security log |
-| Least-privilege workflow tokens | Enforced: every workflow declares `permissions:`. `release.yml` asks for `contents: write` only in its publish job. The repository's default workflow token is read-only. | Workflow files, Actions settings |
+| Least-privilege workflow tokens | Enforced: every workflow declares `permissions:`. `release.yml` asks for `contents: write` only in its publish job, and for `id-token: write` and `attestations: write` only in its attest job, which runs no repository code. The repository's default workflow token is read-only. | Workflow files, Actions settings |
 | Workflows can't approve pull requests | Enforced: repository Actions setting | Actions settings |
 
 ## Vulnerability and secret management: SOC 2 CC7.1, CC6.8; CIS 1.5, code risks, and 3, dependencies
@@ -51,11 +51,12 @@
 
 | Control | Status | Evidence |
 | --- | --- | --- |
-| Third-party actions pinned to full commit SHAs, with the version as a comment, and updated by Dependabot | **Process.** All 28 references are pinned today, but the repository doesn't require it, so a new workflow could use a tag. | Workflow files |
+| Third-party actions pinned to full commit SHAs, with the version as a comment, and updated by Dependabot | **Enforced by a required check.** `test_release_workflow.py`, part of `make reusable-check`, fails if any `uses:` in `.github/workflows/` isn't pinned to a full commit SHA with its version as a comment. All 30 references are pinned. The repository settings don't require it. | Workflow files |
 | **Only approved actions may run** | **Gap.** The repository allows all actions. | Actions settings |
 | The release archive is published with a SHA-256 checksum | Enforced: `release.yml` | Release assets |
+| The release archive carries signed SLSA build provenance, checked against its checksum first | Enforced: `release.yml`'s attest job (`actions/attest`, pinned by commit), from the first release after v0.4.0 | `gh attestation verify` on a release archive; the repository's attestations |
 | **Signed commits on `main`** | **Gap.** Commits on `main` are verified today only because GitHub signs squash merges. The ruleset doesn't require signatures. | Commit verification |
-| **Artifact attestations, SBOM** | **Gap** | Not available |
+| **SBOM** | **Gap.** SPEC-009 RA-ENT-004 needs the owner to approve a generator. | Not available |
 
 ## Owner actions, in this order
 
@@ -88,6 +89,6 @@ These are repository and account security settings. The agent doesn't change the
 
 ## Agent-side follow-ups (pull requests, each approved by a person)
 
-- **Artifact attestation:** build provenance for the release archive (`actions/attest-build-provenance`), plus an SBOM.
+- **SBOM:** a bill of materials for each release (SPEC-009 RA-ENT-004), once the owner approves the generator.
 - **Workflow change control:** a CODEOWNERS entry and required review for `.github/` once the owner adds a second reviewer.
 - **Periodic evidence:** a scheduled export of ruleset configuration and recent pull request reviews, so an auditor can sample a period.

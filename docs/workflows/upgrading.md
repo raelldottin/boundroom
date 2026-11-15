@@ -41,10 +41,23 @@ It is read-only and changes no file, the lock included. It reports:
 
 It exits 0 when everything matches and 1 when something needs attention. The last line says what.
 
+## Verifying a release
+
+From the first release after v0.4.0, each release archive carries signed build provenance. Before you sync, you can check that GitHub's release workflow built the archive from this repository, at the tag's commit:
+
+```bash
+gh release download <tag> -R raelldottin/boundroom
+gh attestation verify boundroom-<tag>.tar.gz --repo raelldottin/boundroom \
+  --signer-workflow raelldottin/boundroom/.github/workflows/release.yml
+sha256sum -c boundroom-<tag>.tar.gz.sha256
+```
+
+`gh attestation verify` prints the commit the archive was built from. It should be the commit the tag points to, which is what you pass to the sync as `--pin`. Releases up to v0.4.0 have no attestation, so for those the checksum is the check. The sync itself still runs from a checkout of the tag, with all its protections.
+
 ## Moving to a new release
 
 1. **Read the release notes** for every tag between your pin and the target. A minor release (`0.x.0`) may rename or remove something; a patch release doesn't. The [compatibility and deprecation policy](../reference/compatibility.md) says exactly what each may change, and lists what is deprecated now.
-2. **Check out the tag** in a clean Boundroom checkout and take its full commit SHA.
+2. **Check out the tag** in a clean Boundroom checkout and take its full commit SHA. To confirm the release came from this repository's release workflow, [verify it](#verifying-a-release) first.
 3. **Check, then sync, through a pull request** in the consumer, with the plugin's `boundroom-sync` skill or the same commands by hand. `--check` first; `--sync` only after a person says go; the lock's `commit` and `imported_at` updated in the same commit, and nothing else in the lock.
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.
 5. **Update the plugin** to the same tag, if you use it: change the marketplace source to the new tag, then update the plugin. Only a rename, as in 0.3.0, needs an uninstall and reinstall.
