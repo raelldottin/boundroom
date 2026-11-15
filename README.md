@@ -78,7 +78,8 @@ The GitHub Actions configuration in `.github/` includes:
 
 - **Lint** (`.github/workflows/lint.yml`) — `uv`-driven `ruff check`,
   `ruff format --check`, and `ty check` across `automation/` and `Tools/` on
-  Python 3.11 and 3.12. Ruff and ty configuration lives in `pyproject.toml`;
+  the [support matrix](#support-matrix): Python 3.11 to 3.14 on Linux, and
+  Python 3.12 on macOS. Ruff and ty configuration lives in `pyproject.toml`;
   the toolchain is pinned in `uv.lock`.
 - **Coverage** (`.github/workflows/coverage.yml`) — runs the full
   `automation/tests` suite under `pytest --cov` on Python 3.12, fails below
@@ -140,6 +141,20 @@ hermes plugins enable boundroom
 ## Versions and compatibility
 
 A patch release fixes things and removes nothing. A minor release may change a default or remove something, but only after an earlier release warned about it. The [compatibility and deprecation policy](docs/reference/compatibility.md) says what each kind of release may change in settings, flags, exit codes, schemas, the decision report, the sync and telemetry, and lists what is deprecated now. The [changelog](CHANGELOG.md) says what changed in each release, and the [upgrade guide](docs/workflows/upgrading.md) says how to move between releases and roll back.
+
+### Support matrix
+
+What each release is tested on. CI runs the full quality gate, `make reusable-check`, on every pull request and again before every release.
+
+| Component | Tested | How |
+| --- | --- | --- |
+| Python | 3.11, 3.12, 3.13, 3.14 | CI on Linux (`ubuntu-latest`), each version. 3.11 and 3.12 are required checks. The project needs Python 3.11 or later. |
+| Operating system | Linux, macOS | CI on `ubuntu-latest` for every Python version, and on `macos-latest` with Python 3.12. Windows isn't tested or supported. |
+| Synced copy in a consumer | Python 3.11 or later with Pydantic 2 | The sync refuses a consumer interpreter without them before it writes anything. |
+| Claude Code runner | 2.1.311 on macOS | Not run in CI. The RA-BD-004 canary on the owner's machine recorded this version. Runner selection and profiles are tested with fakes. |
+| Codex and Hermes runners | Fakes only | Their runner paths are tested with fake CLIs. Live canaries are deferred to an approved machine. |
+
+Adding a version is a patch or minor change. Dropping one follows the [compatibility policy](docs/reference/compatibility.md): it happens only in a minor release, and the release before it says so.
 
 ## Status
 
