@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal, Mapping, Optional
@@ -29,6 +30,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, ValidationError, field_validator
 
 from automation.schemas.models import Contract, Omittable
+from automation.supervisor import egress
 
 Mode = Literal["off", "file", "otlp"]
 Capture = Literal["metadata", "content"]
@@ -49,6 +51,7 @@ ENV = {
     "runner": "BOUNDROOM_TELEMETRY_RUNNER",
     "required": "BOUNDROOM_TELEMETRY_REQUIRED",
     "environment": "BOUNDROOM_TELEMETRY_ENVIRONMENT",
+    "resource_attributes": "BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES",
 }
 DEFAULTS: dict[str, Any] = {
     "mode": "off",
@@ -59,6 +62,7 @@ DEFAULTS: dict[str, Any] = {
     "runner": "off",
     "required": False,
     "environment": "local",
+    "resource_attributes": {},
 }
 SETTINGS = tuple(DEFAULTS)
 _RANK = {level: index for index, level in enumerate(RUNNER_LEVELS)}
@@ -85,6 +89,51 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+# Operator-supplied resource attributes (RA-TEL-009): a short, bounded list of labels such as a
+# team or a cost centre. Boundroom sets the service and environment keys itself.
+RESOURCE_KEY = re.compile(r"^[a-z][a-z0-9_.]{0,63}$")
+MAX_RESOURCE_ATTRIBUTES = 16
+MAX_RESOURCE_VALUE_CHARS = 256
+RESERVED_RESOURCE_KEYS = frozenset({"service.name", "service.version", "deployment.environment.name"})
+RESERVED_RESOURCE_PREFIX = "boundroom."
+
+
+def _refuse_resource(reason: str, detail: str) -> ValueError:
+    # Keys and values are never echoed: a mistyped pair might hold something that isn't a label.
+    return ValueError(f"resource_attributes refused ({reason}): {detail}")
+
+
+def check_resource_attributes(pairs: Mapping[str, str]) -> dict[str, str]:
+    """At most 16 pairs; lower-case dotted keys; values of at most 256 printable characters."""
+    if len(pairs) > MAX_RESOURCE_ATTRIBUTES:
+        raise _refuse_resource("too_many", f"at most {MAX_RESOURCE_ATTRIBUTES} pairs")
+    for index, (key, value) in enumerate(pairs.items(), start=1):
+        if not isinstance(key, str) or not RESOURCE_KEY.match(key):
+            raise _refuse_resource("bad_key", f"key {index} must match {RESOURCE_KEY.pattern}")
+        if key in RESERVED_RESOURCE_KEYS or key.startswith(RESERVED_RESOURCE_PREFIX):
+            raise _refuse_resource("reserved_key", f"key {index} is one Boundroom sets itself")
+        if not isinstance(value, str) or len(value) > MAX_RESOURCE_VALUE_CHARS:
+            raise _refuse_resource(
+                "bad_value", f"the value of key {index} must be text of at most {MAX_RESOURCE_VALUE_CHARS} characters"
+            )
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise _refuse_resource("bad_value", f"the value of key {index} has a control character")
+    return dict(pairs)
+
+
+def parse_resource_attributes(raw: str) -> dict[str, str]:
+    """``key=value`` pairs separated by commas, as in ``BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES``."""
+    pairs: dict[str, str] = {}
+    for index, pair in enumerate(filter(None, (part.strip() for part in raw.split(","))), start=1):
+        key, sep, value = pair.partition("=")
+        if not sep:
+            raise _refuse_resource("not_key_value", f"pair {index} must be key=value")
+        if key.strip() in pairs:
+            raise _refuse_resource("duplicate_key", f"pair {index} repeats a key")
+        pairs[key.strip()] = value.strip()
+    return check_resource_attributes(pairs)
+
+
 def parse_headers(raw: str) -> dict[str, str]:
     """``name=value`` pairs separated by commas, as in ``BOUNDROOM_TELEMETRY_HEADERS``."""
     headers: dict[str, str] = {}
@@ -107,11 +156,17 @@ class OperatorTelemetry(Contract):
     runner: Annotated[RunnerLevel, Omittable]
     required: Annotated[bool, Omittable]
     environment: Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,31}$"), Omittable]
+    resource_attributes: Annotated[dict[str, str], Omittable]
 
     @field_validator("endpoint")
     @classmethod
     def _endpoint(cls, value: str) -> str:
         return check_endpoint(value)
+
+    @field_validator("resource_attributes")
+    @classmethod
+    def _resource_attributes(cls, value: dict[str, str]) -> dict[str, str]:
+        return check_resource_attributes(value)
 
 
 @dataclass(frozen=True)
@@ -128,6 +183,9 @@ class TelemetrySettings:
     required: bool
     environment: str
     sources: dict[str, str]
+    # The operator's labels for every span and data point. The values stay out of repr and
+    # reports: only their keys are shown.
+    resource_attributes: dict[str, str] = field(default_factory=dict, repr=False)
     messages: tuple[str, ...] = ()
     # Set when the run must not start: telemetry was required but can't be enabled.
     refusal: Optional[str] = None
@@ -150,6 +208,7 @@ class TelemetrySettings:
             "capture": self.capture,
             "runner": self.runner,
             "environment": self.environment,
+            "resource_attribute_keys": sorted(self.resource_attributes),
             "trace_id": trace_id,
             "source": self.sources["mode"],
         }
@@ -193,6 +252,8 @@ def _parse(setting: str, raw: str) -> Any:
         return raw == "true"
     if setting == "endpoint":
         return check_endpoint(raw)
+    if setting == "resource_attributes":
+        return parse_resource_attributes(raw)
     return raw
 
 
@@ -258,6 +319,14 @@ def resolve(
         values["mode"], sources["mode"] = "off", "kill switch"
 
     refusal = None
+    if values["mode"] == "otlp" and egress.offline(environ):
+        # BOUNDROOM_OFFLINE refuses every connection Boundroom would make (RA-TEL-011). File mode
+        # needs none and stays allowed.
+        message = f"telemetry: otlp mode refused ({egress.REASON}): {egress.OFFLINE_ENV} is set; telemetry is off"
+        messages.append(message)
+        if values["required"]:
+            refusal = message.replace("; telemetry is off", "; refusing to start because telemetry is required")
+        values["mode"], sources["mode"] = "off", egress.REASON
     missing = {"file": "file_dir", "otlp": "endpoint"}.get(values["mode"])
     if missing and not values[missing]:
         message = f"telemetry: {values['mode']} mode needs {missing}; telemetry is off"
@@ -280,6 +349,7 @@ def resolve(
         required=values["required"],
         environment=values["environment"],
         sources=sources,
+        resource_attributes=dict(values["resource_attributes"]),
         messages=tuple(messages),
         refusal=refusal,
     )

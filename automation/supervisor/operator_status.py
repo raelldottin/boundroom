@@ -19,6 +19,13 @@ at all. It selects with the supervisor's own functions
 subprocesses are the read-only ``git`` calls in ``policy.git_head`` and ``policy.git_dirty_paths``.
 It never starts or advances a slice.
 
+Its ``telemetry`` block says what telemetry a run started now would use (SPEC-006 RA-TEL-013):
+the mode, the destination's kind, capture and runner levels, the offline switch, the operator's
+resource attribute keys and any refusal. It never shows the endpoint, a header or a resource
+attribute's value. It reads the operator's ``~/.config/boundroom/telemetry.json`` for that, and
+says whether it did in the block rather than in ``files_read``, whose paths would otherwise name
+the person whose home directory it is.
+
 Exit codes: 0 when the report was printed; 1 when it was printed but the queue, the board or
 git could not be read, so the report is incomplete; 2 for a usage error.
 """
@@ -33,14 +40,15 @@ if __name__ == "__main__":
 
 import argparse
 import json
+import os
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from automation.supervisor import kanban_projection, local_board, policy, run_next
+from automation.supervisor import egress, kanban_projection, local_board, policy, run_next, telemetry_settings
 from automation.supervisor.handoff_summary import safe
 
 SCHEMA = "boundroom.operator-status/1"
@@ -194,8 +202,47 @@ def _slice_summary(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def telemetry_status(
+    queue_data: Optional[dict[str, Any]],
+    environ: Mapping[str, str],
+    operator_file: Optional[Path] = telemetry_settings.DEFAULT_OPERATOR_FILE,
+) -> dict[str, Any]:
+    """What telemetry a run started now would use, with no endpoint, header or attribute value.
+
+    Resolved as ``run_next.py`` resolves it without flags: the kill switch, the environment, the
+    operator's file and the repository's reduce-only block.
+    """
+    repository = (queue_data or {}).get("policy", {}).get("telemetry")
+    resolved = telemetry_settings.resolve(environ=environ, operator_file=operator_file, repository=repository)
+    operator_path = operator_file.expanduser() if operator_file is not None else None
+    if operator_path is None or not operator_path.exists():
+        operator_state = "absent"
+    elif any(message.startswith(f"telemetry: ignoring {operator_path}") for message in resolved.messages):
+        operator_state = "ignored"
+    else:
+        operator_state = "read"
+    return {
+        "mode": resolved.mode,
+        "destination_kind": resolved.mode,  # off, file or otlp: never the endpoint itself
+        "source": resolved.sources["mode"],
+        "capture": resolved.capture,
+        "runner": resolved.runner,
+        "required": resolved.required,
+        "environment": resolved.environment,
+        "offline": egress.offline(environ),
+        "resource_attribute_keys": sorted(resolved.resource_attributes),
+        "operator_file": operator_state,
+        "refusal": resolved.refusal,
+    }
+
+
 def collect(
-    repo_root: Path, queue: str = DEFAULT_QUEUE, board_dir: Optional[Path] = None, overlay: Optional[Path] = None
+    repo_root: Path,
+    queue: str = DEFAULT_QUEUE,
+    board_dir: Optional[Path] = None,
+    overlay: Optional[Path] = None,
+    environ: Optional[Mapping[str, str]] = None,
+    operator_file: Optional[Path] = telemetry_settings.DEFAULT_OPERATOR_FILE,
 ) -> dict[str, Any]:
     """The operator status document. Reads files and runs read-only git; writes nothing."""
     reader = _Reader(repo_root)
@@ -271,6 +318,7 @@ def collect(
         "blocked_slices": blocked,
         "waiting_on_dependencies": waiting,
         "refusals": refusals,
+        "telemetry": telemetry_status(queue_data, os.environ if environ is None else environ, operator_file),
         "provenance": {
             "repo_root": str(repo_root),
             "git_head": head,
@@ -330,12 +378,30 @@ def render_text(status: dict[str, Any]) -> str:
             lines.extend(f"  {safe(line)}" for line in rest)
     else:
         lines.append("run_next would refuse: nothing")
+    lines.append(render_telemetry(status["telemetry"]))
     provenance = status["provenance"]
     clean = provenance["worktree_clean"]
     state = "unknown" if clean is None else "clean" if clean else f"dirty ({len(provenance['dirty_paths'])} paths)"
     lines.append(f"provenance: HEAD {provenance['git_head'] or 'unknown'}, worktree {state}")
     lines.append("read: " + (", ".join(safe(path) for path in provenance["files_read"]) or "nothing"))
     return "\n".join(lines) + "\n"
+
+
+def render_telemetry(block: dict[str, Any]) -> str:
+    """One line. Every field is a fixed word or a key the settings already validated."""
+    offline = "on" if block["offline"] else "off"
+    if block["mode"] == "off":
+        line = f"telemetry: off ({block['source']}), offline {offline}"
+    else:
+        line = (
+            f"telemetry: {block['mode']} to a {block['destination_kind']} destination, capture {block['capture']}, "
+            f"runner {block['runner']}, offline {offline}"
+        )
+    if block["resource_attribute_keys"]:
+        line += ", resource keys " + ", ".join(safe(key) for key in block["resource_attribute_keys"])
+    if block["refusal"]:
+        line += f"; would refuse: {safe(block['refusal'])}"
+    return line
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

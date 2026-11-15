@@ -107,8 +107,8 @@ class TracedCase(unittest.TestCase):
         real = telemetry.json_lines_exporter
         exported = self.exported
 
-        def keeping(path: Path) -> Any:
-            exporter = real(path)
+        def keeping(path: Path, **options: Any) -> Any:
+            exporter = real(path, **options)
             write = exporter.export
 
             def export(spans: Any) -> Any:
@@ -208,6 +208,27 @@ class SpanTreeTests(TracedCase):
                     sha256(run_dir / lane / "r1" / "effectiveness-report.json"), score["attributes"]["report_sha256"]
                 )
                 self.assertEqual("valid", score["attributes"]["treatment_validity"])
+
+    def test_a_session_that_times_out_fails_its_span_with_a_reason_code(self) -> None:
+        handle = self.traced()
+
+        def factory(lane: str) -> SupervisorAgentAdapter:
+            return SupervisorAgentAdapter(
+                repo_root=REPO_ROOT, runner=FakeAgent(returncode=124), strategy=strategy_for(lane), telemetry=handle
+            )
+
+        lanes_module.run_experiment(self.tmp / "run", ["inst-a"], factory, REPO_ROOT, lanes=("A",), repeats=1, telemetry=handle)
+        self.assertTrue(handle.flush())
+        sessions = [record for record in self.spans() if record["name"] == "boundroom.agent_session"]
+        self.assertTrue(sessions)
+        self.assertEqual({("ERROR", "agent_timeout")}, {(s["status"], s["status_description"]) for s in sessions})
+
+        lines = (self.spans_dir / "exp-1.metrics.jsonl").read_text(encoding="utf-8").splitlines()
+        points = [json.loads(line) for line in lines]
+        durations = [p for p in points if p["name"] == "boundroom.agent_session.duration"]
+        self.assertEqual({("benchmark", "timeout")}, {(p["attributes"]["entry"], p["attributes"]["outcome"]) for p in durations})
+        (runs,) = [p for p in points if p["name"] == "boundroom.runs"]
+        self.assertEqual({"entry": "benchmark", "outcome": "ok"}, runs["attributes"])
 
     def test_benchmark_spans_carry_the_benchmark_environment(self) -> None:
         self.experiment(self.traced(), ("A",))

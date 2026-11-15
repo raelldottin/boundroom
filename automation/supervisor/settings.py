@@ -17,7 +17,9 @@ from typing import Any, Literal, Mapping, Optional
 EntryPoint = Literal["run_next", "evaluate_handoff", "kanban_projection", "operator_status", "sync"]
 SettingClass = Literal["secret", "internal", "security", "essential", "advanced", "outside"]
 RepositoryRule = Literal["any", "narrow-only", "never"]
-Area = Literal["runner", "work source", "policy", "sync", "memory", "telemetry", "evaluate", "projection", "status", "internal"]
+Area = Literal[
+    "runner", "work source", "policy", "sync", "memory", "network", "telemetry", "evaluate", "projection", "status", "internal"
+]
 
 ENTRY_POINTS: tuple[EntryPoint, ...] = ("run_next", "evaluate_handoff", "kanban_projection", "operator_status", "sync")
 CLASSES: tuple[SettingClass, ...] = ("secret", "internal", "security", "essential", "advanced", "outside")
@@ -402,6 +404,16 @@ SETTINGS: tuple[Setting, ...] = (
         repository_fields=("memory.projects",),
         repository_rule="any",
     ),
+    # --- network (SPEC-006 RA-TEL-011) -----------------------------------------------------------
+    Setting(
+        "offline",
+        "network",
+        "security",
+        "Refuse every network connection Boundroom itself would make: otlp telemetry and the Hindsight memory client. "
+        "Any value but empty, 0 or false turns it on. File-mode telemetry stays allowed.",
+        default=False,
+        env="BOUNDROOM_OFFLINE",
+    ),
     # --- telemetry (SPEC-006) ------------------------------------------------------------------
     Setting(
         "telemetry_kill_switch",
@@ -496,6 +508,16 @@ SETTINGS: tuple[Setting, ...] = (
         repository_fields=_policy_fields("telemetry.environment"),
         repository_rule="any",
         operator_file="telemetry.json:environment",
+    ),
+    Setting(
+        "telemetry_resource_attributes",
+        "telemetry",
+        "advanced",
+        "Your own labels on every span and data point, as key=value pairs: at most 16, lower-case dotted keys, "
+        "values of at most 256 characters. Not settable by the repository.",
+        default={},
+        env="BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES",
+        operator_file="telemetry.json:resource_attributes",
     ),
     # --- evaluate_handoff ------------------------------------------------------------------------
     Setting(

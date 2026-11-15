@@ -40,7 +40,7 @@ from typing import Annotated, Any, Literal, Optional, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from automation.schemas.models import Contract, NonEmptyStr, Omittable
-from automation.supervisor import policy
+from automation.supervisor import egress, policy
 from automation.supervisor.kanban_projection import BOARD_SLUG_PATTERN
 
 # Hindsight accepts any string as a bank id. The map is narrower so an id is always a safe,
@@ -75,6 +75,10 @@ class MemoryAccessError(policy.ConfigError):
 
 class MemoryUnavailable(Exception):
     """Hindsight could not answer within the call's limits: timeout, refused, denied or malformed."""
+
+
+class MemoryOffline(MemoryUnavailable):
+    """BOUNDROOM_OFFLINE refused the call before any connection was tried (SPEC-006 RA-TEL-011)."""
 
 
 class BankNotFound(MemoryUnavailable):
@@ -219,6 +223,10 @@ def _request(
     url = f"{config.endpoint.rstrip('/')}/v1/default/banks/{urllib.parse.quote(bank_id, safe='')}{route}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
+    try:
+        url = egress.guard_egress("memory", url)
+    except egress.EgressRefused as error:
+        raise MemoryOffline(str(error)) from None
     request = urllib.request.Request(url, data=payload, headers=headers, method="GET" if payload is None else "POST")
     limit = config.budgets.max_response_bytes
     # ponytail: timeout bounds each socket operation, not the whole call; a server that

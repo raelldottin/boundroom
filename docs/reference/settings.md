@@ -86,6 +86,12 @@ To see the values in effect, run `python3 automation/supervisor/settings_view.py
 | `memory_budget_max_snapshot_memories` | advanced |  |  |  | `memory.budgets.max_snapshot_memories (any)` | Memory budget: max snapshot memories. |
 | `memory_projects` | advanced |  |  |  | `memory.projects (any)` | Which bank each project may use, and for which operations. |
 
+## Network
+
+| Setting | Class | Default | Flags | Variables | Repository | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `offline` | security | `false` |  | `BOUNDROOM_OFFLINE` |  | Refuse every network connection Boundroom itself would make: otlp telemetry and the Hindsight memory client. Any value but empty, 0 or false turns it on. File-mode telemetry stays allowed. |
+
 ## Telemetry
 
 | Setting | Class | Default | Flags | Variables | Repository | Description |
@@ -99,6 +105,7 @@ To see the values in effect, run `python3 automation/supervisor/settings_view.py
 | `telemetry_runner` | security | `off` | `--telemetry-runner` | `BOUNDROOM_TELEMETRY_RUNNER` | `queue.policy.telemetry.runner, overlay.policy.telemetry.runner (narrow-only); operator telemetry.json:runner` | Whether the runner's own telemetry joins the trace. One of off, metadata, content. |
 | `telemetry_required` | advanced | `false` | `--telemetry-required` | `BOUNDROOM_TELEMETRY_REQUIRED` | `operator telemetry.json:required` | Refuse to start a run whose telemetry can't be enabled. |
 | `telemetry_environment` | advanced | `local` |  | `BOUNDROOM_TELEMETRY_ENVIRONMENT` | `queue.policy.telemetry.environment, overlay.policy.telemetry.environment (any); operator telemetry.json:environment` | A short name recorded on every span, such as local, ci or benchmark. |
+| `telemetry_resource_attributes` | advanced | `{}` |  | `BOUNDROOM_TELEMETRY_RESOURCE_ATTRIBUTES` | `operator telemetry.json:resource_attributes` | Your own labels on every span and data point, as key=value pairs: at most 16, lower-case dotted keys, values of at most 256 characters. Not settable by the repository. |
 
 ## Evaluate
 

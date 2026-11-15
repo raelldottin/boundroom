@@ -113,6 +113,12 @@ class SyncCase(unittest.TestCase):
         (path,) = self.spans_dir.glob("*.spans.jsonl")
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
+    def metrics(self) -> dict[tuple[str, str], Any]:
+        """Each data point by its name and its attributes, rendered as key=value pairs."""
+        (path,) = self.spans_dir.glob("*.metrics.jsonl")
+        points = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        return {(point["name"], ",".join(f"{k}={v}" for k, v in sorted(point["attributes"].items()))): point for point in points}
+
     def tree(self) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
         records = self.spans()
         (root,) = [record for record in records if record["parent_span_id"] is None]
@@ -143,6 +149,7 @@ class SyncSpanTests(SyncCase):
             ("sync", "sync", 0), (root["attributes"]["entry"], root["attributes"]["mode"], root["attributes"]["exit_code"])
         )
         self.assertTrue(root["attributes"]["run_id"])
+        self.assertEqual({"UNSET"}, {record["status"] for record in records})
         self.assertEqual({root["trace_id"]}, {record["trace_id"] for record in records})
         self.assertEqual(["boundroom.sync.verify", "boundroom.sync.plan", "boundroom.sync.write"], [r["name"] for r in children])
 
@@ -157,11 +164,18 @@ class SyncSpanTests(SyncCase):
         self.assertNotIn(TOKEN, text)
         self.assertEqual("", self.git(self.source, "status", "--porcelain"), "the source must stay clean")
 
+        metrics = self.metrics()
+        self.assertEqual(2, metrics[("boundroom.sync.changes", "kind=synced")]["value"])
+        self.assertEqual(1, metrics[("boundroom.sync.changes", "kind=removed")]["value"])
+        self.assertEqual(1, metrics[("boundroom.runs", "entry=sync,outcome=ok")]["value"])
+        self.assertEqual(1, metrics[("boundroom.run.duration", "entry=sync,outcome=ok")]["histogram"]["count"])
+
     def test_a_check_plans_and_writes_nothing(self) -> None:
         result = self.sync("--check", *self.traced())
         self.assertEqual(1, result.returncode, result.stderr)  # drift found
         _, root, children = self.tree()
         self.assertEqual(("check", 1), (root["attributes"]["mode"], root["attributes"]["exit_code"]))
+        self.assertEqual(("ERROR", "exit_nonzero"), (root["status"], root["status_description"]))
         self.assertEqual(["boundroom.sync.verify", "boundroom.sync.plan"], [r["name"] for r in children])
         self.assertEqual("unpinned drift report", children[0]["attributes"]["result"])
         self.assertNotIn("pin", children[0]["attributes"])
@@ -180,6 +194,10 @@ class SyncSpanTests(SyncCase):
         self.assertEqual("refused", children[0]["attributes"]["result"])
         self.assertIn("not at the pinned commit", children[0]["attributes"]["reason"])
         self.assertEqual("refused", root["attributes"]["result"])
+        # Both spans fail with the reason code, never the refusal's text (SPEC-006 span status).
+        self.assertEqual(("ERROR", "refused"), (children[0]["status"], children[0]["status_description"]))
+        self.assertEqual(("ERROR", "refused"), (root["status"], root["status_description"]))
+        self.assertIn(("boundroom.runs", "entry=sync,outcome=refused"), self.metrics())
         self.assertFalse((self.target / "vendored" / "two.txt").exists())
         self.assertTrue((self.target / "vendored" / "gone.txt").exists())
 
