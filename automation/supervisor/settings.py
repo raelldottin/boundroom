@@ -757,6 +757,27 @@ def env_names() -> dict[str, Setting]:
     return {name: setting for setting in SETTINGS for name in setting.env_names}
 
 
+# The release that stops reading the legacy names an operator sets (SPEC-009 RA-ENT-002).
+LEGACY_ENV_REMOVAL = "v0.5.0"
+# Names the supervisor sets for its runner, not settings an operator chooses. It keeps setting
+# their legacy names until LEGACY_ENV_REMOVAL, so finding one in the environment is no news.
+SUPERVISOR_EXPORTS = frozenset({"supervisor_context_file", "supervisor_handoff_file", "supervisor_slice_id"})
+
+
+def legacy_env_warnings(environ: Mapping[str, str]) -> list[str]:
+    """One deprecation warning for each legacy name an operator set, in registry order."""
+    warnings: list[str] = []
+    for setting in SETTINGS:
+        if setting.id in SUPERVISOR_EXPORTS or not setting.env:
+            continue
+        for name in setting.legacy_env:
+            if name not in environ:
+                continue
+            wins = f"; {setting.env} is also set, so {name} is ignored" if setting.env in environ else ""
+            warnings.append(f"warning: {name} is deprecated and stops working in {LEGACY_ENV_REMOVAL}; use {setting.env}{wins}.")
+    return warnings
+
+
 def repository_fields() -> dict[str, Setting]:
     return {field: setting for setting in SETTINGS for field in setting.repository_fields}
 

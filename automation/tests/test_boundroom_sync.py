@@ -161,7 +161,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
     def test_1_no_import_can_mutate_the_canonical_source(self) -> None:
         """Owlory has no write path outward: the tool refuses to write into its own source."""
         pin = self.canonical_source_with()
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         result = subprocess.run(
             [
@@ -195,7 +195,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
     def test_1b_the_outward_auto_update_mode_no_longer_exists(self) -> None:
         """--auto-update was the outward mutation path. It must not be reachable at all."""
         pin = self.canonical_source_with()
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         result = self.run_tool("--sync", "--auto-update", pin=pin)
 
@@ -221,7 +221,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
 
         self.write_source("harness/keep.py", "PAYLOAD\n")
         pin = self.publish_source("payload")
-        self.write_manifest([self.entry("harness", "harness", kind="directory", delete_stale=True)])
+        self.write_manifest([self.entry("harness", "automation/harness", kind="directory", delete_stale=True)])
 
         result = subprocess.run(
             [
@@ -256,13 +256,13 @@ class BoundroomImportGuardTests(unittest.TestCase):
         pin = self.canonical_source_with()
         self.init_consumer()
         self.git(self.target, "remote", "add", "origin", self.remote)
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         result = self.run_tool("--sync", pin=pin)
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("origin", result.stderr)
-        self.assertFalse((self.target / "seed.txt").exists())
+        self.assertFalse((self.target / "automation/seed.txt").exists())
 
     def test_1e_there_is_no_default_destination(self) -> None:
         """A manifest cannot name where the import lands - the caller must say.
@@ -271,7 +271,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
         ownership flip and a --sync away from writing outward after it.
         """
         pin = self.canonical_source_with()
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         no_target = subprocess.run(
             [
@@ -293,7 +293,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
         self.assertNotEqual(0, no_target.returncode)
         self.assertIn("--target", no_target.stderr)
 
-        self.write_manifest([self.entry("seed.txt", "seed.txt")], default_target=str(self.target))
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")], default_target=str(self.target))
         reintroduced = self.run_tool("--sync", pin=pin)
         self.assertNotEqual(0, reintroduced.returncode)
         self.assertIn("default_target", reintroduced.stderr)
@@ -320,22 +320,22 @@ class BoundroomImportGuardTests(unittest.TestCase):
 
     def test_2_unpinned_import_is_an_error(self) -> None:
         self.canonical_source_with()
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         result = self.run_tool("--sync")
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("--pin", result.stderr)
-        self.assertFalse((self.target / "seed.txt").exists())
+        self.assertFalse((self.target / "automation/seed.txt").exists())
 
     def test_2b_explicit_development_mode_is_the_only_way_past_the_pin(self) -> None:
         self.canonical_source_with()
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         result = self.run_tool("--sync", "--allow-unverified-source")
 
         self.assertEqual(0, result.returncode, msg=result.stderr)
-        self.assertIn("seed\n", (self.target / "seed.txt").read_text(encoding="utf-8"))
+        self.assertIn("seed\n", (self.target / "automation/seed.txt").read_text(encoding="utf-8"))
         self.assertIn("unverified source", result.stdout + result.stderr)
 
     # --- protection 3 ----------------------------------------------------
@@ -343,50 +343,50 @@ class BoundroomImportGuardTests(unittest.TestCase):
     def test_3_source_repository_identity_must_match_the_lock(self) -> None:
         pin = self.canonical_source_with()
         self.git(self.source, "remote", "set-url", "origin", "https://github.com/attacker/boundroom.git")
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         result = self.run_tool("--sync", pin=pin)
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("identity", result.stderr)
-        self.assertFalse((self.target / "seed.txt").exists())
+        self.assertFalse((self.target / "automation/seed.txt").exists())
 
     def test_3b_a_source_with_no_origin_fails_identity_rather_than_skipping_it(self) -> None:
         """An absent remote must be loud. Silently passing is the case you want caught."""
         pin = self.canonical_source_with()
         self.git(self.source, "remote", "remove", "origin")
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         result = self.run_tool("--sync", pin=pin)
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("identity", result.stderr)
-        self.assertFalse((self.target / "seed.txt").exists())
+        self.assertFalse((self.target / "automation/seed.txt").exists())
 
     # --- protection 4 ----------------------------------------------------
 
     def test_4_dirty_canonical_source_is_refused(self) -> None:
         pin = self.canonical_source_with()
         self.write_source("seed.txt", "uncommitted local edit\n")
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         result = self.run_tool("--sync", pin=pin)
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("uncommitted", result.stderr)
-        self.assertFalse((self.target / "seed.txt").exists())
+        self.assertFalse((self.target / "automation/seed.txt").exists())
 
     def test_4b_source_on_a_different_commit_than_the_pin_is_refused(self) -> None:
         pin = self.canonical_source_with()
         self.write_source("seed.txt", "moved on\n")
         self.publish_source("second")
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
 
         result = self.run_tool("--sync", pin=pin)
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("pinned commit", result.stderr)
-        self.assertFalse((self.target / "seed.txt").exists())
+        self.assertFalse((self.target / "automation/seed.txt").exists())
 
     def test_4c_check_mode_verifies_the_pin_too(self) -> None:
         """A drift report against the wrong commit answers the wrong question.
@@ -395,7 +395,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
         source has moved rather than reporting the snapshot as current.
         """
         pin = self.canonical_source_with()
-        self.write_manifest([self.entry("seed.txt", "seed.txt")])
+        self.write_manifest([self.entry("seed.txt", "automation/seed.txt")])
         self.assertEqual(0, self.run_tool("--sync", pin=pin).returncode)
 
         self.write_source("seed.txt", "moved on\n")
@@ -482,6 +482,76 @@ class BoundroomImportGuardTests(unittest.TestCase):
         self.assertIn("destination", result.stderr)
         self.assertIn("real", (self.target / lock).read_text(encoding="utf-8"))
 
+    def test_5e_the_runner_rules_are_consumer_owned(self) -> None:
+        """SPEC-009 RA-ENT-001: a repository's runner rules are its own, never an import's."""
+        self.assert_lock_is_refused("automation/runner-rules.md")
+
+    def test_5f_an_import_writes_only_where_boundroom_lives(self) -> None:
+        """SPEC-009 RA-ENT-002: an allowlist protects every consumer's own code, naming none."""
+        self.init_canonical_source()
+        self.write_source("payload.txt", "payload\n")
+        pin = self.publish_source()
+        self.init_consumer()
+        outside = (
+            "app/Core/Domain/Rule.swift",
+            "localization/en.json",
+            "Tools/bump-version.sh",
+            "README.md",
+            "docs/product/plan.md",
+        )
+        for destination in outside:
+            self.write_target(destination, "real\n")
+        self.commit_consumer()
+
+        for destination in outside + ("automation", "docs/workflows", "tools/boundroom-sync.sh.bak"):
+            with self.subTest(destination=destination):
+                self.write_manifest([self.entry("payload.txt", destination)])
+
+                result = self.run_tool("--sync", pin=pin)
+
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("outside the places an import may write", result.stderr)
+        for destination in outside:
+            self.assertEqual("real\n", (self.target / destination).read_text(encoding="utf-8"))
+
+    def test_5g_the_allowed_places_still_take_an_import(self) -> None:
+        self.init_canonical_source()
+        self.write_source("payload.txt", "payload\n")
+        pin = self.publish_source()
+        self.init_consumer()
+        allowed = ("automation/payload.txt", "docs/workflows/payload.md", "THIRD-PARTY-NOTICES.md", "Tools/boundroom-sync.sh")
+        self.write_manifest([self.entry("payload.txt", destination) for destination in allowed])
+
+        result = self.run_tool("--sync", pin=pin)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        for destination in allowed:
+            self.assertEqual("payload\n", (self.target / destination).read_text(encoding="utf-8"))
+
+    def test_5h_the_retired_opt_out_key_warns_and_bypasses_nothing(self) -> None:
+        """allow_owlory_specific used to let an entry ship a forbidden source. It no longer does."""
+        self.init_canonical_source()
+        self.write_source("payload.txt", "payload\n")
+        self.write_source("Makefile", "all:\n")
+        pin = self.publish_source()
+        self.init_consumer()
+
+        forbidden = self.entry("Makefile", "automation/Makefile")
+        forbidden["allow_owlory_specific"] = True
+        self.write_manifest([forbidden])
+        refused = self.run_tool("--sync", pin=pin)
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("forbidden source is never shipped: Makefile", refused.stderr)
+        self.assertIn("allow_owlory_specific, which is deprecated and ignored", refused.stderr)
+        self.assertIn("refused from v0.5.0", refused.stderr)
+
+        ordinary = self.entry("payload.txt", "automation/payload.txt")
+        ordinary["allow_owlory_specific"] = False
+        self.write_manifest([ordinary])
+        accepted = self.run_tool("--sync", pin=pin)
+        self.assertEqual(0, accepted.returncode, accepted.stderr)
+        self.assertIn("allow_owlory_specific, which is deprecated and ignored", accepted.stderr)
+
     # --- protection 6 ----------------------------------------------------
 
     def test_6_stale_deletion_never_reaches_outside_canonical_owned_paths(self) -> None:
@@ -491,11 +561,11 @@ class BoundroomImportGuardTests(unittest.TestCase):
         self.write_target("automation/handoffs/closed.json", "{}\n")
         self.write_target("automation/proofs/slice/proof.md", "proof\n")
         self.write_target("automation/queue/slices.json", '{"slices": []}\n')
-        self.write_target("vendored/harness/gone.py", "upstream deleted this\n")
+        self.write_target("automation/vendored/harness/gone.py", "upstream deleted this\n")
         self.commit_consumer()
         self.write_manifest(
             [
-                self.entry("harness", "vendored/harness", kind="directory", delete_stale=True),
+                self.entry("harness", "automation/vendored/harness", kind="directory", delete_stale=True),
                 self.entry("harness", "automation", kind="directory", delete_stale=True),
             ]
         )
@@ -508,7 +578,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
             "automation/handoffs/closed.json",
             "automation/proofs/slice/proof.md",
             "automation/queue/slices.json",
-            "vendored/harness/gone.py",
+            "automation/vendored/harness/gone.py",
         ):
             self.assertTrue(
                 (self.target / survivor).exists(),
@@ -518,16 +588,16 @@ class BoundroomImportGuardTests(unittest.TestCase):
     def test_6b_a_clean_import_deletes_stale_files_only_under_its_own_destination(self) -> None:
         pin = self.canonical_source_with(("harness/keep.py", "keep\n"))
         self.init_consumer()
-        self.write_target("vendored/harness/gone.py", "upstream deleted this\n")
+        self.write_target("automation/vendored/harness/gone.py", "upstream deleted this\n")
         self.write_target("automation/handoffs/closed.json", "{}\n")
         self.commit_consumer()
-        self.write_manifest([self.entry("harness", "vendored/harness", kind="directory", delete_stale=True)])
+        self.write_manifest([self.entry("harness", "automation/vendored/harness", kind="directory", delete_stale=True)])
 
         result = self.run_tool("--sync", pin=pin)
 
         self.assertEqual(0, result.returncode, msg=result.stderr)
-        self.assertFalse((self.target / "vendored/harness/gone.py").exists())
-        self.assertTrue((self.target / "vendored/harness/keep.py").exists())
+        self.assertFalse((self.target / "automation/vendored/harness/gone.py").exists())
+        self.assertTrue((self.target / "automation/vendored/harness/keep.py").exists())
         self.assertTrue((self.target / "automation/handoffs/closed.json").exists())
 
     # --- protection 7 ----------------------------------------------------
@@ -536,10 +606,10 @@ class BoundroomImportGuardTests(unittest.TestCase):
         """A customized vendored file is uncommitted work. Overwriting it loses it silently."""
         pin = self.canonical_source_with(("harness/tool.py", "canonical\n"))
         self.init_consumer()
-        self.write_target("vendored/harness/tool.py", "canonical\n")
+        self.write_target("automation/vendored/harness/tool.py", "canonical\n")
         self.commit_consumer()
-        self.write_target("vendored/harness/tool.py", "local customization in progress\n")
-        self.write_manifest([self.entry("harness", "vendored/harness", kind="directory", delete_stale=True)])
+        self.write_target("automation/vendored/harness/tool.py", "local customization in progress\n")
+        self.write_manifest([self.entry("harness", "automation/vendored/harness", kind="directory", delete_stale=True)])
 
         result = self.run_tool("--sync", pin=pin)
 
@@ -547,7 +617,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
         self.assertIn("locally modified", result.stderr)
         self.assertEqual(
             "local customization in progress\n",
-            (self.target / "vendored/harness/tool.py").read_text(encoding="utf-8"),
+            (self.target / "automation/vendored/harness/tool.py").read_text(encoding="utf-8"),
         )
 
     def test_7b_template_entries_are_not_overwritten_by_an_ordinary_import(self) -> None:
@@ -574,8 +644,8 @@ class BoundroomImportGuardTests(unittest.TestCase):
         """
         self.canonical_source_with(("harness/tool.py", "canonical v2\n"))
         self.init_consumer()
-        self.write_target("vendored/harness/tool.py", "local work\n")
-        self.write_manifest([self.entry("harness", "vendored/harness", kind="directory")])
+        self.write_target("automation/vendored/harness/tool.py", "local work\n")
+        self.write_manifest([self.entry("harness", "automation/vendored/harness", kind="directory")])
 
         # git is present but refuses, which is what dubious ownership looks like. Exit 128 is
         # also what "not a git repository" returns, so returncode alone cannot tell them apart.
@@ -592,17 +662,17 @@ class BoundroomImportGuardTests(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("uncommitted", result.stderr)
-        self.assertEqual("local work\n", (self.target / "vendored/harness/tool.py").read_text(encoding="utf-8"))
+        self.assertEqual("local work\n", (self.target / "automation/vendored/harness/tool.py").read_text(encoding="utf-8"))
 
     def test_7d_an_untracked_consumer_is_still_importable(self) -> None:
         """Fail-closed must not mean refusing a consumer that simply is not a Git checkout."""
         pin = self.canonical_source_with(("harness/tool.py", "canonical\n"))
-        self.write_manifest([self.entry("harness", "vendored/harness", kind="directory")])
+        self.write_manifest([self.entry("harness", "automation/vendored/harness", kind="directory")])
 
         result = self.run_tool("--sync", pin=pin)
 
         self.assertEqual(0, result.returncode, msg=result.stderr)
-        self.assertEqual("canonical\n", (self.target / "vendored/harness/tool.py").read_text(encoding="utf-8"))
+        self.assertEqual("canonical\n", (self.target / "automation/vendored/harness/tool.py").read_text(encoding="utf-8"))
 
     def test_7e_modified_paths_are_resolved_against_the_repository_root(self) -> None:
         """Status paths are relative to the toplevel, so a consumer in a subdirectory needs it."""
@@ -611,11 +681,11 @@ class BoundroomImportGuardTests(unittest.TestCase):
 
         nested = self.target / "nested/consumer"
         nested.mkdir(parents=True)
-        (nested / "vendored").mkdir()
-        (nested / "vendored/tool.py").write_text("canonical\n", encoding="utf-8")
+        (nested / "automation/vendored").mkdir(parents=True)
+        (nested / "automation/vendored/tool.py").write_text("canonical\n", encoding="utf-8")
         self.commit_consumer()
-        (nested / "vendored/tool.py").write_text("local work\n", encoding="utf-8")
-        self.write_manifest([self.entry("harness", "vendored", kind="directory")])
+        (nested / "automation/vendored/tool.py").write_text("local work\n", encoding="utf-8")
+        self.write_manifest([self.entry("harness", "automation/vendored", kind="directory")])
 
         result = subprocess.run(
             [
@@ -641,25 +711,25 @@ class BoundroomImportGuardTests(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("locally modified", result.stderr)
-        self.assertEqual("local work\n", (nested / "vendored/tool.py").read_text(encoding="utf-8"))
+        self.assertEqual("local work\n", (nested / "automation/vendored/tool.py").read_text(encoding="utf-8"))
 
     # --- protection 8 ----------------------------------------------------
 
     def test_8_source_failing_its_own_quality_gate_is_refused(self) -> None:
         """Pinned, clean and correctly identified is not the same as releasable."""
         pin = self.canonical_source_with(("tool.py", "canonical\n"))
-        self.write_manifest([self.entry("tool.py", "vendored/tool.py")])
+        self.write_manifest([self.entry("tool.py", "automation/vendored/tool.py")])
 
         result = self.run_tool("--sync", pin=pin, quality_command="false")
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("quality gate", result.stderr)
-        self.assertFalse((self.target / "vendored/tool.py").exists())
+        self.assertFalse((self.target / "automation/vendored/tool.py").exists())
 
     def test_8_quality_gate_failure_output_is_reported(self) -> None:
         """A refusal that does not say what failed sends the operator back to guessing."""
         pin = self.canonical_source_with(("tool.py", "canonical\n"))
-        self.write_manifest([self.entry("tool.py", "vendored/tool.py")])
+        self.write_manifest([self.entry("tool.py", "automation/vendored/tool.py")])
 
         result = self.run_tool("--sync", pin=pin, quality_command="sh -c 'echo would-reformat-something >&2; exit 1'")
 
@@ -669,30 +739,30 @@ class BoundroomImportGuardTests(unittest.TestCase):
     def test_8_unrunnable_quality_gate_is_a_refusal_not_a_pass(self) -> None:
         """A gate that cannot run has not passed; the tool must not read that as success."""
         pin = self.canonical_source_with(("tool.py", "canonical\n"))
-        self.write_manifest([self.entry("tool.py", "vendored/tool.py")])
+        self.write_manifest([self.entry("tool.py", "automation/vendored/tool.py")])
 
         result = self.run_tool("--sync", pin=pin, quality_command="boundroom-no-such-gate")
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("could not run the canonical quality gate", result.stderr)
-        self.assertFalse((self.target / "vendored/tool.py").exists())
+        self.assertFalse((self.target / "automation/vendored/tool.py").exists())
 
     def test_8_quality_gate_runs_in_the_source_not_the_consumer(self) -> None:
         """The gate describes the canonical snapshot, so it must execute there."""
         pin = self.canonical_source_with(("tool.py", "canonical\n"))
-        self.write_manifest([self.entry("tool.py", "vendored/tool.py")])
+        self.write_manifest([self.entry("tool.py", "automation/vendored/tool.py")])
         marker = self.tmpdir / "gate-cwd.txt"
 
         result = self.run_tool("--sync", pin=pin, quality_command=f"sh -c 'pwd > {marker}'")
 
         self.assertEqual(0, result.returncode, msg=result.stderr)
         self.assertEqual(self.source.resolve(), Path(marker.read_text(encoding="utf-8").strip()).resolve())
-        self.assertEqual("canonical\n", (self.target / "vendored/tool.py").read_text(encoding="utf-8"))
+        self.assertEqual("canonical\n", (self.target / "automation/vendored/tool.py").read_text(encoding="utf-8"))
 
     def test_8_check_with_a_pin_also_requires_the_quality_gate(self) -> None:
         """--check with a pin answers "is this snapshot importable", which includes quality."""
         pin = self.canonical_source_with(("tool.py", "canonical\n"))
-        self.write_manifest([self.entry("tool.py", "vendored/tool.py")])
+        self.write_manifest([self.entry("tool.py", "automation/vendored/tool.py")])
 
         result = self.run_tool("--check", pin=pin, quality_command="false")
 
@@ -725,7 +795,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
     def stage_runtime_case(self, runtime: dict[str, Any] | None) -> str:
         pin = self.canonical_source_with(("tool.py", "canonical\n"))
         extra = {"runtime": runtime} if runtime is not None else {}
-        self.write_manifest([self.entry("tool.py", "vendored/tool.py")], **extra)
+        self.write_manifest([self.entry("tool.py", "automation/vendored/tool.py")], **extra)
         return pin
 
     def test_9_satisfied_runtime_dependency_lets_the_import_proceed(self) -> None:
@@ -734,7 +804,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
         result = self.run_tool("--sync", pin=pin, runtime_python=sys.executable)
 
         self.assertEqual(0, result.returncode, msg=result.stderr)
-        self.assertEqual("canonical\n", (self.target / "vendored/tool.py").read_text(encoding="utf-8"))
+        self.assertEqual("canonical\n", (self.target / "automation/vendored/tool.py").read_text(encoding="utf-8"))
 
     def test_9_absent_runtime_dependency_is_refused_before_any_write(self) -> None:
         pin = self.stage_runtime_case(self.runtime_block("boundroom-not-a-real-distribution", 1, 2))
@@ -743,7 +813,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("missing_runtime_dependency: boundroom-not-a-real-distribution>=1,<2", result.stderr)
-        self.assertFalse((self.target / "vendored/tool.py").exists())
+        self.assertFalse((self.target / "automation/vendored/tool.py").exists())
 
     def test_9_runtime_dependency_below_the_supported_major_is_refused(self) -> None:
         pin = self.stage_runtime_case(self.runtime_block("pydantic", 3, 4))
@@ -752,7 +822,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("missing_runtime_dependency: pydantic>=3,<4 (found ", result.stderr)
-        self.assertFalse((self.target / "vendored/tool.py").exists())
+        self.assertFalse((self.target / "automation/vendored/tool.py").exists())
 
     def test_9_runtime_dependency_past_the_supported_major_is_refused(self) -> None:
         """A future major is as unsupported as an old one; the range is closed on both ends."""
@@ -770,7 +840,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("consumer interpreter", result.stderr)
-        self.assertFalse((self.target / "vendored/tool.py").exists())
+        self.assertFalse((self.target / "automation/vendored/tool.py").exists())
 
     def test_9_manifest_without_runtime_metadata_is_unchanged(self) -> None:
         """Older manifests declare nothing, so nothing is enforced."""
@@ -779,7 +849,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
         result = self.run_tool("--sync", pin=pin, runtime_python=str(self.tmpdir / "no-such-python"))
 
         self.assertEqual(0, result.returncode, msg=result.stderr)
-        self.assertEqual("canonical\n", (self.target / "vendored/tool.py").read_text(encoding="utf-8"))
+        self.assertEqual("canonical\n", (self.target / "automation/vendored/tool.py").read_text(encoding="utf-8"))
 
     def test_9_pinned_check_verifies_the_consumer_runtime_too(self) -> None:
         pin = self.stage_runtime_case(self.runtime_block("boundroom-not-a-real-distribution", 1, 2))
@@ -797,7 +867,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
         self.assertIn("missing_runtime_dependency", result.stderr)
-        self.assertFalse((self.target / "vendored/tool.py").exists())
+        self.assertFalse((self.target / "automation/vendored/tool.py").exists())
 
     def test_9_canonical_manifest_declares_its_pydantic_requirement(self) -> None:
         manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
@@ -851,7 +921,7 @@ class PinStatusTests(unittest.TestCase):
                     "entries": [
                         {
                             "source": "harness",
-                            "destination": "vendored",
+                            "destination": "automation/vendored",
                             "kind": "directory",
                             "preserve_executable": False,
                             "delete_stale": True,
@@ -887,8 +957,8 @@ class PinStatusTests(unittest.TestCase):
         return self.git(self.source, "rev-parse", "HEAD").stdout.strip()
 
     def vendor(self, contents: str = "one\n") -> None:
-        (self.target / "vendored").mkdir(exist_ok=True)
-        (self.target / "vendored/tool.py").write_text(contents, encoding="utf-8")
+        (self.target / "automation/vendored").mkdir(parents=True, exist_ok=True)
+        (self.target / "automation/vendored/tool.py").write_text(contents, encoding="utf-8")
 
     def write_lock(self, commit: str, name: str = "automation/boundroom.lock") -> None:
         path = self.target / name
@@ -968,7 +1038,7 @@ class PinStatusTests(unittest.TestCase):
     def test_a_legacy_lock_is_read_in_key_value_form(self) -> None:
         self.vendor()
         lock = self.target / "automation/repo-automation.lock"
-        lock.parent.mkdir(parents=True)
+        lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text(f"commit={self.v1}\nremote={self.REMOTE}\nimported_at=2026-10-01\n", encoding="utf-8")
         self.commit_consumer()
 
@@ -1034,15 +1104,15 @@ class PinStatusTests(unittest.TestCase):
 
     def test_drifted_vendored_files_are_reported(self) -> None:
         self.vendor("edited locally\n")
-        (self.target / "vendored/extra.py").write_text("stale\n", encoding="utf-8")
+        (self.target / "automation/vendored/extra.py").write_text("stale\n", encoding="utf-8")
         self.write_lock(self.v1)
         self.commit_consumer()
 
         result = self.status()
 
         self.assertEqual(1, result.returncode)
-        self.assertIn("  changed: vendored/tool.py", result.stdout)
-        self.assertIn("  stale: vendored/extra.py", result.stdout)
+        self.assertIn("  changed: automation/vendored/tool.py", result.stdout)
+        self.assertIn("  stale: automation/vendored/extra.py", result.stdout)
         self.assertIn("drift: found (2 issue(s))", result.stdout)
 
     def test_source_at_another_commit_is_not_called_the_pin(self) -> None:

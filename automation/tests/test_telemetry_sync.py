@@ -50,11 +50,11 @@ class SyncCase(unittest.TestCase):
         self.pin = self.commit(self.source)
         self.git(self.target, "init", "-q", "-b", "main")
         (self.target / "README").write_text("consumer\n", encoding="utf-8")
-        (self.target / "vendored").mkdir()
-        (self.target / "vendored" / "one.txt").write_text("one.txt\n", encoding="utf-8")  # already current
-        (self.target / "vendored" / "gone.txt").write_text("upstream deleted this\n", encoding="utf-8")
+        (self.target / "automation/vendored").mkdir(parents=True)
+        (self.target / "automation/vendored" / "one.txt").write_text("one.txt\n", encoding="utf-8")  # already current
+        (self.target / "automation/vendored" / "gone.txt").write_text("upstream deleted this\n", encoding="utf-8")
         self.commit(self.target)
-        entry = {"source": "harness", "destination": "vendored", "kind": "directory"}
+        entry = {"source": "harness", "destination": "automation/vendored", "kind": "directory"}
         flags = {"preserve_executable": False, "delete_stale": True, "template": False}
         self.manifest.write_text(json.dumps({"version": 1, "entries": [{**entry, **flags}]}), encoding="utf-8")
 
@@ -158,7 +158,7 @@ class SyncSpanTests(SyncCase):
         # Three source files; two of them missing in the consumer and one stale file to remove.
         self.assertEqual((3, 3, "planned"), (plan["file_count"], plan["drift_count"], plan["result"]))
         self.assertEqual((2, 1), (write["written"], write["removed"]))
-        self.assertEqual("three.txt\n", (self.target / "vendored" / "three.txt").read_text(encoding="utf-8"))
+        self.assertEqual("three.txt\n", (self.target / "automation/vendored" / "three.txt").read_text(encoding="utf-8"))
 
         text = next(self.spans_dir.glob("*.spans.jsonl")).read_text(encoding="utf-8")
         self.assertNotIn(TOKEN, text)
@@ -180,7 +180,7 @@ class SyncSpanTests(SyncCase):
         self.assertEqual("unpinned drift report", children[0]["attributes"]["result"])
         self.assertNotIn("pin", children[0]["attributes"])
         self.assertEqual((3, 3), (children[1]["attributes"]["file_count"], children[1]["attributes"]["drift_count"]))
-        self.assertFalse((self.target / "vendored" / "two.txt").exists())
+        self.assertFalse((self.target / "automation/vendored" / "two.txt").exists())
 
     def test_a_refusal_is_recorded_on_the_span_where_it_happened(self) -> None:
         (self.source / "harness" / "one.txt").write_text("unpublished\n", encoding="utf-8")
@@ -198,8 +198,8 @@ class SyncSpanTests(SyncCase):
         self.assertEqual(("ERROR", "refused"), (children[0]["status"], children[0]["status_description"]))
         self.assertEqual(("ERROR", "refused"), (root["status"], root["status_description"]))
         self.assertIn(("boundroom.runs", "entry=sync,outcome=refused"), self.metrics())
-        self.assertFalse((self.target / "vendored" / "two.txt").exists())
-        self.assertTrue((self.target / "vendored" / "gone.txt").exists())
+        self.assertFalse((self.target / "automation/vendored" / "two.txt").exists())
+        self.assertTrue((self.target / "automation/vendored" / "gone.txt").exists())
 
     def test_a_refusal_quoting_a_remote_never_records_its_token(self) -> None:
         self.git(self.source, "remote", "set-url", "origin", f"https://{TOKEN}@github.com/someone/else.git")
@@ -221,7 +221,7 @@ class SyncSpanTests(SyncCase):
         result = self.sync("--sync", *self.traced(self.target / "spans"), "--telemetry-required", pin=self.pin)
         self.assertEqual(2, result.returncode)
         self.assertIn("refusing to start because telemetry is required", result.stderr)
-        self.assertFalse((self.target / "vendored" / "two.txt").exists())
+        self.assertFalse((self.target / "automation/vendored" / "two.txt").exists())
 
 
 class OffAndMissingTests(SyncCase):
@@ -242,7 +242,7 @@ class OffAndMissingTests(SyncCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("logfire package isn't installed", result.stderr)
         self.assertEqual(["logfire"], [path.name for path in marker.iterdir()])
-        self.assertTrue((self.target / "vendored" / "two.txt").exists())
+        self.assertTrue((self.target / "automation/vendored" / "two.txt").exists())
 
     def test_without_pydantic_the_sync_works_untraced_and_refuses_telemetry_flags(self) -> None:
         marker = self.tmp / "imported"

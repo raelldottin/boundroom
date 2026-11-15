@@ -165,6 +165,8 @@ def board_for(args: argparse.Namespace, repo_root: Path) -> board_backend.BoardB
 
 def main() -> int:
     args = parse_args()
+    for warning in settings.legacy_env_warnings(os.environ):
+        print(warning, file=sys.stderr)
     try:
         # No worker may start the next slice (SPEC-008 PS-20): by variable, and by the run lock for
         # a runner that unset the variable.

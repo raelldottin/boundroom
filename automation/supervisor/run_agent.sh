@@ -3,16 +3,31 @@ set -euo pipefail
 
 # SPEC-005: the BOUNDROOM_* names replaced REPO_AUTOMATION_* in 0.3.0. A legacy name is still
 # honoured when its new name is unset, so an operator's existing settings keep working; when both
-# are set, the new name wins. Removing the legacy names is a later, separate decision.
+# are set, the new name wins. SPEC-009 RA-ENT-002: each legacy name warns, and v0.5.0 stops
+# reading them.
+legacy_warning() {
+  local legacy_name="$1" new_name="$2"
+  if [[ -n "${!new_name+x}" ]]; then
+    echo "warning: $legacy_name is deprecated and stops working in v0.5.0; use $new_name; $new_name is also set, so $legacy_name is ignored." >&2
+  else
+    echo "warning: $legacy_name is deprecated and stops working in v0.5.0; use $new_name." >&2
+  fi
+}
 for legacy_suffix in AGENT_RUNNER CODEX_BIN CLAUDE_BIN CLAUDE_PERMISSION_MODE HERMES_BIN HERMES_USAGE_DIR \
   HERMES_TRANSPORT HERMES_MAX_TURNS HERMES_SANDBOX_IMAGE HERMES_PYTHON SANDBOX_PROBE_COMMAND; do
   new_name="BOUNDROOM_$legacy_suffix"
   legacy_name="REPO_AUTOMATION_$legacy_suffix"
-  if [[ -z "${!new_name+x}" && -n "${!legacy_name+x}" ]]; then
-    export "$new_name=${!legacy_name}"
+  if [[ -n "${!legacy_name+x}" ]]; then
+    legacy_warning "$legacy_name" "$new_name"
+    if [[ -z "${!new_name+x}" ]]; then
+      export "$new_name=${!legacy_name}"
+    fi
   fi
 done
 unset legacy_suffix new_name legacy_name
+if [[ -n "${OWLORY_CODEX_BIN+x}" ]]; then
+  legacy_warning OWLORY_CODEX_BIN BOUNDROOM_CODEX_BIN
+fi
 
 usage() {
   cat >&2 <<'USAGE'
@@ -46,9 +61,10 @@ Runner selection:
   HERMES_REVISION is recorded in that report; set it to the pinned Hermes commit.
   HERMES_INFERENCE_PROVIDER and HERMES_INFERENCE_MODEL choose what Hermes talks to.
 
-Legacy OWLORY_CODEX_BIN remains supported for Codex executable overrides.
-Each REPO_AUTOMATION_* name from before 0.3.0 is honoured when its BOUNDROOM_*
-name is unset, and the supervisor still exports REPO_AUTOMATION_SUPERVISOR_*.
+Legacy OWLORY_CODEX_BIN and each REPO_AUTOMATION_* name from before 0.3.0 are
+honoured when the BOUNDROOM_* name is unset, with a deprecation warning, until
+v0.5.0. The supervisor still exports REPO_AUTOMATION_SUPERVISOR_* and
+OWLORY_SUPERVISOR_* until then.
 USAGE
 }
 
@@ -249,13 +265,15 @@ export REPO_AUTOMATION_SUPERVISOR_SLICE_ID="$slice_id"
 export OWLORY_SUPERVISOR_CONTEXT_FILE="$context_file"
 export OWLORY_SUPERVISOR_HANDOFF_FILE="$handoff_file"
 export OWLORY_SUPERVISOR_SLICE_ID="$slice_id"
+# The REPO_AUTOMATION_SUPERVISOR_* and OWLORY_SUPERVISOR_* exports above end in v0.5.0
+# (SPEC-009 RA-ENT-002). A runner should read BOUNDROOM_SUPERVISOR_*.
 
 cd "$repo_root"
 
 case "$agent_runner" in
   codex)
     if ! command_exists "$codex_bin"; then
-      echo "Codex CLI not found. Set BOUNDROOM_CODEX_BIN, OWLORY_CODEX_BIN, or install codex." >&2
+      echo "Codex CLI not found. Set BOUNDROOM_CODEX_BIN, or install codex." >&2
       exit 69
     fi
     exec "$codex_bin" --ask-for-approval never exec \
