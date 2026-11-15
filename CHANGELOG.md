@@ -12,6 +12,7 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 - A repository's own runner rules in `automation/runner-rules.md`, which the sync never writes and the supervisor adds to every runner prompt (#241).
 - Signed build provenance for each release archive, checked with `gh attestation verify` (#244).
 - The compatibility and deprecation policy (#243) and this changelog.
+- A support matrix in the README. CI now also tests Python 3.13 and 3.14, and macOS.
 
 ### Changed
 
