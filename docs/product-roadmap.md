@@ -20,7 +20,7 @@ The long-term product is an **open, self-hostable agentic software-delivery cont
 
 These are complementary responsibilities, not four competing task stores. The plugin is a thin operator interface to a *consumer's synced copy*, not an additional supervisor.
 
-**New product extension (2026-11-09):** an opt-in **Discord Knowledge Loop** captures approved conversations and evidence, organizes them in Hindsight and Swarm Wiki, answers permitted questions in Discord, shares reviewed knowledge, and evaluates retrieval quality. It is a **separate, read-only-with-respect-to-execution knowledge service**; it cannot dispatch slices, change queues or Kanban tasks, run commands, edit repositories or bypass supervisor policy. See [SPEC-003](architecture/discord-knowledge-loop.md) and [RA-KNOW-000](https://github.com/raelldottin/boundroom/issues/173). A locally deployable open-source runtime is a **target requiring proof**, not a claim satisfied merely because the repository is public or GPL-licensed.
+**Withdrawn (2026-11-14):** the owner withdrew SPEC-003 and SPEC-007, the Discord and Slack knowledge loop, to keep the product focused and enterprise-ready. Their text is in git history.
 
 ### Who it serves
 
@@ -31,7 +31,6 @@ These are complementary responsibilities, not four competing task stores. The pl
 | Agent operator using Claude Code, Codex or Hermes | Invoke common status / run-next / handoff / sync skills | One familiar workflow with no harness-specific bypass of policy |
 | Security- and reliability-minded engineering team | Audit scope, authorizations, validations, source lineage and release provenance | Clear fail-closed behavior, explainable refusals and independently reproducible evidence |
 | Evaluator / researcher | Compare pinned model-and-harness variants in isolated benchmarks | Honest results, cost and failure classification without contaminating live workflows |
-| Discord knowledge contributor / maintainer | Ask what was decided, retrieve source-backed answers, and review what is shared | A permission-aware knowledge loop that does not acquire code-execution authority |
 
 **Positioning:** a supervised repository-work harness, **not** a new IDE, general agent framework, replacement for Hermes Kanban, hosted model provider, issue tracker, autonomous merge bot or mandatory orchestration daemon.
 
@@ -51,7 +50,6 @@ Use three statuses consistently: **SHIPPED** means code or a release exists; **P
 | Deterministic Swarm Wiki adapter | [RA-CP-004](architecture/swarm-wiki-compiler.md); pinned Hindsight-snapshot/ByteRover-capable compiler, synthetic build/check and provenance refusals | **PROVEN IN SYNTHETIC CI**. No verified end-to-end live project publication from a real project bank and board. |
 | Effectiveness research | [ProgramBench workflow](workflows/effectiveness-benchmark.md); pinned fixtures, isolated cleanroom and official scoring path | **EXPERIMENTAL AND PARALLEL**. Manual/owner-authorized; stalled or unavailable model endpoints are infrastructure failures, not zero quality scores. |
 | Fully open-source, egress-denied runtime | [SPEC-001 open-source gate](architecture/control-plane.md#open-source-and-self-hosted-requirement) | **NOT ACCEPTED**. All required model weights, dependency licenses, local inference routes and closed-egress recovery paths need verification. |
-| Continuous Discord Knowledge Loop | [SPEC-003](architecture/discord-knowledge-loop.md), [RA-KNOW-000](https://github.com/raelldottin/boundroom/issues/173) | **PLANNED, NOT IMPLEMENTED**. Existing memory and wiki adapters are reusable building blocks; there is no opted-in Discord capture/bot, automatic nightly/weekly knowledge pipeline or knowledge-retrieval evaluation suite. |
 
 **Important update from older documents:** both `repo-automation` and `hermes-swarm-protocol` have owner-approved `GPL-2.0-only` licenses; the plugin is released. Older statements saying these licenses are undecided or that the plugin has not been built describe past snapshots, not the current product. The ByteRover historical-data dependency still needs a license-compliant migration strategy before claiming an entirely OSI-licensed runtime.
 
@@ -64,7 +62,6 @@ Use three statuses consistently: **SHIPPED** means code or a release exists; **P
 5. **Open, portable, local-first production target.** No required proprietary hosted model, hidden telemetry, proprietary orchestration service, or Docker Desktop-only deployment. Optional commercial development tools and benchmark providers remain explicitly separate.
 6. **No invisible writes.** Human approval, clean Git state, exact ref, PR review and a verifiable audit trail are part of the product experience—not deployment details to hide.
 7. **Compatibility beats a second implementation.** Keep existing release pins, schema contracts, Hermes-native interfaces and the shared skills; do not add a second scheduler, persistence tier or agent framework without a new architectural decision.
-8. **Knowledge cannot authorize action.** The Discord Knowledge Loop may read approved evidence and post permission-checked answers, but it has no path to the supervisor, shell, GitHub write APIs, Kanban mutations or next-slice dispatch. Enforce this in process/credential permissions and negative tests, not just prompts.
 
 ## 4. Release horizons and milestone map
 
@@ -79,7 +76,6 @@ Horizon names are **planning increments**, not committed dates or promises of a 
 | **H4 — Opt-in fleet adoption and release candidate** | After H3 | Versioned, supportable adoption across opted-in repos/profiles, no cross-project leakage | Per-consumer signed-off smoke matrix, migration/recovery runbooks, license/SBOM and compatibility reports |
 | **H5 — Stable 1.0 readiness** | After H4 evidence | Documented stable interfaces and operational expectations, not merely a tag | Explicit maintainer go/no-go after SLO, security, integration, recovery and consumer acceptance results |
 | **R — Effectiveness experiments** | Parallel, explicitly authorized | Reproducible ProgramBench evidence for harness/model changes | Exact provider/model/build pins, independent scoring, budget authority and diagnosis of failures |
-| **K — Discord Knowledge Loop** | Design/synthetic work in parallel; live canary **after H2 memory/wiki evidence** | Opted-in capture → Hindsight/Wiki → Discord ask/share → retrieval evaluations; nightly/weekly knowledge operations | [SPEC-003](architecture/discord-knowledge-loop.md) security, ACL, provenance, denied-access and evaluation gates; **independent of H3 supervisor cutover** |
 
 ### H0 — Ship quality, security and documentation truth
 
@@ -166,26 +162,6 @@ Propose a stable 1.0 only when the maintainer accepts: product boundaries and su
 
 **Post-1.0 candidates (uncommitted):** richer cross-repo portfolio views, readonly fleet health summaries, structured evidence queries, extensible policy packs, optional typed domain ontology (Project/Component/Risk/EvidenceType) and improved developer ergonomics. None may create a competing task store, memory database or automatic cross-slice dispatcher.
 
-### K — Discord Knowledge Loop (new capability; planned)
-
-**Outcome:** team knowledge becomes answerable in Discord without giving a conversational bot any authority to execute repository work. The five-stage lifecycle is **Capture → Organize → Ask → Share → Evaluate**, using existing scoped Hindsight and pinned Swarm Wiki components rather than a second knowledge/task database. This feature is **not yet deployed**.
-
-**Boundary:** this is a separately deployed knowledge service and a separate privilege domain. Its bot token and process have no supervisor runner, command execution, repository write/merge, Kanban mutation, plugin run-next, or policy-editing capabilities. Incoming Discord messages and retrieved content are untrusted data. The service may only read authorized sources, maintain derived knowledge under source grants, and reply/publish in specifically permitted Discord channels; cross-channel public sharing requires a reviewed, sanitized candidate.
-
-**Planned increments and tracked slices:**
-
-| Slice | User-facing outcome | Independent acceptance |
-| --- | --- | --- |
-| [RA-KNOW-001](https://github.com/raelldottin/boundroom/issues/174) | **Capture:** opt-in Discord threads, approved docs, GitHub reviews and consented transcripts | Provenance, project/channel permissions, edits/deletes, retention and replay-safe cursors; no blanket DM/private capture |
-| [RA-KNOW-002](https://github.com/raelldottin/boundroom/issues/175) | **Organize:** authorized source evidence → Hindsight → deterministic Swarm Wiki | Source-hash and source-kind verification, immutable complete snapshot, reproducible build/check, bank isolation, revoked-source invalidation |
-| [RA-KNOW-003](https://github.com/raelldottin/boundroom/issues/176) | **Ask and Share:** read-only Discord questions, cited answers, reviewed cross-channel sharing | Requester and destination audience permissions checked before answering; abstain on unavailable/uncertain evidence; no private-data disclosure or supervisor calls |
-| [RA-KNOW-004](https://github.com/raelldottin/boundroom/issues/177) | **Nightly/Weekly:** incremental ingest and wiki build nightly; propose curation and cleanup weekly | Explicit owner-enabled schedule, budgets, idempotency, complete-or-no-publish, retention-aware cleanup, no changes to canonical evidence without approval |
-| [RA-KNOW-005](https://github.com/raelldottin/boundroom/issues/178) | **Evaluate:** retrieval-grounded answer test harness and release checks | Frozen authorized/denied questions, source citation fidelity, abstention and staleness, prompt-injection/leak tests, before/after results with denominators |
-
-**Critical dependencies:** work on contracts and hermetic fixtures can proceed without a live control plane. Any real Discord/Hindsight/Wiki canary requires H2's vetted local memory and wiki evidence, a licensed model configuration, a reviewed source visibility/retention policy, restricted Discord credentials and explicit operator authorization. It does **not** require H3's supervisor/Kanban execution cutover and cannot be used to authorize that cutover.
-
-**Exit evidence:** end-to-end synthetic pipeline produces cited answers and correct refusals; source edits/deletions are reflected; before/after retrieval results show correct and denied cases; no code path can dispatch a slice or modify a board. A later real-guild canary, schedule activation, external API access or model spend needs its own scoped approval. No Discord connection is made merely by accepting this roadmap.
-
 ## 4a. Where the work can run (2026-11-10)
 
 The agent works on the owner's machine, which is a company computer. **Of the agent harnesses and services this roadmap uses, only Claude Code is approved there.** Codex is explicitly not allowed. The agent records the work that needs something else as **deferred to an approved machine**, rather than stalling on it. Running deferred work later still needs the approvals AGENTS.md requires, such as a person's approval for spending, cutovers and schedules.
@@ -198,7 +174,6 @@ The agent works on the owner's machine, which is a company computer. **Of the ag
 | H2 Hindsight: local inference, reflect, a real project bank, egress denial | a Hindsight server, PostgreSQL, local model weights | Deferred |
 | H2 Kanban: Hermes gateway races and goal mode | Hermes | Deferred. The local board doesn't need Hermes. |
 | H3 to H5 | H2's evidence | Deferred behind H2 |
-| K: live capture, Discord or Slack answers, schedules ([SPEC-007](architecture/knowledge-loop-platforms.md)) | a Discord or Slack bot, its credentials, workspace approval, Hindsight | Deferred. The contracts and hermetic fixtures are built. The live service waits for the owner to choose the first personal workspace (SPEC-007 decision 1) and deploy it on the owner's personal machine (decision 4). Company workspaces are never connected (decision 3). |
 | [SPEC-006](architecture/agent-telemetry.md) telemetry: hermetic slices and the `file`-mode canary | Claude Code, and the Logfire Python package as a pinned optional dependency | **The `file`-mode canary ran** (2026-11-12, [RA-TEL-007 result](architecture/agent-telemetry.md#ra-tel-007-result-2026-11-12)). On the company computer telemetry stays in `file` mode (the owner's decision, 2026-11-12). |
 | [SPEC-008](architecture/plugin-settings.md) settings and Claude runner profiles, including the RA-SET-009 canary | Claude Code | **The RA-SET-009 canary ran** (2026-11-12, [result](architecture/plugin-settings.md#ra-set-009-result-2026-11-12)). The rest proceeds. |
 | SPEC-006's `otlp` canary, and RA-TEL-007's runner-spans criterion | an OTLP destination the owner runs or approves, on a machine allowed to send traces | Deferred. The company computer is `file` mode only. |
@@ -217,7 +192,6 @@ When an approved machine or hosted environment exists, record it here and run th
 | Fleet opt-in (H4) | H3 normal/failure/rollback evidence and license/egress audit | 1.0 readiness |
 | 1.0 decision (H5) | H4 proof, product support policy and owner review | Stable release authorization |
 | ProgramBench research (R) | Separate experiment approval, pinned model and budget | Does **not** block or bypass P0 |
-| Discord Knowledge Loop (K) | H2 memory/wiki acceptance for live integration; opt-in source and permission review; [SPEC-003](architecture/discord-knowledge-loop.md) | Knowledge-service rollout only; **not** H3 supervisor execution or dispatch authority |
 
 **Critical path:** local licensed inference + reflect, real source-backed Wiki publication, gateway-race-safe board write-back, combined negative-path canary, then reversible per-consumer cutover. The independently released plugin is **not** evidence that this critical path is complete.
 
@@ -240,11 +214,6 @@ These are *proposed work packages*, not created issues or an authorization to ru
 | RA-PROD-010 | P1 | Release operations / SBOM / recovery | Exact pins, notices, vulnerability disposition, backup and rollback drill | H4 |
 | RA-PROD-011 | P1 | Stable-interface policy and 1.0 go/no-go report | Accepted support, SLO, upgrade and security contracts | H5 |
 | RA-EXP-001 | Parallel | Controlled ProgramBench experiments | Scored official artifacts, provider failure classification and budget receipt | R |
-| RA-KNOW-001 | P1 (design now) | Permission-aware source capture | Consent/ACL-restricted ingest, replay, edit/delete and provenance tests | K |
-| RA-KNOW-002 | P1 (after source contract) | Hindsight and Wiki projection | Deterministic evidence lineage, complete snapshots, changed-source refusals | K |
-| RA-KNOW-003 | P1 (after verified projection) | Read-only Discord Q&A and sharing | Source/audience ACLs, evidence citations, abstention, reviewed publication, no supervisor APIs | K |
-| RA-KNOW-004 | P1 (after component gates) | Owner-opt-in nightly/weekly knowledge tasks | Idempotent retries, fail-closed partial capture, human-approved cleanup | K |
-| RA-KNOW-005 | P1 (before live rollout) | Knowledge retrieval evaluation suite | Frozen question/source fixtures, leakage and citation regression gates | K |
 | RA-PROD-012 | P3 | Optional ontology / portfolio view exploration | Separate design decision; no new canonical store or dispatch authority | Later |
 
 **Immediate recommended order:** (1) security/dependency triage, (2) documentation and operator smoke tests, while (3) local Hindsight/reflect and real Wiki proof proceed as the P0 critical path; (4) validate Kanban gateway races before integrating a real owner task. Do not “finish P0” by changing roadmap statuses alone.
@@ -265,9 +234,6 @@ Metrics must be generated from independently inspectable receipts. The targets b
 | Release integrity | Release tag, main ancestor, manifest version, archive checksum and notices | 100% verified for every published release |
 | Open-source profile | Required software/model licenses, local inference and egress witness | 100% audited before claiming full-stack OSS; no unexplained outbound inference |
 | Benchmark effectiveness | Resolved/near-resolved tasks and mean pass fraction for eligible scored instances | Publish exact denominator, pins, cost and failure categories; no invented score targets |
-| Knowledge answer quality | Grounded correctness, source citation precision, retrieval recall@k and abstention on frozen authorized questions | Record denominators and uncertainty; no claimed improvement without before/after matched evaluation |
-| Knowledge access safety | Unauthorized source retrieval, private-to-public disclosures, revoked/deleted source serving or prohibited supervisor interactions | **Zero tolerated** in permission and injection tests; any finding blocks Discord rollout |
-| Knowledge lifecycle | Nightly ingestion/snapshot completeness, freshness, failed cursor retries, weekly reviewed proposals | Every run has bounded receipts; no incomplete wiki publication and no unapproved destructive cleanup |
 
 **Reporting cadence:** maintain a short evidence table for each milestone, review blockers after every material PR and revisit priorities monthly. Record the date, source commit, test environment, owner, measured denominator, failed cases and remaining uncertainty. Prefer “not measured” over fabricated improvement percentages or arbitrary deadlines.
 
@@ -295,8 +261,6 @@ Metrics must be generated from independently inspectable receipts. The targets b
 | Plugin/harness drift | Claude/Codex/Hermes manifests and installed versions change | Pinned releases, tested install matrix, manifest version gate and compatibility table |
 | Experimental contamination | Benchmarks can consume budget, reuse dirty containers or hide provider failures | Separate manual dispatch, cleanroom receipts, exact pins and failure classification |
 | Scope inflation | A generic orchestration service expands the trusted computing base | No second coordinator, hidden daemon, alternate task database or automatic next-slice chaining |
-| Discord permission drift and prompt injection | Channel roles change; untrusted messages could leak private sources or request actions | Per-request ACL and destination checks, source invalidation, deny tests, hard credential/process separation from supervisor |
-| Scheduled knowledge ingestion changes provenance | Backfill, edits and deletes can make an old wiki answer unsafe | Owner-scoped channels, retention tombstones, complete snapshots, replay-safe cursors and no publication on partial failures |
 
 **Deliberately out of scope for this roadmap:** replacing Hermes Kanban or its dispatcher; cloud-hosted SaaS as the required runtime; a new proprietary model service; unreviewed autonomous PR merging; credentials embedded in skills; automatic consumer sync; migrating real project memory without owner authorization; and ontology-backed scheduling.
 
@@ -304,11 +268,11 @@ Metrics must be generated from independently inspectable receipts. The targets b
 
 **Approval model (2026-11-10):** the project must meet CIS and SOC 2 change-management expectations. The agent writes, tests and prepares the work. A person approves merges to `main`, release tags, consumer merges, spending, cutovers and licenses, as a separate recorded action ([AGENTS.md](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md), Agent Authority and Human Approval; [control map](compliance/controls.md)). This replaces the full delegation recorded earlier that day. The "still requiring a maintainer decision" list below is again the owner's, with the agent preparing each decision as a pull request.
 
-**Already decided:** the knowledge loop's Q&A interface is Discord, Slack or both, behind one platform interface ([SPEC-007](architecture/knowledge-loop-platforms.md), accepted 2026-11-12); the knowledge service is separate from supervisor authority and requires permission-checked publishing; supervised per-repo authority; plugin as thin common skills; released v0.2.x; GPL-2.0-only original code; five required CI checks; 88% coverage floor; manual consumer sync and merge; separate benchmark authorization; P0 before control-plane-driven fleet dispatch.
+**Already decided:** supervised per-repo authority; plugin as thin common skills; released v0.2.x; GPL-2.0-only original code; five required CI checks; 88% coverage floor; manual consumer sync and merge; separate benchmark authorization; P0 before control-plane-driven fleet dispatch.
 
-**Still requiring a maintainer decision:** which Discord guilds/channels and source categories to opt in, allowed response/publishing destinations, retention/deletion policy, bot credentials and deployment boundary, nightly/weekly activation and first live canary; local model and weight set, Hindsight inference/reflect route and hosting, byte-for-byte/semantic memory migration policy, claim renewal or TTL policy, whether Wiki CI becomes required, first real consumer for H3, initial fleet set, 1.0 support commitments, exact release tags and any change to benchmark budgets.
+**Still requiring a maintainer decision:** local model and weight set, Hindsight inference/reflect route and hosting, byte-for-byte/semantic memory migration policy, claim renewal or TTL policy, whether Wiki CI becomes required, first real consumer for H3, initial fleet set, 1.0 support commitments, exact release tags and any change to benchmark budgets.
 
-**Evidence references, not substitutes for live acceptance:** [technical roadmap](roadmap.md), [SPEC-001](architecture/control-plane.md), [RA-CP-001 inventory](architecture/control-plane-inventory.md), [Kanban projection](architecture/kanban-projection.md), [Kanban write-back and canary](architecture/kanban-cutover.md), [Hindsight live proof](architecture/memory-interface.md), [Swarm Wiki compiler pin](architecture/swarm-wiki-compiler.md), [SPEC-002 plugin trial](architecture/agent-plugin.md), [consumer distribution workflow](workflows/boundroom.md), [effectiveness benchmark](workflows/effectiveness-benchmark.md), [CodSpeed removal history](codspeed-removal.md) and [release history](https://github.com/raelldottin/boundroom/releases), [SPEC-003 Discord knowledge loop](architecture/discord-knowledge-loop.md), [RA-KNOW-000 epic](https://github.com/raelldottin/boundroom/issues/173), and the draft [agentic SDLC and GitOps standard](architecture/agentic-gitops-sdlc-standard.md) for consumer rollout ([#170](https://github.com/raelldottin/boundroom/issues/170)).
+**Evidence references, not substitutes for live acceptance:** [technical roadmap](roadmap.md), [SPEC-001](architecture/control-plane.md), [RA-CP-001 inventory](architecture/control-plane-inventory.md), [Kanban projection](architecture/kanban-projection.md), [Kanban write-back and canary](architecture/kanban-cutover.md), [Hindsight live proof](architecture/memory-interface.md), [Swarm Wiki compiler pin](architecture/swarm-wiki-compiler.md), [SPEC-002 plugin trial](architecture/agent-plugin.md), [consumer distribution workflow](workflows/boundroom.md), [effectiveness benchmark](workflows/effectiveness-benchmark.md), [CodSpeed removal history](codspeed-removal.md), [release history](https://github.com/raelldottin/boundroom/releases) and the draft [agentic SDLC and GitOps standard](architecture/agentic-gitops-sdlc-standard.md) for consumer rollout ([#170](https://github.com/raelldottin/boundroom/issues/170)).
 
 ---
 

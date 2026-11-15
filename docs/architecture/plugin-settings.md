@@ -15,7 +15,7 @@ The plugin's skills drive the synced supervisor, and the supervisor reads its se
 | Queue policy (`automation/queue/slices.json`) | 4 fields | `consecutive_autonomous_limit`, `agent_command_template` |
 | Kanban overlay | `backend`, `board` and the policy again | `"backend": "local"` |
 | Memory configuration | endpoint, credential variable, timeout, 8 budgets, project grants | `api_key_env`, `endpoint` |
-| Accepted, not yet implemented: [SPEC-006](agent-telemetry.md) telemetry and [SPEC-007](knowledge-loop-platforms.md) knowledge platforms | about 15 more | `BOUNDROOM_TELEMETRY`, `platforms` |
+| Accepted, not yet implemented: [SPEC-006](agent-telemetry.md) telemetry | several | `BOUNDROOM_TELEMETRY` |
 
 Some of these matter a great deal and are invisible today. The clearest case, for which this spec proposes [a safer default](#a-safer-default-for-the-claude-code-runner): when the runner is Claude Code, `run_agent.sh` passes `--permission-mode "${BOUNDROOM_CLAUDE_PERMISSION_MODE:-bypassPermissions}"`. Every supervised Claude Code session runs with permission checks bypassed unless the user knows to set that variable, and nothing tells them.
 
@@ -39,11 +39,11 @@ These are the same for every setting. A setting's registry entry lists which of 
 1. **Kill switches**, where a setting has one, such as SPEC-006's `--no-telemetry`. They always win.
 2. **Command-line flags.** The plugin's skills pass these, including values from Claude Code `userConfig`.
 3. **`BOUNDROOM_*` environment variables.** A legacy alias is read only when its new name is unset, as SPEC-005 decided.
-4. **The operator's files** under `~/.config/boundroom/`. SPEC-006's `telemetry.json` and SPEC-007's `knowledge.json` live there.
+4. **The operator's files** under `~/.config/boundroom/`. SPEC-006's `telemetry.json` lives there.
 5. **The repository's policy:** the queue policy, the Kanban overlay and the memory configuration.
 6. **The registry's default.**
 
-**Who may set what.** Each entry declares what the repository may do with it: `any`, `narrow-only` or `never`. `narrow-only` means the repository can lower or turn off the setting but not raise or redirect it, as SPEC-006 and SPEC-007 already require for telemetry and platforms. A repository value that breaks its rule is refused with a named reason, and both views show the refusal.
+**Who may set what.** Each entry declares what the repository may do with it: `any`, `narrow-only` or `never`. `narrow-only` means the repository can lower or turn off the setting but not raise or redirect it, as SPEC-006 already requires for telemetry. A repository value that breaks its rule is refused with a named reason, and both views show the refusal.
 
 ## Surfacing rules
 
@@ -89,7 +89,7 @@ Every setting known today. The registry is built from this table in RA-SET-001, 
 | Sync provenance (`--pin`, `--expect-remote`) | flag | security | What a consumer receives, and from where |
 | Unverified sync (`--allow-unverified-source`) | flag | security | Always a warning when set. AGENTS.md forbids agents from using it. |
 | Template re-baselining (`--force-templates`) | flag | security | It overwrites a consumer's local template changes |
-| Telemetry and knowledge platforms, once SPEC-006 and SPEC-007 land | various | security | Off, or the destination host and the enabled platforms |
+| Telemetry, once SPEC-006 lands | various | security | Off, or the destination host |
 
 ### Extensive view only
 
@@ -134,7 +134,7 @@ Warnings
   ! REPO_AUTOMATION_AGENT_RUNNER is set; use BOUNDROOM_AGENT_RUNNER
 ```
 
-**Extensive view.** Every setting, grouped by area (runner, work source, policy, sync, memory, telemetry, knowledge, internal, outside the plugin). Each row shows the id, effective value, source, default, allowed values, class and the repository rule. `--json` gives the same data for tools. `--explain <id>` shows one setting's full precedence chain: each source, whether it was set, and which won and why.
+**Extensive view.** Every setting, grouped by area (runner, work source, policy, sync, memory, telemetry, internal, outside the plugin). Each row shows the id, effective value, source, default, allowed values, class and the repository rule. `--json` gives the same data for tools. `--explain <id>` shows one setting's full precedence chain: each source, whether it was set, and which won and why.
 
 **Shared rules for both views:**
 - Read-only: no network, no writes, no lock or board access beyond what reading the overlay needs.
@@ -315,7 +315,7 @@ The canaries ran on the owner's machine with Claude Code only, capped at $5 per 
 
 - **[SPEC-002](agent-plugin.md):** a fifth skill and, in RA-SET-006, a `userConfig` block in the Claude Code manifest. Both are skills and manifests, with no hook, MCP server or background process. A plugin version bump ships with a release a person approves.
 - **[SPEC-005](boundroom-rename.md):** legacy aliases become registry entries, so removing them later is a registry change with a known blast radius.
-- **SPEC-006 and SPEC-007:** their settings join the registry when they're implemented. Their repository rules become `narrow-only` entries.
+- **SPEC-006:** its settings join the registry when they're implemented. Their repository rules become `narrow-only` entries.
 - **Performance (AGENTS.md):** the resolver replaces scattered `os.environ` and argument reads with one lookup per setting. It adds no file or network work to a slice beyond the files the supervisor already reads. The views run only on request.
 
 ## Delivery slices
@@ -330,7 +330,7 @@ Each slice is one pull request by the agent, approved by a person.
 | RA-SET-004 | The generated reference page and its CI check | PS-9 |
 | RA-SET-005 | The `boundroom-settings` skill, and quick-view warnings in `boundroom-status`, as text only | PS-4. The skill contains no code. |
 | RA-SET-006 | The `userConfig` block for `claude_profile`, after the owner decides below | PS-4. `claude plugin validate` passes. |
-| RA-SET-007 | SPEC-006 and SPEC-007 settings, as each lands | PS-1 to PS-9 for the new entries |
+| RA-SET-007 | SPEC-006 settings, as each lands | PS-1 to PS-9 for the new entries |
 | RA-SET-008 | The Claude runner profiles, `parent` resolution, the ceiling, the per-slice settings file, the `runner_profile` record and the nested-run guard, with `unbounded` still the default | PS-11 to PS-21, using a fake process tree and a fake `claude` that records its arguments and settings file |
 | RA-SET-009 | Canary: `bounded`, `edits`, and `parent` under Manual, `acceptEdits` and `bypassPermissions` parents; plus `auto` in `-p`. Claude Code only, on a disposable local board. | Each run reaches review or is refused exactly as specified. Denied-but-needed calls are recorded and the allowlist rules are adjusted. Recorded in this spec. |
 | RA-SET-010 | Switch the default to `parent`, with the default ceiling, in `v0.4.0`, with release notes | PS-10 is updated to the new default. The quick view shows the chain. |

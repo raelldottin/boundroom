@@ -1,7 +1,0 @@
-{
-  "v": 10,
-  "session_id": "synthetic0session0001",
-  "user": {"id": "1100000000000000900", "username": "knowledge-bot", "discriminator": "0", "bot": true},
-  "application": {"id": "1100000000000000800", "flags": 0},
-  "guilds": [{"id": "1100000000000000001", "unavailable": true}]
-}

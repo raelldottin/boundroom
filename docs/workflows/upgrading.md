@@ -69,7 +69,6 @@ It exits 0 when everything matches and 1 when something needs attention. The las
   - `Tools/boundroom-sync.sh --status`, a consumer's pin and drift;
   - `handoff_summary.py`, a handoff's review summary.
   `run_next.py` also records the slice's base and head commits and can append reports to a `--report-file`.
-- **The knowledge loop's contracts** (SPEC-007) ship as code and hermetic tests only. No Discord or Slack service is deployed, and none runs unless the owner deploys one.
 
 To roll back, sync the consumer to its previous pin, as above. Moving the plugin is a marketplace-source change to the new tag, with no reinstall.
 
