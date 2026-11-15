@@ -43,7 +43,7 @@ It exits 0 when everything matches and 1 when something needs attention. The las
 
 ## Moving to a new release
 
-1. **Read the release notes** for every tag between your pin and the target. A minor release (`0.x.0`) may rename or remove something; a patch release doesn't.
+1. **Read the release notes** for every tag between your pin and the target. A minor release (`0.x.0`) may rename or remove something; a patch release doesn't. The [compatibility and deprecation policy](../reference/compatibility.md) says exactly what each may change, and lists what is deprecated now.
 2. **Check out the tag** in a clean Boundroom checkout and take its full commit SHA.
 3. **Check, then sync, through a pull request** in the consumer, with the plugin's `boundroom-sync` skill or the same commands by hand. `--check` first; `--sync` only after a person says go; the lock's `commit` and `imported_at` updated in the same commit, and nothing else in the lock.
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.
@@ -62,7 +62,7 @@ Until step 2, the old `base.md` and the new rules file both reach the runner, wh
 
 #### Old names stop working in v0.5.0
 
-SPEC-009 RA-ENT-002 retires the names from before the 0.3.0 rename and the ones Owlory used. They keep working through the 0.4.x releases, and v0.5.0 stops reading or setting them.
+SPEC-009 RA-ENT-002 retires the names from before the 0.3.0 rename and the ones Owlory used. They keep working through the 0.4.x releases, and v0.5.0 stops reading or setting them, as the [compatibility policy](../reference/compatibility.md#how-something-is-retired) allows once a 0.4.x release has carried the warnings.
 
 - **Variables you set.** `run_next.py` and `automation/supervisor/run_agent.sh` print a warning for each old name in the environment, naming its replacement. Rename them in your shell profile, CI and launchers. Run `python3 automation/supervisor/settings_view.py` to see any that are still in effect.
 - **Variables the supervisor sets for its runner.** It still exports the old `REPO_AUTOMATION_SUPERVISOR_*` and `OWLORY_SUPERVISOR_*` names until v0.5.0. A script a runner calls should read `BOUNDROOM_SUPERVISOR_*`.

@@ -43,6 +43,7 @@ nav:
   - Agent Plugin Specification: architecture/agent-plugin.md
   - Rename to Boundroom: architecture/boundroom-rename.md
   - Settings reference: reference/settings.md
+  - Compatibility and deprecation: reference/compatibility.md
   - Traceable Agent Runs with Logfire: architecture/agent-telemetry.md
   - Plugin Settings You Can See: architecture/plugin-settings.md
   - Enterprise Readiness (proposed): architecture/enterprise-readiness.md

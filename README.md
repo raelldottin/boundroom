@@ -137,6 +137,10 @@ hermes plugins install raelldottin/boundroom#plugins/boundroom --ref <commit-sha
 hermes plugins enable boundroom
 ```
 
+## Versions and compatibility
+
+A patch release fixes things and removes nothing. A minor release may change a default or remove something, but only after an earlier release warned about it. The [compatibility and deprecation policy](docs/reference/compatibility.md) says what each kind of release may change in settings, flags, exit codes, schemas, the decision report, the sync and telemetry, and lists what is deprecated now. The [upgrade guide](docs/workflows/upgrading.md) says how to move between releases and roll back.
+
 ## Status
 
 This repository is the canonical reusable automation distribution extracted from Owlory. Its existing supervisor harness is present. The P0 Kanban / external-memory / wiki integration is specified but not yet implemented; consumer smoke proof and other supervisor roadmap work follow the P0 acceptance gate. Benchmark/effectiveness work is exempt from that ordering and continues in parallel under explicit owner authorization. Treat project-specific examples as templates, not production configuration.
