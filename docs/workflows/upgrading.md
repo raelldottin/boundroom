@@ -56,7 +56,7 @@ sha256sum -c boundroom-<tag>.tar.gz.sha256
 
 ## Moving to a new release
 
-1. **Read the release notes** for every tag between your pin and the target. A minor release (`0.x.0`) may rename or remove something; a patch release doesn't. The [compatibility and deprecation policy](../reference/compatibility.md) says exactly what each may change, and lists what is deprecated now.
+1. **Read the release notes** for every tag between your pin and the target. Each release's notes are its section of the [changelog](https://github.com/raelldottin/boundroom/blob/main/CHANGELOG.md). A minor release (`0.x.0`) may rename or remove something; a patch release doesn't. The [compatibility and deprecation policy](../reference/compatibility.md) says exactly what each may change, and lists what is deprecated now.
 2. **Check out the tag** in a clean Boundroom checkout and take its full commit SHA. To confirm the release came from this repository's release workflow, [verify it](#verifying-a-release) first.
 3. **Check, then sync, through a pull request** in the consumer, with the plugin's `boundroom-sync` skill or the same commands by hand. `--check` first; `--sync` only after a person says go; the lock's `commit` and `imported_at` updated in the same commit, and nothing else in the lock.
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.

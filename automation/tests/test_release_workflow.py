@@ -72,6 +72,24 @@ class ReleaseAttestationTests(unittest.TestCase):
     def test_nothing_is_published_before_it_is_attested(self) -> None:
         self.assertIn("needs: [build, attest]", self.jobs["release"])
 
+    def test_a_tag_without_a_changelog_section_is_refused_first(self) -> None:
+        self.assertIn('python3 Tools/changelog_section.py "$TAG" > /dev/null', self.jobs["semver"])
+
+    def test_the_release_notes_are_the_changelog_section(self) -> None:
+        build = self.jobs["build"]
+        self.assertIn('python3 Tools/changelog_section.py "$TAG" > notes/notes.md', build)
+        self.assertIn("name: release-notes", build)
+        release = self.jobs["release"]
+        self.assertIn("name: release-notes", release)
+        self.assertIn("cat notes/notes.md", release)
+        self.assertIn('--notes-file "$RUNNER_TEMP/release-notes.md"', release)
+        self.assertNotIn("--notes ", release)
+
+    def test_the_notes_are_not_an_attested_release_asset(self) -> None:
+        """Every file in dist/ is published and the attest job reads only the release artifact."""
+        self.assertNotIn("dist/notes", self.jobs["build"])
+        self.assertNotIn("release-notes", self.jobs["attest"])
+
     def test_the_release_notes_say_how_to_verify(self) -> None:
         self.assertIn("gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY", self.jobs["release"])
 

@@ -41,6 +41,11 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: python3 Tools/check_plugin_version.py "$TAG"
+      # SPEC-009 RA-ENT-006: the release notes are the tag's CHANGELOG.md section.
+      - name: Require a changelog section for the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 Tools/changelog_section.py "$TAG" > /dev/null
 
   gate:
     name: make reusable-check
@@ -153,6 +158,21 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+      # Kept apart from dist/, whose every file becomes a release asset and is attested.
+      - name: Write release notes from the changelog
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p notes
+          python3 Tools/changelog_section.py "$TAG" > notes/notes.md
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-notes
+          path: notes/
+          if-no-files-found: error
+
   # SPEC-009 RA-ENT-003: signed SLSA build provenance for the archive, verifiable with
   # `gh attestation verify`. A job of its own, so the OIDC token that signs it never reaches
   # a job that runs the gate or the dev dependencies. It only downloads what build staged.
@@ -199,6 +219,12 @@ jobs:
           name: release
           path: dist
 
+      - name: Download release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-notes
+          path: notes
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -208,9 +234,18 @@ jobs:
         run: |
           flags=()
           [[ "$PRERELEASE" == "true" ]] && flags+=(--prerelease)
+          {
+            cat notes/notes.md
+            echo
+            echo "---"
+            echo
+            echo "Manifest-owned tree of $GITHUB_REPOSITORY at commit $COMMIT. Consumers sync from this tag; see docs/workflows/boundroom.md#releases."
+            echo
+            echo "Verify the archive: \`gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml\`"
+          } > "$RUNNER_TEMP/release-notes.md"
           gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "$TAG" \
-            --notes "Manifest-owned tree of raelldottin/boundroom at commit $COMMIT. Consumers sync from this tag; see docs/workflows/boundroom.md#releases. Verify the archive with: gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
             "${flags[@]}"

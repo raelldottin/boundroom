@@ -139,7 +139,7 @@ hermes plugins enable boundroom
 
 ## Versions and compatibility
 
-A patch release fixes things and removes nothing. A minor release may change a default or remove something, but only after an earlier release warned about it. The [compatibility and deprecation policy](docs/reference/compatibility.md) says what each kind of release may change in settings, flags, exit codes, schemas, the decision report, the sync and telemetry, and lists what is deprecated now. The [upgrade guide](docs/workflows/upgrading.md) says how to move between releases and roll back.
+A patch release fixes things and removes nothing. A minor release may change a default or remove something, but only after an earlier release warned about it. The [compatibility and deprecation policy](docs/reference/compatibility.md) says what each kind of release may change in settings, flags, exit codes, schemas, the decision report, the sync and telemetry, and lists what is deprecated now. The [changelog](CHANGELOG.md) says what changed in each release, and the [upgrade guide](docs/workflows/upgrading.md) says how to move between releases and roll back.
 
 ## Status
 
