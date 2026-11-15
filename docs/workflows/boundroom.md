@@ -91,7 +91,7 @@ The manifest does not name a destination. It says what is reusable, never where 
 
 To move a consumer to a new release, check which versions you have, or roll back, see [Upgrading, version skew and rolling back](upgrading.md).
 
-Consumers sync from a release tag, not from whatever `main` happens to be. A release is a semver tag `vMAJOR.MINOR.PATCH` (optionally `-prerelease`) on a commit that is already on `main`. `.github/workflows/release.yml` runs on the tag push and publishes `Boundroom-<tag>.tar.gz` with a `.sha256` beside it.
+Consumers sync from a release tag, not from whatever `main` happens to be. A release is a semver tag `vMAJOR.MINOR.PATCH` (optionally `-prerelease`) on a commit that is already on `main`. `.github/workflows/release.yml` runs on the tag push and publishes `boundroom-<tag>.tar.gz` with a `.sha256` beside it, and attests the archive's build provenance.
 
 A maintainer tags, on `main`, after the change has merged through the ruleset. Nothing else creates tags:
 
@@ -103,19 +103,21 @@ git push origin v0.1.0
 
 The workflow refuses a tag that is not semver, a tag that any plugin manifest under `plugins/boundroom/` does not declare (`Tools/check_plugin_version.py`: a tag `v0.2.0` needs `"version": "0.2.0"` in all three; see [SPEC-002](../architecture/agent-plugin.md#versions-and-releases)), and a tag whose commit is not reachable from `origin/main`. It reruns `make reusable-check` on Python 3.11 and 3.12 exactly as `lint.yml` does, and then stages the archive by running this sync tool's own `--sync` with every protection on (`--pin` set to the tagged commit, `--expect-remote`, a clean source, the quality gate and the runtime check) into an empty directory. The archive is therefore the manifest's distributed tree, byte for byte what a consumer's `--sync` at that commit writes into an empty target. Nothing is listed twice.
 
-What the version means to a consumer:
+Before the archive is published, a separate job signs SLSA build provenance for it with GitHub artifact attestations (`actions/attest`). Only that job can mint the signing token, and it runs no repository code.
 
-- **MAJOR**: a consumer has to act. A manifest destination was removed or renamed, a runtime dependency range changed, a sync-tool flag or protection changed, or a schema change breaks existing queue or handoff documents.
-- **MINOR**: new reusable content or capability that an existing consumer can take with a plain `--sync`.
-- **PATCH**: fixes only, with no change to what a consumer must configure.
+What the version means to a consumer: before 1.0, a patch release fixes things and removes nothing, and a minor release may change a default or remove what an earlier release deprecated with a warning. The [compatibility and deprecation policy](../reference/compatibility.md) gives the rules for each surface.
 
-To verify a release, check the archive against its checksum, then confirm that the tag's commit is the one you pin:
+To verify a release, check that GitHub's release workflow built the archive from this repository, check it against its checksum, then confirm that the tag's commit is the one you pin:
 
 ```bash
-gh release download v0.1.0 -R raelldottin/boundroom
-sha256sum -c repo-automation-v0.1.0.tar.gz.sha256
-git -C <canonical-checkout> rev-parse 'v0.1.0^{commit}'
+gh release download <tag> -R raelldottin/boundroom
+gh attestation verify boundroom-<tag>.tar.gz --repo raelldottin/boundroom \
+  --signer-workflow raelldottin/boundroom/.github/workflows/release.yml
+sha256sum -c boundroom-<tag>.tar.gz.sha256
+git -C <canonical-checkout> rev-parse '<tag>^{commit}'
 ```
+
+Releases up to v0.4.0 have no attestation. For those, the checksum and the tag's commit are the check.
 
 A consumer still imports through `Tools/boundroom-sync.sh` from a canonical checkout. It checks out the tag and passes that commit as `--pin`, which is what goes in the consumer's lock: `automation/boundroom.lock`, or `automation/repo-automation.lock` in a consumer that adopted Boundroom before 0.3.0 and hasn't renamed it. The archive is for inspecting and diffing a release; the sync tool's protections still apply to the import.
 

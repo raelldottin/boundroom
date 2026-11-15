@@ -2,7 +2,8 @@ name: Release
 
 # A maintainer pushes a semver tag (vMAJOR.MINOR.PATCH) on a commit already on main.
 # This workflow refuses anything else, reruns the canonical gate, stages exactly the
-# manifest's distributed tree with the consumer sync tool itself, and publishes it.
+# manifest's distributed tree with the consumer sync tool itself, attests the archive's
+# build provenance, and publishes it.
 
 on:
   push:
@@ -152,9 +153,41 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # SPEC-009 RA-ENT-003: signed SLSA build provenance for the archive, verifiable with
+  # `gh attestation verify`. A job of its own, so the OIDC token that signs it never reaches
+  # a job that runs the gate or the dev dependencies. It only downloads what build staged.
+  attest:
+    name: Attest the archive
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release
+          path: dist
+
+      - name: Check the archive against its checksum
+        working-directory: dist
+        env:
+          TAG: ${{ github.ref_name }}
+        run: sha256sum --check --strict "boundroom-$TAG.tar.gz.sha256"
+
+      # actions/attest is what attest-build-provenance wraps since v4, and what its README
+      # recommends. With only subject-path it writes SLSA build provenance.
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/boundroom-${{ github.ref_name }}.tar.gz
+
   release:
     name: Publish GitHub release
-    needs: build
+    needs: [build, attest]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -179,5 +212,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "$TAG" \
-            --notes "Manifest-owned tree of raelldottin/boundroom at commit $COMMIT. Consumers sync from this tag; see docs/workflows/boundroom.md#releases." \
+            --notes "Manifest-owned tree of raelldottin/boundroom at commit $COMMIT. Consumers sync from this tag; see docs/workflows/boundroom.md#releases. Verify the archive with: gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml" \
             "${flags[@]}"
