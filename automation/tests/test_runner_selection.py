@@ -57,6 +57,7 @@ class RunnerSelectionTests(unittest.TestCase):
         tree.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         env = {key: value for key, value in os.environ.items() if not key.startswith(("BOUNDROOM_", "REPO_AUTOMATION_"))}
+        env.pop("OWLORY_CODEX_BIN", None)
         env.update(
             {
                 "FAKE_PS_TREE": str(tree) if ancestry else "",
@@ -66,7 +67,6 @@ class RunnerSelectionTests(unittest.TestCase):
                 **extra_env,
             }
         )
-        env.pop("OWLORY_CODEX_BIN", None)
         if runner is not None:
             env["BOUNDROOM_AGENT_RUNNER"] = runner
         return subprocess.run(
@@ -170,6 +170,29 @@ class RunnerSelectionTests(unittest.TestCase):
     def test_the_new_runner_name_wins_over_the_legacy_one(self) -> None:
         result = self.run_wrapper([SHELL, LOGIN], runner="claude", REPO_AUTOMATION_AGENT_RUNNER="hermes")
         self.assertSelected("claude", result)
+
+    def test_a_legacy_name_warns_that_it_stops_working(self) -> None:
+        """SPEC-009 RA-ENT-002: warn through v0.4.x, stop reading the name in v0.5.0."""
+        result = self.run_wrapper([SHELL, LOGIN], REPO_AUTOMATION_AGENT_RUNNER="hermes")
+        self.assertIn(
+            "warning: REPO_AUTOMATION_AGENT_RUNNER is deprecated and stops working in v0.5.0; use BOUNDROOM_AGENT_RUNNER.",
+            result.stderr,
+        )
+
+    def test_a_shadowed_legacy_name_warns_that_it_is_ignored(self) -> None:
+        result = self.run_wrapper([SHELL, LOGIN], runner="claude", REPO_AUTOMATION_AGENT_RUNNER="hermes")
+        self.assertIn("BOUNDROOM_AGENT_RUNNER is also set, so REPO_AUTOMATION_AGENT_RUNNER is ignored.", result.stderr)
+
+    def test_the_old_codex_name_warns(self) -> None:
+        result = self.run_wrapper([SHELL, LOGIN], runner="claude", OWLORY_CODEX_BIN="codex")
+        self.assertIn(
+            "warning: OWLORY_CODEX_BIN is deprecated and stops working in v0.5.0; use BOUNDROOM_CODEX_BIN;",
+            result.stderr,
+        )
+
+    def test_current_names_alone_raise_no_warning(self) -> None:
+        result = self.run_wrapper([SHELL, LOGIN], runner="claude")
+        self.assertNotIn("deprecated", result.stderr)
 
     def test_an_unsupported_runner_is_still_a_usage_error(self) -> None:
         result = self.run_wrapper([SHELL, CLAUDE], runner="gemini")

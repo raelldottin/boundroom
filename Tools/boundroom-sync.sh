@@ -22,33 +22,37 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
 
+# Live state and repository tooling that are never shipped, whatever the manifest says.
 FORBIDDEN_SOURCE_PREFIXES = (
     ".githooks/",
-    "SecondBrain/",
     "automation/handoffs/",
     "automation/proofs/",
     "automation/queue/",
     "automation/smoke/",
-    "docs/product/",
-    "docs/runtime/",
-    "localization/",
-    "owlory_xcode/",
 )
 
 FORBIDDEN_SOURCE_FILES = {
     ".githooks/pre-push",
     "Makefile",
-    "Tools/bump-version.sh",
-    "Tools/generate-build-info.sh",
-    "Tools/release-preflight.sh",
-    "Tools/set-build-number.sh",
-    "Tools/verify-build-provenance.sh",
+    "automation/runner-rules.md",
 }
 
-# Destinations a consumer owns outright. The canonical repository supplies both the file
-# list and this tool, so without a destination check an upstream entry could aim reusable
-# content at the consumer's hook, Makefile or live queue - and delete_stale could remove
-# them. Unlike the source check there is no manifest opt-out: these are never importable.
+# The only places an import may write (SPEC-009 RA-ENT-002). Everything else in a consumer,
+# such as its application code, build tooling and product docs, is out of reach without
+# naming any consumer. This replaced a deny list of one consumer's paths.
+ALLOWED_DESTINATION_PREFIXES = ("automation/", "docs/workflows/")
+ALLOWED_DESTINATION_FILES = {"THIRD-PARTY-NOTICES.md", "Tools/boundroom-sync.sh", "Tools/repo-automation-sync.sh"}
+
+# A manifest key that used to let an entry ship a source on the list above. It no longer
+# does: an entry that sets it is checked like any other, with a warning, and from v0.5.0 the
+# key is refused.
+DEPRECATED_ENTRY_KEYS = {"allow_owlory_specific": "v0.5.0"}
+
+# Destinations a consumer owns outright, inside or outside the allowed places. The canonical
+# repository supplies both the file list and this tool, so without a destination check an
+# upstream entry could aim reusable content at the consumer's hook, Makefile or live queue -
+# and delete_stale could remove them. There is no manifest opt-out: these are never importable.
+# The runner rules are the consumer's own (SPEC-009 RA-ENT-001).
 #
 # The lock file is here because the consumer's Makefile reads it and passes the values to
 # this tool: whoever writes the lock chooses what a consumer's `make` executes. It is a
@@ -63,6 +67,8 @@ FORBIDDEN_DESTINATION_FILES = FORBIDDEN_SOURCE_FILES | {"automation/boundroom.lo
 # is the same file as the one being protected, and an exact-match check would wave it past.
 FOLDED_DESTINATION_FILES = {path.casefold() for path in FORBIDDEN_DESTINATION_FILES}
 FOLDED_DESTINATION_PREFIXES = tuple(prefix.casefold() for prefix in FORBIDDEN_DESTINATION_PREFIXES)
+FOLDED_ALLOWED_FILES = {path.casefold() for path in ALLOWED_DESTINATION_FILES}
+FOLDED_ALLOWED_PREFIXES = tuple(prefix.casefold() for prefix in ALLOWED_DESTINATION_PREFIXES)
 
 SKIP_NAMES = {"__pycache__", ".DS_Store"}
 
@@ -75,7 +81,6 @@ class Entry:
     preserve_executable: bool
     delete_stale: bool
     template: bool
-    allow_owlory_specific: bool
 
 
 @dataclass(frozen=True)
@@ -138,15 +143,29 @@ def parse_entry(raw: object) -> Entry:
     if kind not in {"file", "directory"}:
         raise SyncError(f"manifest entry {source!r} has unsupported kind {kind!r}")
 
-    allow_owlory_specific = bool(raw.get("allow_owlory_specific", False))
-    if not allow_owlory_specific:
-        if source in FORBIDDEN_SOURCE_FILES:
-            raise SyncError(f"forbidden Owlory-specific source requires explicit approval: {source}")
-        for prefix in FORBIDDEN_SOURCE_PREFIXES:
-            if source == prefix.rstrip("/") or source.startswith(prefix):
-                raise SyncError(f"forbidden Owlory-specific source requires explicit approval: {source}")
+    for key, removal in sorted(DEPRECATED_ENTRY_KEYS.items()):
+        if key in raw:
+            print(
+                f"boundroom-sync: warning: manifest entry {source!r} sets {key}, which is deprecated and "
+                f"ignored; it will be refused from {removal}. Remove it from the manifest.",
+                file=sys.stderr,
+            )
+
+    if source in FORBIDDEN_SOURCE_FILES:
+        raise SyncError(f"forbidden source is never shipped: {source}")
+    for prefix in FORBIDDEN_SOURCE_PREFIXES:
+        if source == prefix.rstrip("/") or source.startswith(prefix):
+            raise SyncError(f"forbidden source is never shipped: {source}")
 
     folded_destination = destination.casefold()
+    allowed = folded_destination in FOLDED_ALLOWED_FILES or any(
+        folded_destination.startswith(prefix) for prefix in FOLDED_ALLOWED_PREFIXES
+    )
+    if not allowed:
+        raise SyncError(
+            f"forbidden import destination is outside the places an import may write: {destination} "
+            f"(allowed: {', '.join(ALLOWED_DESTINATION_PREFIXES + tuple(sorted(ALLOWED_DESTINATION_FILES)))})"
+        )
     if folded_destination in FOLDED_DESTINATION_FILES:
         raise SyncError(f"forbidden import destination is owned by the consumer: {destination}")
     for prefix in FOLDED_DESTINATION_PREFIXES:
@@ -170,7 +189,6 @@ def parse_entry(raw: object) -> Entry:
         preserve_executable=bool_field(raw, "preserve_executable"),
         delete_stale=bool_field(raw, "delete_stale"),
         template=bool_field(raw, "template"),
-        allow_owlory_specific=allow_owlory_specific,
     )
 
 
@@ -600,7 +618,7 @@ def verify_source_provenance(source_root: Path, pin: str | None, expect_remote: 
     if not pin:
         raise SyncError(
             "refusing to import without --pin: the canonical source commit must be explicit. "
-            "Pass --pin <full-sha> (Owlory reads it from automation/repo-automation.lock), "
+            "Pass --pin <full-sha> (a consumer keeps it in automation/boundroom.lock), "
             "or --allow-unverified-source for local development only."
         )
 

@@ -60,6 +60,42 @@ The shipped `automation/prompts/base.md` no longer carries Owlory's layer rules 
 
 Until step 2, the old `base.md` and the new rules file both reach the runner, which repeats the rules but doesn't conflict. To roll back, restore the previous `base.md`; the rules file can stay.
 
+#### Old names stop working in v0.5.0
+
+SPEC-009 RA-ENT-002 retires the names from before the 0.3.0 rename and the ones Owlory used. They keep working through the 0.4.x releases, and v0.5.0 stops reading or setting them.
+
+- **Variables you set.** `run_next.py` and `automation/supervisor/run_agent.sh` print a warning for each old name in the environment, naming its replacement. Rename them in your shell profile, CI and launchers. Run `python3 automation/supervisor/settings_view.py` to see any that are still in effect.
+- **Variables the supervisor sets for its runner.** It still exports the old `REPO_AUTOMATION_SUPERVISOR_*` and `OWLORY_SUPERVISOR_*` names until v0.5.0. A script a runner calls should read `BOUNDROOM_SUPERVISOR_*`.
+
+| Old name | Replacement | Until v0.5.0 |
+| --- | --- | --- |
+| `REPO_AUTOMATION_AGENT_RUNNER` | `BOUNDROOM_AGENT_RUNNER` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_CLAUDE_PERMISSION_MODE` | `BOUNDROOM_CLAUDE_PERMISSION_MODE` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_CODEX_BIN` | `BOUNDROOM_CODEX_BIN` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `OWLORY_CODEX_BIN` | `BOUNDROOM_CODEX_BIN` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_CLAUDE_BIN` | `BOUNDROOM_CLAUDE_BIN` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_HERMES_BIN` | `BOUNDROOM_HERMES_BIN` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_HERMES_TRANSPORT` | `BOUNDROOM_HERMES_TRANSPORT` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_HERMES_MAX_TURNS` | `BOUNDROOM_HERMES_MAX_TURNS` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_HERMES_PYTHON` | `BOUNDROOM_HERMES_PYTHON` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_HERMES_USAGE_DIR` | `BOUNDROOM_HERMES_USAGE_DIR` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_HERMES_SANDBOX_IMAGE` | `BOUNDROOM_HERMES_SANDBOX_IMAGE` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+| `REPO_AUTOMATION_SUPERVISOR_CONTEXT_FILE` | `BOUNDROOM_SUPERVISOR_CONTEXT_FILE` | Set by the supervisor for its runner; read the new name instead. |
+| `OWLORY_SUPERVISOR_CONTEXT_FILE` | `BOUNDROOM_SUPERVISOR_CONTEXT_FILE` | Set by the supervisor for its runner; read the new name instead. |
+| `REPO_AUTOMATION_SUPERVISOR_HANDOFF_FILE` | `BOUNDROOM_SUPERVISOR_HANDOFF_FILE` | Set by the supervisor for its runner; read the new name instead. |
+| `OWLORY_SUPERVISOR_HANDOFF_FILE` | `BOUNDROOM_SUPERVISOR_HANDOFF_FILE` | Set by the supervisor for its runner; read the new name instead. |
+| `REPO_AUTOMATION_SUPERVISOR_SLICE_ID` | `BOUNDROOM_SUPERVISOR_SLICE_ID` | Set by the supervisor for its runner; read the new name instead. |
+| `OWLORY_SUPERVISOR_SLICE_ID` | `BOUNDROOM_SUPERVISOR_SLICE_ID` | Set by the supervisor for its runner; read the new name instead. |
+| `REPO_AUTOMATION_SANDBOX_PROBE_COMMAND` | `BOUNDROOM_SANDBOX_PROBE_COMMAND` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
+
+#### The sync writes only where Boundroom lives
+
+`Tools/boundroom-sync.sh` used to refuse a list of Owlory's own paths, such as `owlory_xcode/` and `localization/`, and let a manifest entry opt out with `allow_owlory_specific`. Now:
+
+- **An import writes only under `automation/` and `docs/workflows/`, and to `THIRD-PARTY-NOTICES.md`, `Tools/boundroom-sync.sh` and `Tools/repo-automation-sync.sh`.** Any other destination is refused, which protects every consumer's own code without naming it. The shipped manifest writes nowhere else.
+- **The queue, handoffs, proofs, smoke results, the lock and `automation/runner-rules.md` stay refused** inside those places, as before.
+- **`allow_owlory_specific` no longer opts out of anything.** An entry that sets it is checked like any other, with a warning, and v0.5.0 refuses the key.
+
 ### From 0.3.x to 0.4.0 (a safer Claude runner by default)
 
 0.4.0 changes one default and adds opt-in features. Nothing a consumer depends on is renamed or removed.
