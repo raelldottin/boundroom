@@ -66,7 +66,7 @@ The documentation site deploys to GitHub Pages only from `.github/workflows/publ
 
 ### Releases
 
-A release is a `vMAJOR.MINOR.PATCH` tag (optionally `-prerelease`) on a commit already on `main`, built and published by `.github/workflows/release.yml`, which reruns the required gate and publishes the archive and its `.sha256`. A person creates the tag, or approves a named tag on a named commit, after `python3 Tools/check_plugin_version.py <tag>` passes and the commit's required checks are green. The agent may push only a tag a person approved that way.
+A release is a `vMAJOR.MINOR.PATCH` tag (optionally `-prerelease`) on a commit already on `main`, built and published by `.github/workflows/release.yml`, which reruns the required gate and publishes the archive and its `.sha256`. A person creates the tag, or approves a named tag on a named commit, after `python3 Tools/check_plugin_version.py <tag>` and `python3 Tools/changelog_section.py <tag>` pass and the commit's required checks are green. The agent may push only a tag a person approved that way.
 
 Agents MUST NOT hand-build, upload, or edit a release asset, and MUST NOT move or delete an existing release tag. Until `release.yml` exists on `main`, no release may be published.
 
