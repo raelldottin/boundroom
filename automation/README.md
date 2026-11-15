@@ -36,7 +36,8 @@ These files are part of Boundroom, which is under the GNU General Public License
 
 Each fresh run starts from a tracked three-part prompt package:
 
-- `automation/prompts/base.md`: the harness contract, ownership rules, validation bar, stop conditions, and anti-wandering guardrails
+- `automation/prompts/base.md`: the generic harness contract, validation bar, stop conditions, and anti-wandering guardrails
+- `automation/runner-rules.md` (optional, owned by the repository, never synced): the repository's own layering and ownership rules, added to every runner prompt
 - `automation/prompts/slice.md`: the current slice brief with injected queue metadata, allowed paths, diff budget, adjacent queued slices, previous handoff summary, and handoff starter shape
 - `automation/prompts/review.md`: the manual review prompt for inspecting why autonomous chaining stopped and what cleanup or approval is needed next
 

@@ -513,13 +513,13 @@ The consumer-side flow:
    `test_consumer_prompt_override_survives_resync` and
    `test_consumer_added_prompt_file_survives_resync` cover both cases.
 
-3. **Owlory updates to template files don't auto-propagate.** Because the
-   sync skips existing template files, an upstream Owlory improvement to
+3. **Upstream updates to template files don't auto-propagate.** Because the
+   sync skips existing template files, an upstream improvement to
    `base.md` or `slice.md` does not reach a consumer who already has those
    files. Non-template entries (the supervisor, context builder, schemas,
    harness test, docs) continue to be authoritative on every sync.
 
-   To deliberately re-baseline template files to the current Owlory
+   To deliberately re-baseline template files to the current upstream
    content, run:
 
    ```bash
@@ -534,6 +534,25 @@ The consumer-side flow:
    asserted by `test_force_templates_overwrites_consumer_override` and
    `test_force_templates_preserves_consumer_added_files` in
    `automation/tests/test_boundroom_sync.py`.
+
+### Repository runner rules
+
+The shipped `base.md` is generic: it names no consumer and no consumer's
+paths. A repository writes its own layering and ownership rules in
+`automation/runner-rules.md`. The supervisor adds that file's text to every
+runner prompt, under a "Repository Rules" heading between `base.md` and the
+slice brief, verbatim and without placeholder substitution.
+
+No manifest entry ships that path, so a sync never writes, overwrites or
+deletes it, with or without `--force-templates`. `test_runner_rules.py`
+checks that, and fails if a shipped prompt names a consumer.
+
+The file is optional. The supervisor refuses to start the runner, with a
+configuration error, when the file is a symlink or a directory, isn't UTF-8,
+or is larger than 32 KiB. Commit it like any other change: an uncommitted
+rules file makes the tree dirty outside the slice's scope. The rules never
+widen `allowed_paths`, the required validations, the diff budget or the stop
+conditions, and the prompt says so.
 
 ### What the smoke test does not prove
 

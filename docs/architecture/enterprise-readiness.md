@@ -121,6 +121,8 @@ Each slice is one pull request by the agent, approved by a person, with tests wh
 | RA-ENT-014 | 4 | *Owner gate.* Decide whether to publish a PyPI package or a container image. If yes: trusted publishing with attestations, smoke tests before publishing, and the sync model kept for consumers that want it. | Decided by the owner. |
 | RA-ENT-015 | 5 | *Owner gate.* The owner decides the license. Until then, record license risk for dependencies and models, as AGENTS.md already asks. | Decided by the owner. |
 
+**Progress.** RA-ENT-001 is delivered: the shipped prompts are generic, and a repository's own rules come from `automation/runner-rules.md` ([workflow guide](../workflows/boundroom.md#repository-runner-rules)).
+
 **Order.** RA-ENT-001 and RA-ENT-002 come first, because they change what every consumer's runner is told. RA-ENT-003 to RA-ENT-008 come next and can run in parallel. RA-ENT-009 is in progress. RA-ENT-014 and RA-ENT-015 wait for the owner, and nothing else depends on them.
 
 ## What Boundroom won't copy

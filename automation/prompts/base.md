@@ -1,6 +1,6 @@
-# Owlory Supervised Slice Run
+# Boundroom Supervised Slice Run
 
-You are running one fresh slice under the Owlory automation harness.
+You are running one fresh slice under the Boundroom supervisor.
 
 ## Harness Model
 
@@ -30,8 +30,8 @@ These tracked fragments are not injected into every run; consult the one that ma
 
 ## Ownership Rules
 
-- Product rules belong in `owlory_xcode/Owlory/Core/Domain/`.
-- Application orchestration belongs in `owlory_xcode/Owlory/Core/Application/`.
+- Follow this repository's own layering and ownership rules. When it has written them down, they appear below under "Repository Rules", taken from `automation/runner-rules.md`.
+- Keep product rules, application orchestration, and infrastructure in the layers the repository already uses. Do not move code across those boundaries unless the slice says so.
 - Persistence, framework adapters, and infrastructure stay behind their boundary layers.
 - Docs changes should stay inside maintained docs that the slice explicitly owns or allows.
 
