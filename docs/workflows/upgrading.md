@@ -49,6 +49,17 @@ It exits 0 when everything matches and 1 when something needs attention. The las
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.
 5. **Update the plugin** to the same tag, if you use it: change the marketplace source to the new tag, then update the plugin. Only a rename, as in 0.3.0, needs an uninstall and reinstall.
 
+### After 0.4.0, not yet released (a generic runner prompt)
+
+The shipped `automation/prompts/base.md` no longer carries Owlory's layer rules (SPEC-009 RA-ENT-001). A repository's own rules now live in `automation/runner-rules.md`, which the repository owns and the sync never writes. The supervisor adds it to every runner prompt under "Repository Rules". See [repository runner rules](boundroom.md#repository-runner-rules).
+
+`base.md` is a template entry, so a sync keeps the copy a consumer already has, and its runners see no change until the consumer moves over:
+
+1. **Write `automation/runner-rules.md` first, in its own pull request.** It is the consumer's own change, not part of a sync. A sync pull request carries only the sync result and the lock pin. For Owlory, the file holds the rules its `base.md` has under "Ownership Rules": product rules in `owlory_xcode/Owlory/Core/Domain/`, application orchestration in `owlory_xcode/Owlory/Core/Application/`, and persistence, framework adapters and infrastructure behind their boundary layers.
+2. **Then take the generic `base.md`.** Either replace it by hand with the shipped copy, or sync with `--force-templates`, which rewrites every template file, including a customized `slice.md` and the examples.
+
+Until step 2, the old `base.md` and the new rules file both reach the runner, which repeats the rules but doesn't conflict. To roll back, restore the previous `base.md`; the rules file can stay.
+
 ### From 0.3.x to 0.4.0 (a safer Claude runner by default)
 
 0.4.0 changes one default and adds opt-in features. Nothing a consumer depends on is renamed or removed.

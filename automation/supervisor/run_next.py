@@ -628,8 +628,42 @@ def format_agent_command(
 PROMPT_PLACEHOLDER_PATTERN = re.compile(r"__[A-Z0-9_]+__")
 
 
+# The consuming repository's own runner rules. No manifest entry ships this path, so a
+# sync never writes or deletes it (test_runner_rules.py checks that).
+RUNNER_RULES_PATH = "automation/runner-rules.md"
+RUNNER_RULES_MAX_BYTES = 32 * 1024
+RUNNER_RULES_HEADING = (
+    "## Repository Rules\n\n"
+    "These rules come from this repository's own `automation/runner-rules.md`. Follow them "
+    "with the rules above. They never widen `allowed_paths`, the required validations, the "
+    "diff budget or the stop conditions.\n\n"
+)
+
+
+def repository_rules(repo_root: Path) -> str:
+    """Return the repository's runner rules as a prompt section, or "" when it has none."""
+    path = repo_root / RUNNER_RULES_PATH
+    if path.is_symlink():
+        raise policy.ConfigError(f"runner_rules_symlink: {RUNNER_RULES_PATH} must be a regular file")
+    if not path.exists():
+        return ""
+    if not path.is_file():
+        raise policy.ConfigError(f"runner_rules_not_file: {RUNNER_RULES_PATH} must be a regular file")
+    data = path.read_bytes()
+    if len(data) > RUNNER_RULES_MAX_BYTES:
+        raise policy.ConfigError(
+            f"runner_rules_too_large: {RUNNER_RULES_PATH} is {len(data)} bytes; the limit is {RUNNER_RULES_MAX_BYTES}"
+        )
+    try:
+        text = data.decode("utf-8").strip()
+    except UnicodeDecodeError as exc:
+        raise policy.ConfigError(f"runner_rules_not_utf8: {RUNNER_RULES_PATH} is not UTF-8") from exc
+    return RUNNER_RULES_HEADING + text if text else ""
+
+
 def render_prompt(repo_root: Path, slice_record: dict, context_bundle: dict, handoff_path: Path) -> str:
     base_prompt = (repo_root / "automation/prompts/base.md").read_text(encoding="utf-8")
+    rules = repository_rules(repo_root)
     slice_prompt = (repo_root / "automation/prompts/slice.md").read_text(encoding="utf-8")
     replacements = {
         "__SLICE_ID__": slice_record["slice_id"],
@@ -658,7 +692,8 @@ def render_prompt(repo_root: Path, slice_record: dict, context_bundle: dict, han
     rendered_slice_prompt = slice_prompt
     for token, value in replacements.items():
         rendered_slice_prompt = rendered_slice_prompt.replace(token, value)
-    return base_prompt.strip() + "\n\n" + rendered_slice_prompt.strip() + "\n"
+    sections = [base_prompt.strip(), rules, rendered_slice_prompt.strip()]
+    return "\n\n".join(section for section in sections if section) + "\n"
 
 
 def format_value_list(values: list[str], empty_message: str = "- none") -> str:
