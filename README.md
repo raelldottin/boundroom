@@ -8,6 +8,8 @@ Reusable supervised automation for bounded agent work.
 
 **Current product roadmap:** [Product Roadmap](docs/product-roadmap.md) covers shipped capabilities, next release horizons, Kanban/Hindsight/Swarm Wiki acceptance gates, product metrics, release dependencies and scoped delivery slices. The older [technical roadmap](docs/roadmap.md) remains as an implementation-history reference.
 
+**Research proposal:** [Symphony evaluation](docs/architecture/symphony-evaluation.md) compares OpenAI Symphony's execution lifecycle with Boundroom and proposes gated, optional work on isolation, recovery, runner protocols and operational visibility. It does not authorize a scheduler, runtime migration, or deployment.
+
 ## What It Provides
 
 - A machine-readable queue model for pre-classified implementation slices.
