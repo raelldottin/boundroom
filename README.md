@@ -138,6 +138,13 @@ hermes plugins install raelldottin/boundroom#plugins/boundroom --ref <commit-sha
 hermes plugins enable boundroom
 ```
 
+## Operating Boundroom
+
+- [Architecture overview](docs/reference/architecture.md): the parts, one slice from start to verdict, and who owns each piece of state.
+- [Security model](docs/reference/security-model.md): what Boundroom protects, whom it trusts with what, and what it does not protect against.
+- [Exit codes and errors](docs/reference/exit-codes.md): every code the supervisor and the sync tool exit with, every failure reason and every decision.
+- [Troubleshooting](docs/reference/troubleshooting.md): what to do for each message a run or a sync stops with.
+
 ## Versions and compatibility
 
 A patch release fixes things and removes nothing. A minor release may change a default or remove something, but only after an earlier release warned about it. The [compatibility and deprecation policy](docs/reference/compatibility.md) says what each kind of release may change in settings, flags, exit codes, schemas, the decision report, the sync and telemetry, and lists what is deprecated now. The [changelog](CHANGELOG.md) says what changed in each release, and the [upgrade guide](docs/workflows/upgrading.md) says how to move between releases and roll back.

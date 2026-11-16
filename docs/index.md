@@ -13,6 +13,13 @@ way from Owlory into this repo via `Tools/boundroom-sync.sh`.
 
 The current JSON queue and supervisor behavior remain operational until an explicitly reviewed Kanban cutover. The Swarm Wiki compiler now supports Hindsight snapshots in pinned, synthetic tests, but live end-to-end publication and local-inference acceptance remain outstanding; see the [control-plane gates](architecture/control-plane.md). The repo ships no live fleet board, Hindsight datastore or wiki datastore.
 
+## Operating Boundroom
+
+- [Architecture overview](reference/architecture.md) — the parts, one slice from start to verdict, and who owns each piece of state.
+- [Security model](reference/security-model.md) — what Boundroom protects, whom it trusts with what, and what it does not protect against.
+- [Exit codes and errors](reference/exit-codes.md) — every exit code, failure reason and decision.
+- [Troubleshooting](reference/troubleshooting.md) — what to do for each message a run or a sync stops with.
+
 ## What lives here
 
 - `automation/supervisor/` — queue selection, policy checks, validation
