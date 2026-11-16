@@ -181,6 +181,14 @@ The agent works on the owner's machine, which is a company computer. **Of the ag
 
 When an approved machine or hosted environment exists, record it here and run the deferred work unchanged. Nothing deferred here counts as accepted.
 
+## 4b. Symphony-inspired execution evaluation (proposed 2026-11-16)
+
+[OpenAI Symphony](https://github.com/openai/symphony) is an experimental reference for continuously coordinating agent sessions. Its polling, isolated workspaces, restart reconciliation, bounded retry, structured Codex events, workflow configuration and operational views merit **evaluation** alongside Boundroom's existing deterministic supervisor. The full comparison, proposed boundaries, phased acceptance contracts and licensing review are in [Symphony evaluation](architecture/symphony-evaluation.md).
+
+**This is not an authorized second scheduler, continuous daemon, fleet rollout or runtime change.** Boundroom must retain one supervisor execution authority, one canonical board/queue, manual approval of review/merge/release/cutover/spend, and support for Claude Code, Codex and Hermes. The optional long-running mode is an architectural *question*, not a new requirement. Do not assume Symphony's Apache-2.0 implementation can be copied into Boundroom's GPL-2.0-only code.
+
+**Ordering:** RA-SYM-001 is a documentation-first architecture decision. RA-SYM-002/003 are isolated single-slice safety/recovery prototypes only after a scoped disposable-canary approval. RA-SYM-004/005/006 are optional follow-ups. RA-SYM-007 (distributed execution) and any automatic board polling/fleet mode remain gated on H2/H3 acceptance and a distinct owner authorization. Existing P0 work and the separately approved parallel benchmark track retain priority.
+
 ## 5. Dependency graph and critical path
 
 | Workstream | Depends on | Blocks |
@@ -214,6 +222,10 @@ These are *proposed work packages*, not created issues or an authorization to ru
 | RA-PROD-010 | P1 | Release operations / SBOM / recovery | Exact pins, notices, vulnerability disposition, backup and rollback drill | H4 |
 | RA-PROD-011 | P1 | Stable-interface policy and 1.0 go/no-go report | Accepted support, SLO, upgrade and security contracts | H5 |
 | RA-EXP-001 | Parallel | Controlled ProgramBench experiments | Scored official artifacts, provider failure classification and budget receipt | R |
+| RA-SYM-001 | P0 research (not admitted) | Symphony architecture, licensing and authority decision | Accepted [evaluation](architecture/symphony-evaluation.md), one-writer boundary and explicit owner go/no-go | H2 research |
+| RA-SYM-002–003 | P0 candidate | Isolated per-slice workspace and recoverable run-attempt prototype | Disposable approved canary; no duplicate claims, forbidden paths, lost evidence or unauthorized retries | H1–H2 safety |
+| RA-SYM-004–006 | P1 candidate | Codex App Server adapter, workflow compatibility and read-only runtime visibility | Pinned protocol, unchanged multi-harness policy, denied reload escalation, opt-in telemetry | After RA-SYM-001–003 |
+| RA-SYM-007 | P2 research | Remote worker and bounded concurrency feasibility | Accepted H2/H3; separate owner-approved deployment, identity, budget and isolation proofs | After H3 |
 | RA-PROD-012 | P3 | Optional ontology / portfolio view exploration | Separate design decision; no new canonical store or dispatch authority | Later |
 
 **Immediate recommended order:** (1) security/dependency triage, (2) documentation and operator smoke tests, while (3) local Hindsight/reflect and real Wiki proof proceed as the P0 critical path; (4) validate Kanban gateway races before integrating a real owner task. Do not “finish P0” by changing roadmap statuses alone.
@@ -275,6 +287,8 @@ Metrics must be generated from independently inspectable receipts. The targets b
 **Enterprise readiness (proposed 2026-11-14):** [SPEC-009](architecture/enterprise-readiness.md) compares Boundroom with a mature open-source developer tool and orders the work to close the gaps: a generic runner prompt, release attestations and an SBOM, a changelog, a compatibility policy, a support matrix, telemetry metrics and an offline switch, and operator docs. The owner decided both open questions on 2026-11-18: the license stays `GPL-2.0-only` (RA-ENT-015), and there is no PyPI package or container image for now (RA-ENT-014).
 
 **Installed supervisor (proposed 2026-11-19):** [SPEC-010](architecture/installed-supervisor.md) proposes delivering Boundroom as a version-pinned wheel that the plugin runs through `uvx`, so a consumer keeps only its queue, rules and a lock, rather than vendoring the supervisor. It keeps SPEC-002's one-version-per-repository guarantee through the lock's hash, and reopens RA-ENT-014 for a GitHub release wheel only.
+
+**Symphony evaluation (proposed 2026-11-16):** [Architecture comparison and delivery track](architecture/symphony-evaluation.md) documents execution patterns to study, existing Boundroom protections to preserve, license risks, negative tests, and staged owner decisions. No continuous dispatcher, runtime integration, new worker service, or automatic rollout is approved by adding these roadmap entries.
 
 **Evidence references, not substitutes for live acceptance:** [technical roadmap](roadmap.md), [SPEC-001](architecture/control-plane.md), [RA-CP-001 inventory](architecture/control-plane-inventory.md), [Kanban projection](architecture/kanban-projection.md), [Kanban write-back and canary](architecture/kanban-cutover.md), [Hindsight live proof](architecture/memory-interface.md), [Swarm Wiki compiler pin](architecture/swarm-wiki-compiler.md), [SPEC-002 plugin trial](architecture/agent-plugin.md), [consumer distribution workflow](workflows/boundroom.md), [effectiveness benchmark](workflows/effectiveness-benchmark.md), [CodSpeed removal history](codspeed-removal.md), [release history](https://github.com/raelldottin/boundroom/releases) and the draft [agentic SDLC and GitOps standard](architecture/agentic-gitops-sdlc-standard.md) for consumer rollout ([#170](https://github.com/raelldottin/boundroom/issues/170)).
 
