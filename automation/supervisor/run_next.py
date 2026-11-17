@@ -486,12 +486,13 @@ def _supervise(
             if not handoff_path.exists():
                 return fail(f"Missing handoff artifact for slice {next_slice['slice_id']} at {handoff_path}", "handoff_missing")
 
+            # load_json raises ConfigError for invalid JSON, the schema check ValueError, and the read OSError.
             try:
                 handoff = policy.load_handoff(handoff_path)
-            except ValueError as error:
+                handoff_bytes = handoff_path.read_bytes()
+            except (ValueError, policy.ConfigError, OSError) as error:
                 return fail(f"Invalid handoff artifact: {error}", "handoff_invalid")
 
-            handoff_bytes = handoff_path.read_bytes()
             tracer.mark(
                 "boundroom.handoff.evaluate",
                 handoff_sha256=hashlib.sha256(handoff_bytes).hexdigest(),

@@ -765,7 +765,9 @@ def latest_handoff_for_slice(handoff_dir: Path, slice_id: str) -> Optional[dict[
     for candidate in sorted(handoff_dir.glob("*.json")):
         try:
             payload = load_handoff(candidate)
-        except (ValueError, json.JSONDecodeError):
+        except (ValueError, ConfigError, OSError):
+            # load_json raises ConfigError for invalid JSON. A file that can't be read is skipped, so one bad
+            # handoff can't stop every later run before it claims a slice.
             payload = load_legacy_handoff_for_context(candidate)
             if payload is None:
                 continue
@@ -783,7 +785,7 @@ def latest_handoff_for_slice(handoff_dir: Path, slice_id: str) -> Optional[dict[
 def load_legacy_handoff_for_context(handoff_path: Path) -> Optional[dict[str, Any]]:
     try:
         payload = load_json(handoff_path)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ConfigError):
         return None
 
     if not isinstance(payload, dict):

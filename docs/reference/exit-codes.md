@@ -43,7 +43,7 @@ When a claimed slice fails under the supervisor, the failure report's `reason` s
 | `agent_timeout` | The agent command exited 124. |
 | `supervisor_error` | The supervisor failed while running or judging the slice: the handoff timeout passed, the prompt could not be rendered (see [prompt errors](#prompt-and-rules-errors)), the command could not start, or any other error before the verdict was recorded, such as one in the validation replay, in the judgement of the handoff, or in writing the verdict to the queue or board. |
 | `handoff_missing` | The agent exited 0 but wrote no handoff at the expected path. |
-| `handoff_invalid` | The handoff isn't valid JSON or doesn't match the handoff schema. |
+| `handoff_invalid` | The handoff can't be read, isn't valid JSON, or doesn't match the handoff schema. |
 | `handoff_slice_mismatch` | The handoff names a different slice from the one in progress. |
 | `git_error` | Git failed while the supervisor measured the slice after the session: listing dirty paths, listing the slice's commits or reading HEAD. Or HEAD no longer descends from the commit the slice started at. |
 
