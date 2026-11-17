@@ -33,6 +33,7 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 ### Fixed
 
 - OTLP headers set in the operator's shell no longer reach the configured telemetry endpoint (#240).
+- A Git failure while `run_next.py` measures a claimed slice, or an error while it replays validations or judges the handoff, now marks the slice `failed` with reason `git_error` or `supervisor_error` and prints a failure report. Before, the slice stayed `in_progress` and the next run refused to start.
 
 ## 0.4.0 (2026-11-13)
 

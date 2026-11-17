@@ -485,40 +485,44 @@ def _supervise(
         if handoff["slice_id"] != next_slice["slice_id"]:
             return fail("Handoff slice_id does not match the in-progress slice.", "handoff_slice_mismatch")
 
-        dirty_paths_after_run = policy.git_dirty_paths(repo_root)
+        # The slice is claimed, so an error from here to the decision must fail it through fail():
+        # escaping would leave it in_progress with no report, and the next run would refuse.
         try:
+            dirty_paths_after_run = policy.git_dirty_paths(repo_root)
             committed_paths = policy.git_committed_paths(repo_root, base_commit_sha)
-        except policy.ConfigError as error:
-            return fail(str(error), "git_error")
+            post_run_commit_sha = policy.git_head(repo_root)
+        except (policy.ConfigError, OSError, subprocess.SubprocessError) as error:
+            return fail(f"Git error after slice {next_slice['slice_id']} ran: {error}", "git_error")
 
-        post_run_commit_sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True, cwd=repo_root
-        ).stdout.strip()
-
-        validation_replays: list[policy.ValidationReplayResult] = []
-        if handoff["status"] == "done":
-            validation_replays = policy.replay_validation_commands(
-                repo_root=repo_root,
-                required_validations=next_slice["required_validations"],
-                validations_passed=handoff["validations_passed"],
-                base_sha=base_commit_sha,
+        try:
+            validation_replays: list[policy.ValidationReplayResult] = []
+            if handoff["status"] == "done":
+                validation_replays = policy.replay_validation_commands(
+                    repo_root=repo_root,
+                    required_validations=next_slice["required_validations"],
+                    validations_passed=handoff["validations_passed"],
+                    base_sha=base_commit_sha,
+                )
+            for replay in validation_replays:
+                tracer.mark(
+                    "boundroom.validation.replay", command=replay.command, base_sha=base_commit_sha, success=replay.success
+                )
+                tracer.metric("boundroom.validation.replays", entry="run_next", success=replay.success)
+            decision = policy.evaluate_completion(
+                queue_data=queue_data,
+                slice_record=next_slice,
+                handoff=handoff,
+                dirty_paths_before_run=dirty_paths_before_run,
+                dirty_paths_after_run=dirty_paths_after_run,
+                completed_autonomous_runs=completed_runs + 1,
+                run_limit=autonomous_limit,
+                validation_replays=validation_replays,
+                post_run_commit_sha=post_run_commit_sha,
+                committed_paths=committed_paths,
             )
-        for replay in validation_replays:
-            tracer.mark("boundroom.validation.replay", command=replay.command, base_sha=base_commit_sha, success=replay.success)
-            tracer.metric("boundroom.validation.replays", entry="run_next", success=replay.success)
+        except Exception as error:
+            return fail(f"Supervisor error while evaluating slice {next_slice['slice_id']}: {error}", "supervisor_error")
         completed_runs += 1
-        decision = policy.evaluate_completion(
-            queue_data=queue_data,
-            slice_record=next_slice,
-            handoff=handoff,
-            dirty_paths_before_run=dirty_paths_before_run,
-            dirty_paths_after_run=dirty_paths_after_run,
-            completed_autonomous_runs=completed_runs,
-            run_limit=autonomous_limit,
-            validation_replays=validation_replays,
-            post_run_commit_sha=post_run_commit_sha,
-            committed_paths=committed_paths,
-        )
 
         decision_report = make_decision_report(
             slice_record=next_slice,
