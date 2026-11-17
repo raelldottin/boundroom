@@ -17,7 +17,7 @@ telemetry = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.17.4",
+    "ruff==0.17.5",
     "ty==0.0.102",
     "pytest==9.2.0",
     "pytest-cov==7.1.0",
