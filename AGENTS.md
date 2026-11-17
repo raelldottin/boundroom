@@ -52,7 +52,7 @@ Every change MUST reach `main` through a pull request whose required checks have
 
 ### Changes to `main`
 
-The `main` ruleset requires a pull request, the five required checks (`make reusable-check (3.11)`, `make reusable-check (3.12)`, `Tests + coverage comment`, `No agent attribution trailers`, `Review dependency graph diff`), and linear history, and it forbids force-pushes and deletion. Pull requests merge by squash or rebase. The control map asks the owner to make the ruleset require one approving review from a code owner. Until that setting is applied, the human-approval rule above holds by process, not by GitHub.
+The `main` ruleset requires a pull request, the five required checks (`make reusable-check (3.11)`, `make reusable-check (3.12)`, `Tests + coverage comment`, `No agent attribution trailers`, `Review dependency graph diff`), and linear history, and it forbids force-pushes and deletion. Pull requests merge by squash or rebase. Since 2026-11-10 its pull request rule also requires one approving review from a code owner, dismisses an approval when a push changes the head, and requires approval of the last push, with no bypass, so GitHub enforces the human-approval rule above ([the control map](docs/compliance/controls.md)).
 
 Agents MUST NOT:
 

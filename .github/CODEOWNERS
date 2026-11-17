@@ -1,3 +1,3 @@
-# Every change needs an approving review from a code owner once the main ruleset
-# requires code-owner review (docs/compliance/controls.md).
+# Every change needs an approving review from a code owner. The main ruleset has required
+# code-owner review since 2026-11-10 (docs/compliance/controls.md).
 * @raelldottin
