@@ -1,0 +1,67 @@
+name: Bug report
+description: The supervisor, the sync tool or a helper command did something wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report a suspected vulnerability privately, as SECURITY.md describes, not here.
+        docs/reference/troubleshooting.md covers most stops. Leave out handoffs, prompts, endpoints,
+        headers and tokens unless you mean to share them.
+  - type: input
+    id: version
+    attributes:
+      label: Boundroom version
+      description: The release tag, or the commit in your automation/boundroom.lock.
+      placeholder: v0.4.0
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      description: The command you ran, with its flags.
+      placeholder: python3 automation/supervisor/run_next.py --single-slice
+    validations:
+      required: true
+  - type: input
+    id: exit_code
+    attributes:
+      label: Exit code
+      description: The command's exit code (docs/reference/exit-codes.md).
+    validations:
+      required: true
+  - type: textarea
+    id: stop_line
+    attributes:
+      label: The stop or error line
+      description: "The `stop:`, `hint:` or `boundroom-sync: error:` lines, or the traceback."
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Decision or failure report
+      description: The JSON report `run_next.py` or `evaluate_handoff.py` printed, if any.
+      render: json
+  - type: textarea
+    id: operator_status
+    attributes:
+      label: operator_status.py --json
+      description: The output of `python3 automation/supervisor/operator_status.py --json`. It never shows a telemetry endpoint or header.
+      render: json
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version, and the runner and its version, if a session ran.
+      placeholder: macOS 15, Python 3.12, Claude Code 2.1.311
+    validations:
+      required: true

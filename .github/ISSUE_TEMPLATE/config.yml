@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/raelldottin/boundroom/security/advisories/new
+    about: Report a suspected vulnerability privately, as SECURITY.md describes.
+  - name: Troubleshooting guide
+    url: https://github.com/raelldottin/boundroom/blob/main/docs/reference/troubleshooting.md
+    about: What to do for each message a run or a sync stops with.

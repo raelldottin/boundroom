@@ -1,0 +1,43 @@
+name: Change request
+description: Propose a feature or a change to how Boundroom works.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report a suspected vulnerability privately, as SECURITY.md describes, not here.
+        Read the spec for the area first (docs/architecture/). A change that contradicts a spec
+        changes the spec first, in its own reviewed pull request.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you can't do today, or what goes wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The change you propose
+    validations:
+      required: true
+  - type: input
+    id: spec
+    attributes:
+      label: Spec or slice
+      description: The spec, and slice if any, this belongs to, such as SPEC-009 RA-ENT-013.
+  - type: textarea
+    id: consumer_impact
+    attributes:
+      label: What a consumer would see
+      description: Settings, flags, exit codes, schemas, the decision report, the sync or telemetry that would change (docs/reference/compatibility.md).
+  - type: checkboxes
+    id: owner_decisions
+    attributes:
+      label: Owner decisions it needs
+      description: A person decides these as a separate recorded action. A pull request can only prepare them.
+      options:
+        - label: A license, or terms for contributions
+        - label: Spending (benchmark runs, models, providers, budgets)
+        - label: A release, cutover, deployment or schedule
+        - label: A new required check, or another repository setting
