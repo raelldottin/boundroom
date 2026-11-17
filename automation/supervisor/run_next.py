@@ -390,17 +390,28 @@ def _supervise(
         # measured from here, for the scope check and the git diff --check replay.
         base_commit_sha = policy.git_head(repo_root)
         store.set_status(next_slice, "in_progress")
-        queue_data = policy.set_slice_status(queue_data, next_slice["slice_id"], "in_progress")
-        tracer.mark("boundroom.claim", slice_id=next_slice["slice_id"], base_sha=base_commit_sha, result="claimed")
 
         current = next_slice
+        fail_started = False
 
         def fail(reason: str, code: str, exit_code: int = 2) -> int:
-            """Fail the slice. ``code`` is the reason code the decision span's status carries."""
+            """Fail the slice. ``code`` is the reason code the decision span's status carries.
+
+            If the queue or board refuses this write too, the report says the slice is still
+            ``in_progress``, not ``failed``: both stores leave the status unchanged when a write fails.
+            """
+            nonlocal fail_started
+            fail_started = True
             tracer.mark("boundroom.decision", error_code=code, verdict="failed", reason=telemetry.without_root(reason, repo_root))
             tracer.metric("boundroom.slice.decisions", decision="failed", queue_status="failed")
-            store.set_status(current, "failed", reason, handoff_path)
-            tracer.mark("boundroom.board.record", verdict="failed")
+            queue_status = "failed"
+            try:
+                store.set_status(current, "failed", reason, handoff_path)
+            except Exception as error:
+                queue_status = "in_progress"
+                reason = f"{reason}\nRecording the failure also failed, so the slice is still in_progress: {error}"
+            else:
+                tracer.mark("boundroom.board.record", verdict="failed")
             try:
                 head_sha: Optional[str] = policy.git_head(repo_root)
             except Exception:  # the report must still go out if git itself is what failed
@@ -414,131 +425,141 @@ def _supervise(
                 runner_profile=profile_record,
                 base_sha=base_commit_sha,
                 head_sha=head_sha,
+                queue_status=queue_status,
             )
             emit(report, report_file)
             return exit_code
 
-        session_started = time.monotonic()
-        session_outcome = "error"
+        # From the claim until the verdict is recorded, any error fails the slice through fail(). Escaping
+        # would leave it in_progress with no report, and the next run would refuse to start.
         try:
-            # What Boundroom knows for certain about the runner, under boundroom.* names. The model,
-            # tokens and provider are the runner's, unseen here, so no gen_ai.* attribute is set.
-            runner_attributes = {"boundroom.runner.requested": requested_runner}
-            if profile is not None:
-                runner_attributes["boundroom.runner.profile"] = profile.effective
-            with tracer.span("boundroom.agent_session", slice_id=next_slice["slice_id"], **runner_attributes) as session:
-                runner_telemetry = telemetry.runner_environment(
-                    telemetry_settings_resolved, os.environ, session, tracer.run_id, next_slice["slice_id"]
+            queue_data = policy.set_slice_status(queue_data, next_slice["slice_id"], "in_progress")
+            tracer.mark("boundroom.claim", slice_id=next_slice["slice_id"], base_sha=base_commit_sha, result="claimed")
+            session_started = time.monotonic()
+            session_outcome = "error"
+            try:
+                # What Boundroom knows for certain about the runner, under boundroom.* names. The model,
+                # tokens and provider are the runner's, unseen here, so no gen_ai.* attribute is set.
+                runner_attributes = {"boundroom.runner.requested": requested_runner}
+                if profile is not None:
+                    runner_attributes["boundroom.runner.profile"] = profile.effective
+                with tracer.span("boundroom.agent_session", slice_id=next_slice["slice_id"], **runner_attributes) as session:
+                    runner_telemetry = telemetry.runner_environment(
+                        telemetry_settings_resolved, os.environ, session, tracer.run_id, next_slice["slice_id"]
+                    )
+                    if tracer.enabled:
+                        telemetry_report.update(runner_telemetry.report())
+                    exit_code = run_agent(
+                        repo_root=repo_root,
+                        queue_data=queue_data,
+                        slice_record=next_slice,
+                        context_bundle=context_bundle,
+                        handoff_path=handoff_path,
+                        command_template=agent_command_template,
+                        profile=profile,
+                        extra_env=runner_telemetry.variables,
+                    )
+                    session_outcome = telemetry_metrics.session_outcome(exit_code)
+                    tracer.annotate(session, exit_code=exit_code)
+                    if exit_code != 0:
+                        tracer.fail(session, session_error(exit_code))
+            except Exception as error:  # pragma: no cover - last-resort queue recovery
+                if isinstance(error, subprocess.TimeoutExpired):
+                    session_outcome = "timeout"
+                return fail(f"Supervisor error while running slice: {error}", "supervisor_error")
+            finally:
+                tracer.metric(
+                    "boundroom.agent_session.duration",
+                    time.monotonic() - session_started,
+                    entry="run_next",
+                    outcome=session_outcome,
+                    runner=requested_runner,
                 )
-                if tracer.enabled:
-                    telemetry_report.update(runner_telemetry.report())
-                exit_code = run_agent(
+
+            if exit_code != 0:
+                return fail(
+                    f"Agent command exited with code {exit_code} for slice {next_slice['slice_id']}.",
+                    session_error(exit_code),
+                    exit_code,
+                )
+
+            if not handoff_path.exists():
+                return fail(f"Missing handoff artifact for slice {next_slice['slice_id']} at {handoff_path}", "handoff_missing")
+
+            try:
+                handoff = policy.load_handoff(handoff_path)
+            except ValueError as error:
+                return fail(f"Invalid handoff artifact: {error}", "handoff_invalid")
+
+            handoff_bytes = handoff_path.read_bytes()
+            tracer.mark(
+                "boundroom.handoff.evaluate",
+                handoff_sha256=hashlib.sha256(handoff_bytes).hexdigest(),
+                status=handoff["status"],
+                schema_result="valid",
+                **({"handoff_text": handoff_bytes.decode("utf-8", errors="replace")} if content else {}),
+            )
+            if handoff["slice_id"] != next_slice["slice_id"]:
+                return fail("Handoff slice_id does not match the in-progress slice.", "handoff_slice_mismatch")
+
+            # Git failures get their own reason code; anything else falls to the guard below.
+            try:
+                dirty_paths_after_run = policy.git_dirty_paths(repo_root)
+                committed_paths = policy.git_committed_paths(repo_root, base_commit_sha)
+                post_run_commit_sha = policy.git_head(repo_root)
+            except (policy.ConfigError, OSError, subprocess.SubprocessError) as error:
+                return fail(f"Git error after slice {next_slice['slice_id']} ran: {error}", "git_error")
+
+            validation_replays: list[policy.ValidationReplayResult] = []
+            if handoff["status"] == "done":
+                validation_replays = policy.replay_validation_commands(
                     repo_root=repo_root,
-                    queue_data=queue_data,
-                    slice_record=next_slice,
-                    context_bundle=context_bundle,
-                    handoff_path=handoff_path,
-                    command_template=agent_command_template,
-                    profile=profile,
-                    extra_env=runner_telemetry.variables,
+                    required_validations=next_slice["required_validations"],
+                    validations_passed=handoff["validations_passed"],
+                    base_sha=base_commit_sha,
                 )
-                session_outcome = telemetry_metrics.session_outcome(exit_code)
-                tracer.annotate(session, exit_code=exit_code)
-                if exit_code != 0:
-                    tracer.fail(session, session_error(exit_code))
-        except Exception as error:  # pragma: no cover - last-resort queue recovery
-            if isinstance(error, subprocess.TimeoutExpired):
-                session_outcome = "timeout"
-            return fail(f"Supervisor error while running slice: {error}", "supervisor_error")
-        finally:
-            tracer.metric(
-                "boundroom.agent_session.duration",
-                time.monotonic() - session_started,
-                entry="run_next",
-                outcome=session_outcome,
-                runner=requested_runner,
+            for replay in validation_replays:
+                tracer.mark(
+                    "boundroom.validation.replay", command=replay.command, base_sha=base_commit_sha, success=replay.success
+                )
+                tracer.metric("boundroom.validation.replays", entry="run_next", success=replay.success)
+            decision = policy.evaluate_completion(
+                queue_data=queue_data,
+                slice_record=next_slice,
+                handoff=handoff,
+                dirty_paths_before_run=dirty_paths_before_run,
+                dirty_paths_after_run=dirty_paths_after_run,
+                completed_autonomous_runs=completed_runs + 1,
+                run_limit=autonomous_limit,
+                validation_replays=validation_replays,
+                post_run_commit_sha=post_run_commit_sha,
+                committed_paths=committed_paths,
             )
+            completed_runs += 1
 
-        if exit_code != 0:
-            return fail(
-                f"Agent command exited with code {exit_code} for slice {next_slice['slice_id']}.",
-                session_error(exit_code),
-                exit_code,
-            )
-
-        if not handoff_path.exists():
-            return fail(f"Missing handoff artifact for slice {next_slice['slice_id']} at {handoff_path}", "handoff_missing")
-
-        try:
-            handoff = policy.load_handoff(handoff_path)
-        except ValueError as error:
-            return fail(f"Invalid handoff artifact: {error}", "handoff_invalid")
-
-        handoff_bytes = handoff_path.read_bytes()
-        tracer.mark(
-            "boundroom.handoff.evaluate",
-            handoff_sha256=hashlib.sha256(handoff_bytes).hexdigest(),
-            status=handoff["status"],
-            schema_result="valid",
-            **({"handoff_text": handoff_bytes.decode("utf-8", errors="replace")} if content else {}),
-        )
-        if handoff["slice_id"] != next_slice["slice_id"]:
-            return fail("Handoff slice_id does not match the in-progress slice.", "handoff_slice_mismatch")
-
-        dirty_paths_after_run = policy.git_dirty_paths(repo_root)
-        try:
-            committed_paths = policy.git_committed_paths(repo_root, base_commit_sha)
-        except policy.ConfigError as error:
-            return fail(str(error), "git_error")
-
-        post_run_commit_sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True, cwd=repo_root
-        ).stdout.strip()
-
-        validation_replays: list[policy.ValidationReplayResult] = []
-        if handoff["status"] == "done":
-            validation_replays = policy.replay_validation_commands(
-                repo_root=repo_root,
-                required_validations=next_slice["required_validations"],
-                validations_passed=handoff["validations_passed"],
+            decision_report = make_decision_report(
+                slice_record=next_slice,
+                decision=decision,
+                completed_runs=completed_runs,
+                autonomous_limit=autonomous_limit,
+                telemetry=telemetry_report,
+                runner_profile=profile_record,
                 base_sha=base_commit_sha,
+                head_sha=post_run_commit_sha,
             )
-        for replay in validation_replays:
-            tracer.mark("boundroom.validation.replay", command=replay.command, base_sha=base_commit_sha, success=replay.success)
-            tracer.metric("boundroom.validation.replays", entry="run_next", success=replay.success)
-        completed_runs += 1
-        decision = policy.evaluate_completion(
-            queue_data=queue_data,
-            slice_record=next_slice,
-            handoff=handoff,
-            dirty_paths_before_run=dirty_paths_before_run,
-            dirty_paths_after_run=dirty_paths_after_run,
-            completed_autonomous_runs=completed_runs,
-            run_limit=autonomous_limit,
-            validation_replays=validation_replays,
-            post_run_commit_sha=post_run_commit_sha,
-            committed_paths=committed_paths,
-        )
-
-        decision_report = make_decision_report(
-            slice_record=next_slice,
-            decision=decision,
-            completed_runs=completed_runs,
-            autonomous_limit=autonomous_limit,
-            telemetry=telemetry_report,
-            runner_profile=profile_record,
-            base_sha=base_commit_sha,
-            head_sha=post_run_commit_sha,
-        )
-        tracer.mark(
-            "boundroom.decision",
-            error_code=telemetry.verdict_error(decision.decision),
-            verdict=decision.decision,
-            reason=telemetry.without_root(decision.stop_reason, repo_root),
-            changed_file_count=decision.changed_file_count,
-            report_sha256=hashlib.sha256(json.dumps(decision_report, sort_keys=True).encode("utf-8")).hexdigest(),
-        )
-        store.set_status(next_slice, decision.queue_status, decision.stop_reason or decision.decision, handoff_path)
+            tracer.mark(
+                "boundroom.decision",
+                error_code=telemetry.verdict_error(decision.decision),
+                verdict=decision.decision,
+                reason=telemetry.without_root(decision.stop_reason, repo_root),
+                changed_file_count=decision.changed_file_count,
+                report_sha256=hashlib.sha256(json.dumps(decision_report, sort_keys=True).encode("utf-8")).hexdigest(),
+            )
+            store.set_status(next_slice, decision.queue_status, decision.stop_reason or decision.decision, handoff_path)
+        except Exception as error:
+            if fail_started:
+                raise  # fail() itself broke: calling it again could record the slice twice
+            return fail(f"Supervisor error while handling slice {next_slice['slice_id']}: {error}", "supervisor_error")
         tracer.mark("boundroom.board.record", verdict=decision.queue_status)
         tracer.metric("boundroom.slice.decisions", decision=decision.decision, queue_status=decision.queue_status)
 
@@ -811,13 +832,14 @@ def make_failure_report(
     runner_profile: Optional[dict] = None,
     base_sha: Optional[str] = None,
     head_sha: Optional[str] = None,
+    queue_status: str = "failed",
 ) -> dict:
     return (
         _with_telemetry(telemetry, runner_profile)
         | _commits(base_sha, head_sha)
         | {
             "slice_id": slice_record["slice_id"],
-            "queue_status": "failed",
+            "queue_status": queue_status,
             "decision": "stop_failed",
             "reason": reason,
             "recommended_next_slice": "",
