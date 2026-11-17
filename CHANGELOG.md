@@ -9,6 +9,7 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 ### Added
 
 - Telemetry metrics from one catalogue with bounded labels, standard resource attributes, error status on failed spans, a telemetry block in operator status, and `BOUNDROOM_OFFLINE`, which stops every network call Boundroom makes (#240).
+- An example Grafana dashboard for the metric catalogue, in `automation/examples/telemetry/`, with sample data and the queries a Prometheus-compatible backend needs. Duration histograms are exported with explicit buckets from 1 second to 2 hours, so any such backend stores them as classic histograms.
 - A repository's own runner rules in `automation/runner-rules.md`, which the sync never writes and the supervisor adds to every runner prompt (#241).
 - Signed build provenance for each release archive, checked with `gh attestation verify` (#244).
 - The compatibility and deprecation policy (#243) and this changelog.

@@ -201,3 +201,12 @@ A person runs these before creating a release tag, and `release.yml` runs them a
 | 0 | Printed the tag's changelog section. | |
 | 1 | The section is missing, empty, duplicated or has a malformed heading, or the changelog can't be read. | Fix `CHANGELOG.md`. |
 | 64 | No tag was given, or it isn't `vMAJOR.MINOR.PATCH`. | Pass a valid tag. |
+
+### `Tools/telemetry_sample.py`
+
+Writes the sample metrics the example dashboard is checked against (`automation/examples/telemetry/`).
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| 0 | Wrote the sample, or with `--check`, the sample is current. | |
+| 1 | With `--check`, the sample is stale. | Run `uv run python Tools/telemetry_sample.py`. |

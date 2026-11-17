@@ -236,7 +236,7 @@ def configure(
                 console=False,
                 # Only Boundroom's own reader: nothing is exported on a timer, and no reader for
                 # the ambient OTEL_* settings is added, because they are hidden here (UD-6).
-                metrics=logfire.MetricsOptions(additional_readers=[reader]),
+                metrics=logfire.MetricsOptions(additional_readers=[reader], views=_metric_views(logfire)),
                 inspect_arguments=False,
                 service_name=SERVICE_NAME,
                 service_version=service_version or None,
@@ -344,6 +344,16 @@ def _metric_reader() -> Any:
     except ImportError as error:
         raise _Unavailable("telemetry: the opentelemetry SDK isn't installed (pip install 'boundroom[telemetry]')") from error
     return InMemoryMetricReader()
+
+
+def _metric_views(logfire: Any) -> list[Any]:
+    """Logfire's default views, with its exponential histogram replaced by explicit duration buckets."""
+    from opentelemetry.sdk.metrics import Histogram  # noqa: PLC0415
+    from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View  # noqa: PLC0415
+
+    kept = [view for view in logfire.MetricsOptions.DEFAULT_VIEWS if getattr(view, "_instrument_type", None) is not Histogram]
+    buckets = ExplicitBucketHistogramAggregation(boundaries=telemetry_metrics.DURATION_BUCKETS_SECONDS)
+    return [*kept, View(instrument_type=Histogram, aggregation=buckets)]
 
 
 def _otlp_metric_exporter(settings: TelemetrySettings) -> tuple[Any, str]:

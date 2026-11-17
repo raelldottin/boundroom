@@ -200,6 +200,8 @@ A value outside its vocabulary is recorded as `other`, and a key outside the lis
 - `file`: one JSON object per data point in `<run_id>.metrics.jsonl`, beside the spans file. A counter gives `value`. A histogram gives `histogram` with `count`, `sum`, `min` and `max`. Each line also has `name`, `kind`, `unit`, `attributes`, `time_unix_nano`, `run_id`, `trace_id` and `resource`.
 - `otlp`: OTLP/HTTP to the endpoint's `/v1/metrics`, with the same headers as traces. A bare endpoint gets `/v1/metrics`. One ending in `/v1/traces` gets `/v1/metrics` in its place. Any other path names a traces URL whose metrics URL Boundroom can't know, so metrics aren't sent, and stderr says so. `run_id` and `trace_id` aren't data-point attributes here, because they would make every run its own series.
 
+Every histogram is a duration and is exported with explicit bucket bounds, in seconds: `1, 2, 5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200` (`DURATION_BUCKETS_SECONDS`). That replaces Logfire's default view, an exponential histogram, which a Prometheus-compatible backend can store only as a native histogram. An [example dashboard](https://github.com/raelldottin/boundroom/blob/main/automation/examples/telemetry/README.md) reads the catalogue from such a backend (SPEC-009 RA-ENT-010).
+
 The flush still takes at most five seconds in all. Spans go first; metrics get what is left, and are dropped with a stderr message if nothing is. A failure to record or export a metric is reported on stderr and never changes a verdict or exit code. Logfire is configured with `metrics=MetricsOptions(additional_readers=[<that reader>])`, so it adds no reader of its own.
 
 ## Offline switch and egress chokepoint
