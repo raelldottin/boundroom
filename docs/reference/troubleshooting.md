@@ -54,11 +54,11 @@ These happen after the slice is claimed. The supervisor marks the slice `failed`
 | `supervisor_error`, with `runner_rules_...` | 2 | `automation/runner-rules.md` is a symbolic link, not a file, over 32 KiB or not UTF-8. | Make it a regular UTF-8 file under 32 KiB. |
 | `supervisor_error`, with `unknown_prompt_placeholder` | 2 | A customized prompt fragment uses a placeholder the supervisor doesn't fill. | See [customizing prompt fragments](../workflows/boundroom.md#customizing-prompt-fragments). |
 | `handoff_missing` | 2 | The session ended without writing its handoff, for example because it reached its budget or turn limit. | Read the runner's output. Check that the prompt names the handoff path. |
-| `handoff_invalid` | 2 | The handoff isn't valid JSON or doesn't match the schema. | Check it against `automation/schemas/handoff.schema.json`. |
+| `handoff_invalid` | 2 | The handoff can't be read, for example because a directory is at its path, isn't valid JSON, or doesn't match the schema. | Check it against `automation/schemas/handoff.schema.json`. Later runs skip it when they look for the previous handoff. |
 | `handoff_slice_mismatch` | 2 | The handoff names another slice. | Check the runner's prompt and the handoff. |
 | `git_error`, with `HEAD no longer descends from the commit the slice started at` | 2 | The session reset, rebased or switched branches, which hides what it changed. | Inspect the branch. Runners must add commits, not rewrite them. |
 | `git_error`, with `Git error after slice <id> ran` | 2 | Git failed while the supervisor measured the slice after the session: listing dirty paths, listing its commits or reading HEAD. | Run `git status` in the repository and fix what it reports, such as a lock file left by a killed Git process. |
-| `supervisor_error`, with `Supervisor error while handling slice` | 2 | The supervisor met an error after the session and before the verdict was recorded: while it read the handoff, replayed validations, judged the handoff, or wrote the verdict to the queue or board. | Read the error in the reason. A board or disk error is usually transient: fix it, then set the slice back to `queued`. If it is a supervisor bug, report it with the failure report. |
+| `supervisor_error`, with `Supervisor error while handling slice` | 2 | The supervisor met an error after the session and before the verdict was recorded: while it replayed validations, judged the handoff, or wrote the verdict to the queue or board. | Read the error in the reason. A board or disk error is usually transient: fix it, then set the slice back to `queued`. If it is a supervisor bug, report it with the failure report. |
 
 ## After a slice is judged
 

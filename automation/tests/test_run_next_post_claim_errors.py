@@ -124,8 +124,9 @@ def test_a_handoff_that_cannot_be_read_back_fails_the_slice(queue, monkeypatch, 
     assert statuses(path) == {FIRST: "failed", SECOND: "queued"}
     report = json.loads(capsys.readouterr().out)
     assert (report["queue_status"], report["decision"]) == ("failed", "stop_failed")
+    assert report["reason"].startswith("Invalid handoff artifact: ")
     assert "Permission denied" in report["reason"]
-    assert decision_codes == ["supervisor_error"]
+    assert decision_codes == ["handoff_invalid"]
 
 
 def test_a_decision_report_that_cannot_be_built_fails_the_slice(queue, monkeypatch, capsys, decision_codes):
