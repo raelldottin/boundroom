@@ -58,7 +58,7 @@ These happen after the slice is claimed. The supervisor marks the slice `failed`
 | `handoff_slice_mismatch` | 2 | The handoff names another slice. | Check the runner's prompt and the handoff. |
 | `git_error`, with `HEAD no longer descends from the commit the slice started at` | 2 | The session reset, rebased or switched branches, which hides what it changed. | Inspect the branch. Runners must add commits, not rewrite them. |
 | `git_error`, with `Git error after slice <id> ran` | 2 | Git failed while the supervisor measured the slice after the session: listing dirty paths, listing its commits or reading HEAD. | Run `git status` in the repository and fix what it reports, such as a lock file left by a killed Git process. |
-| `supervisor_error`, with `Supervisor error while evaluating slice` | 2 | The supervisor met an error while it replayed validations or judged the handoff. | Read the error in the reason. If it is a supervisor bug, report it with the failure report. |
+| `supervisor_error`, with `Supervisor error while handling slice` | 2 | The supervisor met an error after the session and before the verdict was recorded: while it read the handoff, replayed validations, judged the handoff, or wrote the verdict to the queue or board. | Read the error in the reason. A board or disk error is usually transient: fix it, then set the slice back to `queued`. If it is a supervisor bug, report it with the failure report. |
 
 ## After a slice is judged
 
@@ -77,7 +77,7 @@ The run exits 0. The decision report's `decision` and `reason` say what happened
 
 ## A slice stuck in progress
 
-A slice stays `in_progress` when a run stops before it judges the slice: the process is killed or its machine stops. An error the supervisor meets after the claim doesn't do this: it marks the slice `failed` and prints a failure report. The supervisor has no reset command, on purpose: deciding what happened to half-finished work is a person's call.
+A slice stays `in_progress` when a run stops before it judges the slice: the process is killed or its machine stops, or the queue or board refuses every write after the claim. In that last case the failure report's `queue_status` is `in_progress`, and its `reason` says recording the failure also failed. Any other error from the claim until the verdict is recorded marks the slice `failed` and prints a failure report. The supervisor has no reset command, on purpose: deciding what happened to half-finished work is a person's call.
 
 1. Make sure no run is going: look for a `run_next.py` process, for example with `pgrep -fl run_next.py`. A dry run doesn't take the run lock, so it can't tell you.
 2. Look at what the slice left: its commits since it started, any handoff in `automation/handoffs/`, and the working tree.
