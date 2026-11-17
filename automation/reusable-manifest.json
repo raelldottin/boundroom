@@ -12,6 +12,9 @@
       ]
     }
   },
+  "optional_components": {
+    "benchmark": "The effectiveness benchmark (automation/benchmark/), its tests, fixture and guide. The supervisor never imports it, and a benchmark run needs the owner's approval."
+  },
   "entries": [
     {
       "source": "automation/README.md",
@@ -27,7 +30,8 @@
       "kind": "directory",
       "preserve_executable": false,
       "delete_stale": true,
-      "template": false
+      "template": false,
+      "component": "benchmark"
     },
     {
       "source": "automation/context",
@@ -107,7 +111,8 @@
       "kind": "file",
       "preserve_executable": false,
       "delete_stale": false,
-      "template": false
+      "template": false,
+      "component": "benchmark"
     },
     {
       "source": "automation/tests/test_benchmark_lanes.py",
@@ -115,7 +120,8 @@
       "kind": "file",
       "preserve_executable": false,
       "delete_stale": false,
-      "template": false
+      "template": false,
+      "component": "benchmark"
     },
     {
       "source": "automation/tests/test_benchmark_jspace.py",
@@ -123,7 +129,8 @@
       "kind": "file",
       "preserve_executable": false,
       "delete_stale": false,
-      "template": false
+      "template": false,
+      "component": "benchmark"
     },
     {
       "source": "automation/tests/test_benchmark_probe.py",
@@ -131,7 +138,8 @@
       "kind": "file",
       "preserve_executable": false,
       "delete_stale": false,
-      "template": false
+      "template": false,
+      "component": "benchmark"
     },
     {
       "source": "automation/tests/fake_ps.py",
@@ -147,7 +155,8 @@
       "kind": "file",
       "preserve_executable": false,
       "delete_stale": false,
-      "template": false
+      "template": false,
+      "component": "benchmark"
     },
     {
       "source": "docs/workflows/boundroom.md",
@@ -171,7 +180,8 @@
       "kind": "file",
       "preserve_executable": false,
       "delete_stale": false,
-      "template": false
+      "template": false,
+      "component": "benchmark"
     },
     {
       "source": "Tools/boundroom-sync.sh",

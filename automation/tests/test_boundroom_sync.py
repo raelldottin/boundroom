@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -80,8 +81,9 @@ class BoundroomImportGuardTests(unittest.TestCase):
         kind: str = "file",
         delete_stale: bool = False,
         template: bool = False,
+        component: str | None = None,
     ) -> dict[str, Any]:
-        return {
+        entry: dict[str, Any] = {
             "source": source,
             "destination": destination,
             "kind": kind,
@@ -89,6 +91,9 @@ class BoundroomImportGuardTests(unittest.TestCase):
             "delete_stale": delete_stale,
             "template": template,
         }
+        if component is not None:
+            entry["component"] = component
+        return entry
 
     def init_canonical_source(self) -> None:
         self.git(self.source, "init", "-b", "main")
@@ -900,6 +905,180 @@ class BoundroomImportGuardTests(unittest.TestCase):
         self.assertEqual((REPO_ROOT / "COPYING").read_bytes(), (self.target / "automation/COPYING").read_bytes())
         self.assertFalse((self.target / "COPYING").exists())
 
+    # --- optional components (SPEC-009 RA-ENT-013) ------------------------
+
+    EXTRAS = {"extras": "An optional part, for these tests."}
+
+    def extras_case(self) -> str:
+        """A core file, and an optional component of a delete_stale directory and a file."""
+        pin = self.canonical_source_with(("core/tool.py", "core\n"), ("extras/one.py", "one\n"), ("extras-doc.md", "doc\n"))
+        self.write_manifest(
+            [
+                self.entry("core", "automation/core", kind="directory", delete_stale=True),
+                self.entry("extras", "automation/extras", kind="directory", delete_stale=True, component="extras"),
+                self.entry("extras-doc.md", "docs/workflows/extras.md", component="extras"),
+            ],
+            optional_components=self.EXTRAS,
+        )
+        return pin
+
+    def test_11_an_omitted_component_is_not_written(self) -> None:
+        pin = self.extras_case()
+
+        result = self.run_tool("--sync", "--omit", "extras", pin=pin)
+
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        self.assertTrue((self.target / "automation/core/tool.py").exists())
+        self.assertFalse((self.target / "automation/extras").exists())
+        self.assertFalse((self.target / "docs/workflows/extras.md").exists())
+        self.assertEqual(0, self.run_tool("--check", "--omit", "extras").returncode)
+        # Without the flag, the same consumer is missing the component.
+        self.assertEqual(1, self.run_tool("--check").returncode)
+
+    def test_11b_omitting_a_component_removes_what_an_earlier_sync_left(self) -> None:
+        pin = self.extras_case()
+        self.init_consumer()
+        self.assertEqual(0, self.run_tool("--sync", pin=pin).returncode)
+        # A file no release ships, in a directory only Boundroom writes, goes too.
+        self.write_target("automation/extras/leftover.py", "from an older release\n")
+        self.write_target("automation/handoffs/closed.json", "{}\n")
+        self.commit_consumer()
+
+        check = self.run_tool("--check", "--omit", "extras")
+        self.assertEqual(1, check.returncode)
+        for path in ("automation/extras/one.py", "automation/extras/leftover.py", "docs/workflows/extras.md"):
+            self.assertIn(f"omitted: {path}", check.stdout)
+        self.assertTrue((self.target / "automation/extras/one.py").exists(), "a check changes nothing")
+
+        result = self.run_tool("--sync", "--omit", "extras", pin=pin)
+
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        self.assertIn("removed omitted: automation/extras/one.py", result.stdout)
+        self.assertFalse((self.target / "automation/extras").exists())
+        self.assertFalse((self.target / "docs/workflows/extras.md").exists())
+        self.assertTrue((self.target / "docs/workflows").is_dir())
+        self.assertTrue((self.target / "automation/core/tool.py").exists())
+        self.assertTrue((self.target / "automation/handoffs/closed.json").exists())
+        self.assertEqual(0, self.run_tool("--check", "--omit", "extras").returncode)
+
+    def test_11c_an_omitted_template_is_left_to_the_consumer(self) -> None:
+        pin = self.canonical_source_with(("prompts/base.md", "upstream\n"))
+        self.write_manifest(
+            [self.entry("prompts", "automation/prompts", kind="directory", template=True, component="extras")],
+            optional_components=self.EXTRAS,
+        )
+        self.write_target("automation/prompts/base.md", "the consumer's own\n")
+
+        result = self.run_tool("--sync", "--omit", "extras", pin=pin)
+
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        self.assertEqual("the consumer's own\n", (self.target / "automation/prompts/base.md").read_text(encoding="utf-8"))
+
+    def test_11d_an_unknown_component_is_refused_before_any_write(self) -> None:
+        pin = self.extras_case()
+
+        unknown = self.run_tool("--sync", "--omit", "benchmark", pin=pin)
+
+        self.assertEqual(2, unknown.returncode)
+        self.assertIn(
+            "--omit benchmark: the manifest declares no such optional component (optional components: extras)", unknown.stderr
+        )
+        self.assertEqual([], list(self.target.iterdir()))
+
+        self.write_manifest([self.entry("core", "automation/core", kind="directory", component="extras")])
+        undeclared = self.run_tool("--sync", pin=pin)
+        self.assertEqual(2, undeclared.returncode)
+        self.assertIn("names component 'extras', which optional_components doesn't declare", undeclared.stderr)
+
+    def test_11e_without_omit_every_component_syncs(self) -> None:
+        pin = self.extras_case()
+
+        result = self.run_tool("--sync", pin=pin)
+
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        self.assertTrue((self.target / "automation/extras/one.py").exists())
+        self.assertTrue((self.target / "docs/workflows/extras.md").exists())
+
+    def test_11f_removing_an_omitted_file_respects_local_changes(self) -> None:
+        pin = self.extras_case()
+        self.init_consumer()
+        self.assertEqual(0, self.run_tool("--sync", pin=pin).returncode)
+        self.commit_consumer()
+        self.write_target("automation/extras/one.py", "local work in progress\n")
+
+        result = self.run_tool("--sync", "--omit", "extras", pin=pin)
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("locally modified files: automation/extras/one.py", result.stderr)
+        self.assertTrue((self.target / "docs/workflows/extras.md").exists(), "a refusal changes nothing")
+
+    def test_11g_a_consumer_synced_without_the_benchmark_passes_its_checks(self) -> None:
+        """RA-ENT-013's acceptance: the real manifest, with the benchmark left out, then the
+        consumer's synced tests, run the way a consumer runs them, with unittest."""
+        self.init_consumer()
+        result = subprocess.run(
+            [
+                str(SYNC_TOOL),
+                "--sync",
+                "--allow-unverified-source",
+                "--omit",
+                "benchmark",
+                "--runtime-python",
+                sys.executable,
+                "--source",
+                str(REPO_ROOT),
+                "--target",
+                str(self.target),
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+        for entry in manifest["entries"]:
+            with self.subTest(destination=entry["destination"]):
+                self.assertEqual(entry.get("component") != "benchmark", (self.target / entry["destination"]).exists())
+        self.commit_consumer()  # build_context reads the consumer's HEAD
+
+        synced_tests = sorted(
+            entry["destination"][:-3].replace("/", ".")
+            for entry in manifest["entries"]
+            if entry.get("component") is None and entry["destination"].startswith("automation/tests/test_")
+        )
+        self.assertIn("automation.tests.test_harness", synced_tests)
+        tests = subprocess.run(
+            [sys.executable, "-m", "unittest", *synced_tests],
+            cwd=self.target,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        self.assertEqual(0, tests.returncode, msg=tests.stderr[-4000:])
+
+    def test_11h_the_core_never_reaches_into_the_benchmark(self) -> None:
+        """An omitted component is only safe to leave out if nothing the consumer keeps uses it."""
+        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+        self.assertIn("benchmark", manifest["optional_components"])
+        component = [entry for entry in manifest["entries"] if entry.get("component") == "benchmark"]
+        for entry in manifest["entries"]:
+            # Whatever is named for the benchmark belongs to it.
+            if entry["source"].startswith(("automation/benchmark", "automation/tests/test_benchmark_")):
+                with self.subTest(source=entry["source"]):
+                    self.assertIn(entry, component)
+        # Core code may name neither the benchmark's package nor any file the component ships.
+        names = [re.escape(Path(entry["destination"]).name) for entry in component if entry["kind"] == "file"]
+        reference = re.compile(r"\bautomation[./]benchmark\b|" + "|".join(names))
+        for entry in manifest["entries"]:
+            if entry.get("component") is not None:
+                continue
+            source = REPO_ROOT / entry["source"]
+            files = [source] if source.is_file() else sorted(source.rglob("*"))
+            for path in files:
+                if path.suffix in {".py", ".sh"} and "__pycache__" not in path.parts:
+                    with self.subTest(core=str(path.relative_to(REPO_ROOT))):
+                        self.assertIsNone(reference.search(path.read_text(encoding="utf-8")))
+
 
 class PinStatusTests(unittest.TestCase):
     """RA-PROD-103: `--status` shows the consumer's pin, drift and Git state, and writes nothing."""
@@ -1076,6 +1255,26 @@ class PinStatusTests(unittest.TestCase):
         self.assertIn(f"--sync --target {self.target.resolve()} --pin {self.v2} --expect-remote {self.REMOTE}", result.stdout)
         self.assertIn(f"sync back to the current pin {self.v1}", result.stdout)
         self.assertIn("desired differs from the pin", result.stdout)
+
+    def test_omitted_components_are_reported_and_carried_into_the_commands(self) -> None:
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["optional_components"] = {"extras": "An optional part, for this test."}
+        manifest["entries"][0]["component"] = "extras"
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        # v3's sync script knows --omit; v1's, from before optional components, doesn't.
+        (self.source / "Tools").mkdir()
+        (self.source / "Tools/boundroom-sync.sh").write_text('parser.add_argument("--omit")\n', encoding="utf-8")
+        v3 = self.commit_source("three\n", "v0.3.0")
+        self.git(self.source, "checkout", "--quiet", "--detach", self.v1)
+        self.write_lock(self.v1)
+        self.commit_consumer()
+
+        result = self.status("--omit", "extras", "--desired", "v0.3.0")
+
+        self.assertIn("omitted components: extras", result.stdout)
+        self.assertIn("drift: none", result.stdout, "the omitted directory isn't drift")
+        self.assertIn(f"--pin {v3} --expect-remote {self.REMOTE} --omit extras", result.stdout)
+        self.assertIn(f"--pin {self.v1} --expect-remote {self.REMOTE}\n", result.stdout)
 
     def test_previous_pin_comes_from_the_lock_history(self) -> None:
         self.vendor()

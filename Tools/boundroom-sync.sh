@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
@@ -81,6 +81,9 @@ class Entry:
     preserve_executable: bool
     delete_stale: bool
     template: bool
+    # None is the core every consumer gets; a name is an optional component the manifest
+    # declares, which a consumer can leave out with --omit (SPEC-009 RA-ENT-013).
+    component: str | None = None
 
 
 @dataclass(frozen=True)
@@ -132,7 +135,7 @@ def bool_field(raw: dict[str, Any], key: str) -> bool:
     return value
 
 
-def parse_entry(raw: object) -> Entry:
+def parse_entry(raw: object, optional_components: dict[str, str] | None = None) -> Entry:
     if not isinstance(raw, dict):
         raise SyncError("manifest entries must be objects")
 
@@ -182,6 +185,12 @@ def parse_entry(raw: object) -> Entry:
                 f"forbidden import destination {destination!r} contains consumer-owned {consumer_path!r}"
             )
 
+    component = raw.get("component")
+    if component is not None and component not in (optional_components or {}):
+        raise SyncError(
+            f"manifest entry {source!r} names component {component!r}, which optional_components doesn't declare"
+        )
+
     return Entry(
         source=source,
         destination=destination,
@@ -189,7 +198,24 @@ def parse_entry(raw: object) -> Entry:
         preserve_executable=bool_field(raw, "preserve_executable"),
         delete_stale=bool_field(raw, "delete_stale"),
         template=bool_field(raw, "template"),
+        component=component,
     )
+
+
+def parse_optional_components(data: dict[str, Any]) -> dict[str, str]:
+    """Read the optional manifest `optional_components` block: each name, with what it holds.
+
+    An absent block means everything is core, which is what every manifest meant before it existed.
+    """
+    raw = data.get("optional_components", {})
+    if not isinstance(raw, dict):
+        raise SyncError("manifest optional_components must be an object of name: description")
+    for name, description in raw.items():
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", name) or not isinstance(description, str) or not description:
+            raise SyncError(
+                f"manifest optional component {name!r} needs a lowercase name and a non-empty description"
+            )
+    return dict(raw)
 
 
 RUNTIME_DEPENDENCY_FIELDS = {"distribution", "import_name", "minimum_major", "maximum_major_exclusive"}
@@ -255,7 +281,7 @@ def parse_runtime_requirements(data: dict[str, Any]) -> list[RuntimeRequirement]
     return requirements
 
 
-def load_manifest(path: Path) -> tuple[list[Entry], list[RuntimeRequirement]]:
+def load_manifest(path: Path) -> tuple[list[Entry], list[RuntimeRequirement], dict[str, str]]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -282,7 +308,9 @@ def load_manifest(path: Path) -> tuple[list[Entry], list[RuntimeRequirement]]:
     if not isinstance(raw_entries, list) or not raw_entries:
         raise SyncError("manifest entries must be a non-empty list")
 
-    return [parse_entry(raw) for raw in raw_entries], parse_runtime_requirements(data)
+    optional_components = parse_optional_components(data)
+    entries = [parse_entry(raw, optional_components) for raw in raw_entries]
+    return entries, parse_runtime_requirements(data), optional_components
 
 
 def resolve_under(base: Path, relative: str, *, must_exist: bool) -> Path:
@@ -375,6 +403,24 @@ def stale_files(target_root: Path, entry: Entry, expected: set[Path]) -> list[tu
     return stale
 
 
+def omitted_files(target_root: Path, entry: Entry, expected: set[Path]) -> list[tuple[Path, str]]:
+    """Files an earlier sync left for an entry the consumer now omits: what this entry would write,
+    and for a delete_stale directory everything under it, since that directory is Boundroom's.
+    A template entry is the consumer's once copied, so nothing of it is ever removed."""
+    if entry.template:
+        return []
+    destination = resolve_under(target_root, entry.destination, must_exist=False)
+    if entry.kind == "directory" and entry.delete_stale and destination.is_dir():
+        candidates = [child for child in sorted(destination.rglob("*")) if not should_skip(child) and not child.is_dir()]
+    else:
+        candidates = sorted(expected)
+    return [
+        (path, path.relative_to(target_root).as_posix())
+        for path in candidates
+        if path.is_file() or path.is_symlink()
+    ]
+
+
 def remove_empty_dirs(root: Path) -> None:
     if not root.exists():
         return
@@ -435,6 +481,7 @@ class Plan:
     deletions: list[tuple[Path, str]]
     issues: list[str]
     file_count: int = 0
+    omissions: list[tuple[Path, str]] = field(default_factory=list)
 
 
 def plan_entries(
@@ -442,14 +489,17 @@ def plan_entries(
     target_root_resolved: Path,
     entries: list[Entry],
     *,
-    force_templates: bool = False
+    force_templates: bool = False,
+    omit: frozenset[str] = frozenset(),
 ) -> Plan:
     """Compare the source with the consumer, entry by entry, without touching either.
 
-    --check and --status report `issues`; --sync carries out `writes` and `deletions`.
+    --check and --status report `issues`; --sync carries out `writes` and `deletions`. An entry
+    in an omitted component writes nothing, and what an earlier sync left of it is removed.
     """
     writes: list[tuple[Path, Path, str, Entry]] = []
     deletions: list[tuple[Path, str]] = []
+    omissions: list[tuple[Path, str]] = []
     issues: list[str] = []
     file_count = 0
 
@@ -457,6 +507,12 @@ def plan_entries(
         pairs = source_files(source_root, target_root_resolved, entry)
         file_count += len(pairs)
         expected = {target for _, target, _ in pairs}
+
+        if entry.component in omit:
+            for path, display in omitted_files(target_root_resolved, entry, expected):
+                issues.append(f"omitted: {display}")
+                omissions.append((path, display))
+            continue
 
         for source, target, display in pairs:
             if entry.template and target.exists() and not force_templates:
@@ -471,7 +527,7 @@ def plan_entries(
             issues.append(f"stale: {display}")
             deletions.append((stale, display))
 
-    return Plan(writes=writes, deletions=deletions, issues=sorted(issues), file_count=file_count)
+    return Plan(writes=writes, deletions=deletions, issues=sorted(issues), file_count=file_count, omissions=omissions)
 
 
 def sync_entries(
@@ -481,6 +537,7 @@ def sync_entries(
     *,
     check: bool,
     force_templates: bool = False,
+    omit: frozenset[str] = frozenset(),
     tracer: Any = None,
 ) -> int:
     tracer = tracer or NoTelemetry()
@@ -489,16 +546,20 @@ def sync_entries(
     # Plan the whole import before touching anything, so a refusal leaves the consumer
     # byte-for-byte unchanged rather than half-imported.
     with traced(tracer, "boundroom.sync.plan", check=check) as span:
-        plan = plan_entries(source_root, target_root_resolved, entries, force_templates=force_templates)
-        writes, deletions, issues = plan.writes, plan.deletions, plan.issues
-        tracer.annotate(span, file_count=plan.file_count, drift_count=len(issues) if check else len(writes) + len(deletions))
+        plan = plan_entries(source_root, target_root_resolved, entries, force_templates=force_templates, omit=omit)
+        writes, deletions, omissions, issues = plan.writes, plan.deletions, plan.omissions, plan.issues
+        removals = [(path, display, "stale") for path, display in deletions] + [
+            (path, display, "omitted") for path, display in omissions
+        ]
+        tracer.annotate(span, file_count=plan.file_count, drift_count=len(issues) if check else len(writes) + len(removals))
 
         if not check:
             # Part of the plan rather than the write: it is the last refusal before anything changes.
             modified = locally_modified_targets(target_root_resolved)
             clobbered = sorted(
                 display
-                for path, display in [(target, display) for _, target, display, _ in writes] + deletions
+                for path, display in [(target, display) for _, target, display, _ in writes]
+                + [(path, display) for path, display, _ in removals]
                 if path.resolve(strict=False) in modified
             )
             if clobbered:
@@ -527,17 +588,23 @@ def sync_entries(
             print(f"synced: {display}")
             changes += 1
 
-        for stale, display in deletions:
-            stale.unlink()
-            print(f"removed stale: {display}")
+        for path, display, reason in removals:
+            path.unlink()
+            print(f"removed {reason}: {display}")
             changes += 1
 
         for entry in entries:
-            if entry.kind == "directory" and entry.delete_stale:
-                remove_empty_dirs(resolve_under(target_root_resolved, entry.destination, must_exist=False))
-        tracer.annotate(write, written=len(writes), removed=len(deletions))
+            if entry.kind == "directory" and (entry.delete_stale or entry.component in omit) and not entry.template:
+                destination = resolve_under(target_root_resolved, entry.destination, must_exist=False)
+                remove_empty_dirs(destination)
+                if entry.component in omit:
+                    try:
+                        destination.rmdir()
+                    except OSError:
+                        pass  # missing, or it still holds something the sync doesn't own
+        tracer.annotate(write, written=len(writes), removed=len(removals))
         tracer.metric("boundroom.sync.changes", len(writes), kind="synced")
-        tracer.metric("boundroom.sync.changes", len(deletions), kind="removed")
+        tracer.metric("boundroom.sync.changes", len(removals), kind="removed")
 
     if changes:
         print(f"result: synced {changes} change(s)")
@@ -840,9 +907,23 @@ def script_at(source_root: Path, sha: str) -> str:
     return "Tools/repo-automation-sync.sh"
 
 
-def sync_commands(source_root: Path, target_root: Path, sha: str, remote: str | None) -> list[str]:
+def omit_flags(source_root: Path, sha: str, script: str, omit: frozenset[str]) -> str:
+    """The --omit flags for a command at `sha`, if the script there knows the flag. A release from
+    before optional components syncs everything, so its commands carry none."""
+    if not omit:
+        return ""
+    shown = read_only_git(source_root, "show", f"{sha}:{script}")
+    if shown.returncode != 0 or '"--omit"' not in shown.stdout:
+        return ""
+    return "".join(f" --omit {shlex.quote(name)}" for name in sorted(omit))
+
+
+def sync_commands(
+    source_root: Path, target_root: Path, sha: str, remote: str | None, omit: frozenset[str] = frozenset()
+) -> list[str]:
     script = script_at(source_root, sha)
     common = f"--target {shlex.quote(str(target_root))} --pin {sha} --expect-remote {shlex.quote(remote) if remote else '<remote-url>'}"
+    common += omit_flags(source_root, sha, script, omit)
     return [
         f"cd {shlex.quote(str(source_root))} && git checkout --detach {sha}",
         f"{script} --check {common}",
@@ -860,6 +941,7 @@ def pin_status(
     desired: str | None,
     expect_remote: str | None,
     runtime_python: str,
+    omit: frozenset[str] = frozenset(),
 ) -> int:
     attention: list[str] = []
     target = target_root.resolve(strict=False)
@@ -949,7 +1031,9 @@ def pin_status(
             attention.append("source is not at the pinned commit")
     if source_dirty:
         print("drift note: the source has uncommitted changes, so this compares its working tree, not a commit")
-    issues = plan_entries(source_root, target, entries).issues
+    if omit:
+        print(f"omitted components: {', '.join(sorted(omit))}")
+    issues = plan_entries(source_root, target, entries, omit=omit).issues
     for issue in issues:
         print(f"  {issue}")
     if issues:
@@ -987,18 +1071,18 @@ def pin_status(
     print("commands (printed only; --status runs none of them):")
     if pin:
         print(f"  reproduce the check of the current pin {pin}:")
-        for line in sync_commands(source_root, target, pin, remote)[:2]:
+        for line in sync_commands(source_root, target, pin, remote, omit)[:2]:
             print(f"    {line}")
     if desired_sha and desired_sha != pin:
         print(f"  update to {desired} ({desired_sha}):")
-        for line in sync_commands(source_root, target, desired_sha, remote):
+        for line in sync_commands(source_root, target, desired_sha, remote, omit):
             print(f"    {line}")
     previous = previous_pin(target, lock_name, pin) if lock_name else None
     if previous and previous == desired_sha:
         print(f"  roll back to the previous pin {previous}: the update above is that rollback.")
     elif previous:
         print(f"  roll back to the previous pin {previous}{tags_at(source_root, previous)} (from the lock's Git history):")
-        for line in sync_commands(source_root, target, previous, remote):
+        for line in sync_commands(source_root, target, previous, remote, omit):
             print(f"    {line}")
     elif pin:
         print("  roll back: the lock's Git history holds no earlier pin.")
@@ -1181,6 +1265,15 @@ def main(argv: list[str]) -> int:
         help="Development only. Skip the pin, identity, cleanliness and quality checks on the source."
     )
     parser.add_argument(
+        "--omit",
+        action="append",
+        default=[],
+        metavar="COMPONENT",
+        help="Leave out an optional component the manifest declares, such as benchmark: its files aren't "
+        "written, and what an earlier sync left of them is removed. Repeat for more than one. Pass the same "
+        "--omit to every --check, --sync and --status, or the next sync puts the component back.",
+    )
+    parser.add_argument(
         "--force-templates",
         action="store_true",
         help="Re-baseline template entries to source content even when destination files already exist. "
@@ -1219,7 +1312,15 @@ def main(argv: list[str]) -> int:
 
 def sync_run(args: argparse.Namespace, source_root: Path, target_root: Path, tracer: Any) -> int:
     manifest = Path(args.manifest).expanduser() if args.manifest else source_root / "automation/reusable-manifest.json"
-    entries, runtime_requirements = load_manifest(manifest)
+    entries, runtime_requirements, optional_components = load_manifest(manifest)
+    unknown = sorted(set(args.omit) - set(optional_components))
+    if unknown:
+        declared = ", ".join(sorted(optional_components)) or "none"
+        raise SyncError(
+            f"--omit {', '.join(unknown)}: the manifest declares no such optional component "
+            f"(optional components: {declared})"
+        )
+    omit = frozenset(args.omit)
 
     expected_remote = without_credentials(args.expect_remote) if args.expect_remote else None
     with traced(tracer, "boundroom.sync.verify", pin=args.pin, expected_remote=expected_remote) as verify:
@@ -1236,6 +1337,7 @@ def sync_run(args: argparse.Namespace, source_root: Path, target_root: Path, tra
                 desired=args.desired,
                 expect_remote=args.expect_remote,
                 runtime_python=args.runtime_python,
+                omit=omit,
             )
 
         # --check answers "does the snapshot match the commit it is pinned to", so it needs the
@@ -1275,6 +1377,7 @@ def sync_run(args: argparse.Namespace, source_root: Path, target_root: Path, tra
         entries,
         check=args.check,
         force_templates=args.force_templates,
+        omit=omit,
         tracer=tracer,
     )
 

@@ -82,6 +82,7 @@ The manifest is explicit rather than glob-heavy. Each entry identifies:
 - whether executable mode should be preserved
 - whether stale destination files under that owned path may be deleted
 - whether the entry is reusable now or copied as a template for consumer customization
+- optionally, the component it belongs to, if it isn't core (see [Optional components](#optional-components))
 
 The sync tool rejects paths outside the repository root and outside the target root. It does not follow symlinks into untracked locations.
 
@@ -131,8 +132,25 @@ Use `Tools/boundroom-sync.sh` for manifest-owned sync:
 - `--sync`: update a consumer's vendored snapshot to match the manifest at the pinned canonical commit.
 - `--status`: read-only. Report the consumer's lock and pin, compare it with `--desired <tag-or-sha>`, report drift and whether the consumer's worktree is clean, and print the update and rollback commands without running them ([Check your pin](upgrading.md#check-your-pin)).
 - `--import`: the explicit mutating path; require the canonical source to be clean and published at the pinned commit, import canonical-owned files inward, then verify `--check` passes. There is no outward `--auto-update`; it was the destructive direction and is removed.
+- `--omit <component>`: leave out an optional component the manifest declares, such as `benchmark` ([Optional components](#optional-components)). Repeat it for more than one.
 - `--target <path>`: **required.** The consumer to write into. There is no default, and it may not be the canonical repository or another checkout of it.
 - `--source <path>` and `--manifest <path>`: test hooks for temp repositories and alternate manifests.
+
+### Optional components
+
+Most of the manifest is core, which every consumer gets. The manifest's `optional_components` block names the parts a consumer can leave out, and each of their entries sets `"component"` to that name. Today there is one, `benchmark`: the effectiveness benchmark under `automation/benchmark/`, its tests, its fixture and [its guide](effectiveness-benchmark.md). The supervisor never imports it, a test fails if any core file names it, and you don't need it to supervise a Claude Code or Codex runner.
+
+To leave it out, pass `--omit benchmark`:
+
+```bash
+Tools/boundroom-sync.sh --sync --omit benchmark --target <consumer> --pin <full-sha> --expect-remote <url>
+```
+
+The sync then writes none of the component's files. It removes any that an earlier sync left, and for a directory only Boundroom writes, such as `automation/benchmark/`, it removes the whole directory. It never removes a template, and it refuses to remove a file with uncommitted changes, the same as for any other file it would change.
+
+Pass the same `--omit` to every `--check`, `--sync` and `--status`, usually from the consumer's Makefile, alongside `--pin`. Without it, `--check` reports the component's files as missing, and the next `--sync` puts them back. `--status --omit benchmark` carries the flag into the commands it prints, except for commands at a release from before optional components. Those releases have no `--omit` and sync everything.
+
+`--omit` refuses a name the manifest doesn't declare. A manifest entry that names an undeclared component is refused too. A sync tool from before optional components ignores both fields and syncs everything.
 
 ### Canonical quality gate
 

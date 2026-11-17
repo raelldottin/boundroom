@@ -637,6 +637,13 @@ SETTINGS: tuple[Setting, ...] = (
         flags=(_flag("sync", "--allow-unverified-source"),),
     ),
     Setting(
+        "sync_omit",
+        "sync",
+        "advanced",
+        "Leave out an optional component the manifest declares, such as benchmark. Pass it to every sync command.",
+        flags=(_flag("sync", "--omit"),),
+    ),
+    Setting(
         "sync_force_templates",
         "sync",
         "security",
