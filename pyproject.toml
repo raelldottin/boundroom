@@ -12,7 +12,7 @@ dependencies = [
 # SPEC-006: imported only when telemetry is on. Not in the sync manifest's runtime dependencies,
 # so a consumer without it still imports.
 telemetry = [
-    "logfire==5.4.0",
+    "logfire==5.6.0",
 ]
 
 [dependency-groups]
@@ -25,7 +25,7 @@ dev = [
     "mkdocs-material==9.8.0",
     "pip-audit==2.10.1",
     # So CI exercises the telemetry exporter; the same pin as the telemetry extra.
-    "logfire==5.4.0",
+    "logfire==5.6.0",
 ]
 
 [tool.uv]

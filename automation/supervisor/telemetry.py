@@ -147,7 +147,13 @@ class Telemetry:
         deadline = time.monotonic() + FLUSH_TIMEOUT_SECONDS
         flushed = True
         if self._processor is not None:
-            flushed = bool(self._processor.force_flush(timeout_millis=FLUSH_TIMEOUT_SECONDS * 1000))
+            # Logfire 5.6 holds finished spans in its own pipeline until Logfire flushes, so
+            # flushing only Boundroom's processor would write nothing. Logfire's flush reaches
+            # every processor, Boundroom's included; the second flush gets whatever time is left.
+            if self._logfire is not None:
+                self._logfire.force_flush(timeout_millis=FLUSH_TIMEOUT_SECONDS * 1000)
+            remaining = max(0, int((deadline - time.monotonic()) * 1000))
+            flushed = bool(self._processor.force_flush(timeout_millis=remaining))
             if not flushed:
                 print(f"telemetry: flush did not finish within {FLUSH_TIMEOUT_SECONDS}s; the rest was dropped", file=sys.stderr)
             self._processor.shutdown()
