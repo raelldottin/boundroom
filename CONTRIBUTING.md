@@ -27,7 +27,7 @@ make reusable-check
 pre-commit install
 ```
 
-That installs a pre-commit hook, which runs ruff on the files you commit, and a pre-push hook, which runs `make reusable-check` and the attribution-trailer check. The hooks are a convenience. CI's result on the pull request is what counts.
+That installs a pre-commit hook, which runs ruff on the files you commit, and a pre-push hook, which runs the attribution-trailer check on the commits you push and `make reusable-check` on your working tree. The gate sees uncommitted edits too, so commit or stash them before you push. The hooks are a convenience. CI's result on the pull request is what counts.
 
 ## Make the change
 

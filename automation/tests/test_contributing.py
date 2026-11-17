@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS = REPO_ROOT / "AGENTS.md"
@@ -45,18 +46,18 @@ def gate_commands() -> list[str]:
     return commands
 
 
-def hooks() -> list[dict[str, str]]:
-    """Each pre-commit hook's scalar keys, read without a YAML parser."""
-    found: list[dict[str, str]] = []
-    for line in read(PRE_COMMIT).splitlines():
-        item = re.match(r"^\s+- id:\s*(\S+)\s*$", line)
-        if item:
-            found.append({"id": item.group(1)})
-            continue
-        key = re.match(r"^\s+(\w+):\s*(.+?)\s*$", line)
-        if key and found:
-            found[-1][key.group(1)] = key.group(2)
-    return found
+def load_yaml(path: Path) -> Any:
+    """The file parsed as YAML. PyYAML comes with mkdocs, a dev dependency."""
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - only outside the dev environment
+        raise unittest.SkipTest("PyYAML isn't installed") from None
+    return yaml.safe_load(read(path))
+
+
+def hooks() -> list[dict[str, Any]]:
+    """Every hook in the pre-commit config, across its repos."""
+    return [hook for repo in load_yaml(PRE_COMMIT)["repos"] for hook in repo["hooks"]]
 
 
 def section(title: str) -> str:
@@ -68,7 +69,7 @@ def section(title: str) -> str:
 
 
 def form_ids(path: Path) -> set[str]:
-    return set(re.findall(r"^\s+id:\s*(\w+)\s*$", read(path), re.MULTILINE))
+    return {item["id"] for item in load_yaml(path)["body"] if "id" in item}
 
 
 class RequiredCheckTests(unittest.TestCase):
@@ -116,15 +117,10 @@ class PullRequestTemplateTests(unittest.TestCase):
 
 class IssueTemplateTests(unittest.TestCase):
     def test_the_forms_and_the_hook_config_are_valid_yaml(self) -> None:
-        # GitHub drops an issue form it can't parse, without saying so. PyYAML comes with mkdocs,
-        # a dev dependency.
-        try:
-            import yaml
-        except ImportError:  # pragma: no cover - only outside the dev environment
-            self.skipTest("PyYAML isn't installed")
+        # GitHub drops an issue form it can't parse, without saying so.
         for path in [*ISSUE_TEMPLATES.glob("*.yml"), PRE_COMMIT]:
             with self.subTest(file=path.name):
-                self.assertIsInstance(yaml.safe_load(read(path)), dict)
+                self.assertIsInstance(load_yaml(path), dict)
 
     def test_a_bug_report_asks_for_what_troubleshooting_says_to_include(self) -> None:
         reporting = read(TROUBLESHOOTING).split("## Reporting a problem", 1)[1]
@@ -146,8 +142,7 @@ class IssueTemplateTests(unittest.TestCase):
 class PreCommitTests(unittest.TestCase):
     def test_every_hook_is_local(self) -> None:
         # No remote hook repository, so pre-commit downloads no code and there is nothing to pin.
-        repos = re.findall(r"^\s*- repo:\s*(\S+)\s*$", read(PRE_COMMIT), re.MULTILINE)
-        self.assertEqual(repos, ["local"])
+        self.assertEqual([repo["repo"] for repo in load_yaml(PRE_COMMIT)["repos"]], ["local"])
         for hook in hooks():
             with self.subTest(hook=hook["id"]):
                 self.assertEqual(hook.get("language"), "system")
@@ -158,6 +153,8 @@ class PreCommitTests(unittest.TestCase):
         for hook in hooks():
             with self.subTest(hook=hook["id"]):
                 entry = hook["entry"]
+                # args would be appended to the entry, and could change what it checks (--exit-zero, --fix).
+                self.assertNotIn("args", hook, f"{hook['id']} passes args, so it may not run the gate command as is")
                 # pre-commit appends file names, so a hook runs a gate command on fewer paths.
                 self.assertTrue(
                     any(command == entry or command.removesuffix(" .") == entry for command in allowed),
@@ -165,8 +162,9 @@ class PreCommitTests(unittest.TestCase):
                 )
 
     def test_a_push_runs_the_whole_gate_and_the_trailer_check(self) -> None:
-        self.assertRegex(read(PRE_COMMIT), r"(?m)^default_install_hook_types:\s*\[[^\]]*\bpre-push\b")
-        on_push = {hook["entry"] for hook in hooks() if "pre-push" in hook.get("stages", "")}
+        self.assertIn("pre-push", load_yaml(PRE_COMMIT)["default_install_hook_types"])
+        # A hook with no stages runs in every installed stage.
+        on_push = {hook["entry"] for hook in hooks() if "pre-push" in hook.get("stages", ["pre-push"])}
         self.assertTrue({"make reusable-check", TRAILER_CHECK} <= on_push)
 
 
@@ -188,6 +186,16 @@ class ContributingTests(unittest.TestCase):
             for target in re.findall(r"\]\(([^)#:]+)(?:#[^)]*)?\)", read(path)):
                 with self.subTest(file=path.name, target=target):
                     self.assertTrue((path.parent / target).exists(), f"{path.name} links to missing {target}")
+
+    def test_repository_paths_named_in_plain_text_exist(self) -> None:
+        # The forms and the template name files as text, not links, so a rename would leave them stale.
+        named = re.compile(r"(?<![\w/.-])((?:docs|Tools|automation|\.github)/[\w/.-]+\.(?:md|py|sh|yml)|[A-Z]+\.md)\b")
+        files = [CONTRIBUTING, PR_TEMPLATE, PRE_COMMIT, *ISSUE_TEMPLATES.glob("*.yml")]
+        self.assertTrue(any("docs/reference/exit-codes.md" in read(path) for path in files))  # a guard on the scan
+        for path in files:
+            for target in set(named.findall(read(path))):
+                with self.subTest(file=path.name, target=target):
+                    self.assertTrue((REPO_ROOT / target).exists(), f"{path.name} names missing {target}")
 
     def test_the_readme_links_the_guide(self) -> None:
         self.assertIn("](CONTRIBUTING.md)", read(REPO_ROOT / "README.md"))

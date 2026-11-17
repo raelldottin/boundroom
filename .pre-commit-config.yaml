@@ -8,6 +8,8 @@
 #   pre-commit install
 #
 # installs both stages below: ruff on each commit, and the full gate on each push.
+# The push stage checks the commits being pushed for trailers, but runs the gate on your working
+# tree as it is, uncommitted edits included, so commit or stash them first.
 default_install_hook_types: [pre-commit, pre-push]
 repos:
   - repo: local
