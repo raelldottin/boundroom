@@ -20,36 +20,62 @@ SYNC = REPO_ROOT / "Tools/boundroom-sync.sh"
 OPERATOR_PAGES = ("architecture.md", "security-model.md", "exit-codes.md", "troubleshooting.md")
 
 # Shell scripts are named, not discovered: Tools/ also holds CI checks and the old-name shim.
-SHELL_COMMANDS = ("automation/supervisor/run_agent.sh",)
+SHELL_COMMANDS = ("automation/supervisor/run_agent.sh", "Tools/boundroom-sync.sh")
 # Directories whose Python command-line entry points the reference must cover.
 PYTHON_COMMAND_DIRS = ("automation/supervisor", "automation/context", "Tools")
+# Documented codes no literal in the source shows, because the command passes on the exit code
+# of a program it runs.
+PASSED_THROUGH = {"automation/context/swarm_wiki.py": {0}}  # the pinned compiler's own exit 0
 
-SHELL_EXIT = re.compile(r"^\s*(?:exit|return) (\d+)\s*$", re.MULTILINE)
+# A heredoc: the line that opens it, its delimiter, the rest of that line, and its body.
+HEREDOC = re.compile(
+    r"^(?P<prefix>[^\n]*?)(?<!<)<<(?!<)-?[ \t]*(?P<quote>['\"]?)(?P<delimiter>\w+)(?P=quote)(?P<rest>[^\n]*)\n"
+    r"(?P<body>.*?)\n[ \t]*(?P=delimiter)[ \t]*$",
+    re.MULTILINE | re.DOTALL,
+)
+# Quoted strings and comments, which can mention exit without exiting.
+SHELL_NOISE = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'|(?<![\w${#])#[^\n]*")
+SHELL_EXIT = re.compile(r"(?<![\w$-])(?:exit|return)[ \t]+(\d+)\b")
 TABLE_CODE = re.compile(r"^\| (\d+) \|", re.MULTILINE)
 FIRST_CELL = re.compile(r"^\| `([a-z0-9_]+)` \|(.*)$", re.MULTILINE)
+
+
+def is_entry_point(source: str) -> bool:
+    """Whether a module has an ``if __name__ == "__main__":`` block, quoted either way."""
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare):
+            sides = [node.test.left, *node.test.comparators]
+            if any(isinstance(side, ast.Name) and side.id == "__name__" for side in sides) and any(
+                isinstance(side, ast.Constant) and side.value == "__main__" for side in sides
+            ):
+                return True
+    return False
 
 
 def python_entry_points() -> list[str]:
     found = []
     for directory in PYTHON_COMMAND_DIRS:
         for path in sorted((REPO_ROOT / directory).glob("*.py")):
-            if '__name__ == "__main__"' in path.read_text(encoding="utf-8"):
+            if is_entry_point(path.read_text(encoding="utf-8")):
                 found.append(path.relative_to(REPO_ROOT).as_posix())
     return found
 
 
 def commands() -> list[str]:
-    return [*python_entry_points(), *SHELL_COMMANDS, "Tools/boundroom-sync.sh"]
+    return [*python_entry_points(), *SHELL_COMMANDS]
 
 
-def python_source(relative: str) -> str:
-    text = (REPO_ROOT / relative).read_text(encoding="utf-8")
-    if relative == "Tools/boundroom-sync.sh":
-        # A shell launcher around one Python heredoc; the heredoc is the program.
-        match = re.search(r"<<'PY'\n(.*?)\nPY\n", text, re.DOTALL)
-        assert match, "the sync tool no longer wraps one <<'PY' heredoc"
-        return match.group(1)
-    return text
+def shell_parts(relative: str) -> tuple[str, list[str]]:
+    """A shell command's own text, without heredoc bodies, and the Python programs its heredocs feed an interpreter."""
+    programs: list[str] = []
+
+    def keep_opening_line(match: re.Match[str]) -> str:
+        if "python" in match.group("prefix").lower():
+            programs.append(match.group("body"))
+        return f"{match.group('prefix')}{match.group('rest')}"
+
+    text = HEREDOC.sub(keep_opening_line, (REPO_ROOT / relative).read_text(encoding="utf-8"))
+    return text, programs
 
 
 def int_constants(node: ast.AST | None) -> set[int]:
@@ -61,30 +87,39 @@ def int_constants(node: ast.AST | None) -> set[int]:
     return set()
 
 
-def python_exit_codes(relative: str) -> set[int]:
-    """Every literal a Python command returns or exits with, including EX_* constants it returns."""
-    tree = ast.parse(python_source(relative))
-    constants: dict[str, set[int]] = {}
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            constants[node.targets[0].id] = int_constants(node.value)
+def python_exit_codes(source: str) -> set[int]:
+    """Every literal a Python program returns or exits with, directly or through a name assigned one."""
+    tree = ast.parse(source)
+    assigned: dict[str, set[int]] = {}
+    for node in ast.walk(tree):
+        # EX_CONFIG = 78 at module level, or code = 0 if done else 1 before return code.
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    assigned.setdefault(target.id, set()).update(int_constants(node.value))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            assigned.setdefault(node.target.id, set()).update(int_constants(node.value))
+
+    def exits(value: ast.AST | None) -> set[int]:
+        branches = [value.body, value.orelse] if isinstance(value, ast.IfExp) else [value]
+        codes = int_constants(value)
+        for branch in branches:
+            if isinstance(branch, ast.Name):
+                codes |= assigned.get(branch.id, set())
+        return codes
+
     codes: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Return):
-            codes |= int_constants(node.value)
-            values = [node.value.body, node.value.orelse] if isinstance(node.value, ast.IfExp) else [node.value]
-            for value in values:
-                if isinstance(value, ast.Name) and value.id.startswith("EX_"):
-                    codes |= constants.get(value.id, set())
+            codes |= exits(node.value)
         elif isinstance(node, ast.Call) and node.args:
             name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
             if name in ("exit", "SystemExit"):
-                codes |= int_constants(node.args[0])
-    for function in ast.walk(tree):
-        # A default exit code, as in run_next's fail(reason, code, exit_code=2).
-        if isinstance(function, ast.FunctionDef):
-            names = [arg.arg for arg in function.args.args]
-            defaults = function.args.defaults
+                codes |= exits(node.args[0])
+        elif isinstance(node, ast.FunctionDef):
+            # A default exit code, as in run_next's fail(reason, code, exit_code=2).
+            names = [arg.arg for arg in node.args.args]
+            defaults = node.args.defaults
             for name, default in zip(names[len(names) - len(defaults) :], defaults):
                 if name == "exit_code":
                     codes |= int_constants(default)
@@ -93,8 +128,14 @@ def python_exit_codes(relative: str) -> set[int]:
 
 def exit_codes(relative: str) -> set[int]:
     if relative in SHELL_COMMANDS:
-        return {int(code) for code in SHELL_EXIT.findall((REPO_ROOT / relative).read_text(encoding="utf-8"))}
-    return python_exit_codes(relative)
+        # The shell's own exits, then each Python program it runs from a heredoc, whose status
+        # it passes on, as run_agent.sh's sandbox probe and the sync tool's whole program do.
+        shell, programs = shell_parts(relative)
+        codes = {int(code) for code in SHELL_EXIT.findall(SHELL_NOISE.sub("", shell))}
+        for program in programs:
+            codes |= python_exit_codes(program)
+        return codes
+    return python_exit_codes((REPO_ROOT / relative).read_text(encoding="utf-8"))
 
 
 def sections() -> dict[str, str]:
@@ -179,18 +220,45 @@ class ExitCodeTests(unittest.TestCase):
                 missing = exit_codes(command) - listed
                 self.assertFalse(missing, f"{command} can exit {sorted(missing)}, which {REFERENCE.name} doesn't list")
 
+    def test_every_documented_code_is_one_the_source_can_exit_with(self) -> None:
+        # The other direction, so a row for a code a command no longer uses fails too.
+        documented = sections()
+        for command in commands():
+            with self.subTest(command=command):
+                listed = {int(code) for code in TABLE_CODE.findall(documented.get(command, ""))}
+                stale = listed - exit_codes(command) - PASSED_THROUGH.get(command, set())
+                self.assertFalse(stale, f"{REFERENCE.name} lists {sorted(stale)} for {command}, which it can't exit with")
+
     def test_the_extraction_sees_the_codes_it_should(self) -> None:
         # Known codes from each kind of source, so a broken extractor can't pass vacuously.
         self.assertTrue({0, 2, 64, 78} <= exit_codes("automation/supervisor/run_next.py"))
-        self.assertTrue({64, 66, 69, 73, 78} <= exit_codes("automation/supervisor/run_agent.sh"))
+        # 1 comes from the sandbox probe's Python heredoc, which the wrapper passes on.
+        self.assertTrue({0, 1, 64, 66, 69, 73, 78} <= exit_codes("automation/supervisor/run_agent.sh"))
         self.assertTrue({0, 1, 2} <= exit_codes("Tools/boundroom-sync.sh"))
         self.assertTrue({0, 1, 64} <= exit_codes("Tools/check_plugin_version.py"))
         self.assertIn(1, exit_codes("automation/supervisor/operator_status.py"))
+        # 0 and 1 are assigned to a name, then returned.
+        self.assertTrue({0, 1, 78} <= exit_codes("automation/supervisor/evaluate_handoff.py"))
 
     def test_a_shell_exit_inside_a_quoted_string_is_not_counted(self) -> None:
         # run_agent.sh builds a sandbox command containing "exit 75"; the wrapper never exits 75.
         self.assertIn("exit 75", (REPO_ROOT / "automation/supervisor/run_agent.sh").read_text(encoding="utf-8"))
         self.assertNotIn(75, exit_codes("automation/supervisor/run_agent.sh"))
+
+    def test_the_shell_pattern_finds_exits_mid_line_but_not_in_strings_or_comments(self) -> None:
+        def found(text: str) -> set[int]:
+            return {int(code) for code in SHELL_EXIT.findall(SHELL_NOISE.sub("", text))}
+
+        self.assertEqual(found("command -v x >/dev/null || exit 70\n"), {70})
+        self.assertEqual(found("if bad; then echo no; exit 71; fi\n"), {71})
+        self.assertEqual(found("  exit 72  # a reason\n"), {72})
+        self.assertEqual(found("echo \"then exit 73\" 'or exit 74'  # exit 75\n"), set())
+        self.assertEqual(found("echo ${#args} $# ; exit 76\n"), {76})
+
+    def test_an_entry_point_is_found_whichever_quotes_it_uses(self) -> None:
+        self.assertTrue(is_entry_point("if __name__ == '__main__':\n    pass\n"))
+        self.assertTrue(is_entry_point('if "__main__" == __name__:\n    pass\n'))
+        self.assertFalse(is_entry_point('NAME = "__main__"\n'))
 
 
 class ErrorTableTests(unittest.TestCase):

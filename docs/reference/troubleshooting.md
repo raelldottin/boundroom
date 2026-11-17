@@ -13,7 +13,7 @@ The first reports the next slice, what would stop a run, the sync pin and the te
 
 ## Before a slice starts
 
-These stop the run before anything is claimed. The queue is unchanged, so fix the cause and run again.
+These stop the run before it claims its next slice. That slice is unchanged, so fix the cause and run again. In a run of several slices, any slice judged earlier in the same run keeps its verdict, and its decision report is printed above the `stop:` line.
 
 | Message | Exit | Cause | What to do |
 | --- | --- | --- | --- |
@@ -41,7 +41,7 @@ A warning that names a `REPO_AUTOMATION_*` or `OWLORY_*` variable doesn't stop t
 
 ## During a slice
 
-These happen after the slice is claimed. The supervisor marks the slice `failed`, prints a failure report, and exits as shown. To try again, fix the cause, then set the slice back to `queued` in a reviewed change to the queue.
+These happen after the slice is claimed. The supervisor marks the slice `failed`, prints a failure report, and exits as shown. The last row is the exception. To try again, fix the cause, then set the slice back to `queued` in a reviewed change to the queue.
 
 | Failure reason, or what you see | Exit | Cause | What to do |
 | --- | --- | --- | --- |
@@ -57,6 +57,7 @@ These happen after the slice is claimed. The supervisor marks the slice `failed`
 | `handoff_invalid` | 2 | The handoff isn't valid JSON or doesn't match the schema. | Check it against `automation/schemas/handoff.schema.json`. |
 | `handoff_slice_mismatch` | 2 | The handoff names another slice. | Check the runner's prompt and the handoff. |
 | `git_error`, with `HEAD no longer descends from the commit the slice started at` | 2 | The session reset, rebased or switched branches, which hides what it changed. | Inspect the branch. Runners must add commits, not rewrite them. |
+| `stop: git command failed ...`, or a traceback, after the session and with no failure report | 2, or 1 for a traceback | Git failed while the supervisor measured the slice, or the supervisor met an error it doesn't handle. The slice was not judged, and stays `in_progress`. | Fix the cause, then see [a slice stuck in progress](#a-slice-stuck-in-progress). |
 
 ## After a slice is judged
 
@@ -75,7 +76,7 @@ The run exits 0. The decision report's `decision` and `reason` say what happened
 
 ## A slice stuck in progress
 
-A slice stays `in_progress` when a run is killed, or its machine stops, before it judges the slice. The supervisor has no reset command, on purpose: deciding what happened to half-finished work is a person's call.
+A slice stays `in_progress` when a run stops before it judges the slice: the process is killed, its machine stops, or the supervisor stops on an error after the claim without printing a failure report, such as a Git failure while it measures the slice. The supervisor has no reset command, on purpose: deciding what happened to half-finished work is a person's call.
 
 1. Make sure no run is going: look for a `run_next.py` process, for example with `pgrep -fl run_next.py`. A dry run doesn't take the run lock, so it can't tell you.
 2. Look at what the slice left: its commits since it started, any handoff in `automation/handoffs/`, and the working tree.

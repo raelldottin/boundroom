@@ -2,7 +2,7 @@
 
 Every exit code the supervisor, its helper commands and the sync tool use, what each one means, and what to do. Scripts should branch on these codes and on the JSON reports, not on message text. The [compatibility policy](compatibility.md) says a code never gets a new meaning, even in a minor release.
 
-`automation/tests/test_operator_docs.py` reads each command's source and fails if it can exit with a code this page doesn't list, if a command-line entry point has no section here, or if a failure reason or decision below is missing.
+`automation/tests/test_operator_docs.py` reads each command's source and fails if it can exit with a code this page doesn't list, if this page lists a code it can't exit with, if a command-line entry point has no section here, or if a failure reason or decision below is missing.
 
 ## How to read a stop
 
@@ -22,10 +22,14 @@ Selects, claims, runs and judges slices.
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | 0 | The run ended at a stop. It printed a decision report for each slice it judged, whatever the verdict. Also: nothing was eligible, or `--dry-run`. | Read the last decision report's `decision` and `reason`. |
-| 2 | Refused before claiming anything: a slice already `in_progress`, a dirty path outside the next slice's scope, no agent command, a missing or invalid queue, not a Git repository, a board inside the repository, a `--report-file` inside the repository, or flags that go together given alone. **Or** a claimed slice failed under the supervisor, and the queue now shows it `failed` with a failure report: see [failure reasons](#failure-reasons). | Read the `stop:` line and its `hint:`, if any. See [troubleshooting](troubleshooting.md). |
-| 64 | `--single-slice` was given with `--autonomous-limit`. | Pass one or the other. |
-| 78 | Refused before claiming anything, by configuration: a run inside a supervised slice, another run holding the run lock, a runner profile the environment doesn't allow, or telemetry that is required but can't be turned on. | Read the `stop:` line. Nothing in the queue changed. |
+| 2 | Refused before claiming the next slice: a slice already `in_progress`, a dirty path outside the next slice's scope, no agent command, a missing or invalid queue, not a Git repository, a context bundle its configuration refuses, such as a memory recall the grant doesn't allow, a board inside the repository, a `--report-file` inside the repository, or flags that go together given alone. **Or** a claimed slice failed under the supervisor, and the queue now shows it `failed` with a failure report: see [failure reasons](#failure-reasons). **Or** Git failed while the supervisor measured a claimed slice: the `stop:` line names the Git error, no failure report is printed, and the slice stays `in_progress`. | Read the `stop:` line and its `hint:`, if any. See [troubleshooting](troubleshooting.md), and for a slice left `in_progress`, [a slice stuck in progress](troubleshooting.md#a-slice-stuck-in-progress). |
+| 64 | `--single-slice` was given with `--autonomous-limit`, and nothing was claimed. **Or** the agent command exited 64: see the last row. | Pass one or the other. For the agent's 64, see [`run_agent.sh`](#automationsupervisorrun_agentsh). |
+| 78 | Refused before claiming anything, by configuration: a run inside a supervised slice, another run holding the run lock, a runner profile the environment doesn't allow, or telemetry that is required but can't be turned on. Nothing in the queue changed. **Or** the agent command exited 78: see the last row. | Read the `stop:` line. For the agent's 78, see [`run_agent.sh`](#automationsupervisorrun_agentsh). |
 | Any other | The agent command exited with this code. The slice is marked `failed` with reason `agent_exit_nonzero`, or `agent_timeout` for 124. With the shipped wrapper, the code is one of [`run_agent.sh`'s](#automationsupervisorrun_agentsh). | Read the agent's output above the failure report. |
+
+**64 and 78 have two sources.** `run_next.py` uses them for its own refusals, and passes them through when the agent command exits with them, which `run_agent.sh` does. A printed failure report tells them apart. With one, a slice was claimed and is now `failed`. With only a `stop:` line, nothing was claimed.
+
+**Earlier slices keep their verdicts.** In a run of several slices, any exit, 0 or not, leaves the slices judged earlier in the same run as their decision reports say.
 
 A slice that runs past the policy's `handoff_timeout_seconds` is stopped by the supervisor, marked `failed` with reason `supervisor_error`, and the run exits 2. Exit 124 means the agent command timed itself out, for example under `timeout(1)`.
 
@@ -99,7 +103,7 @@ Judges a handoff for a slice finished outside `run_next.py` and prints the repor
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | 0 | The slice's queue status is `done`. | |
-| 1 | The slice's queue status is `blocked` or `failed`. | Read the report's `decision` and `reason`. |
+| 1 | The slice's queue status is `blocked` or `failed`, and the report was printed. **Or**, with a traceback and no report, the command couldn't read an input, such as a missing or invalid handoff or queue, and reached no verdict. | With a report, read its `decision` and `reason`. With a traceback, fix the input it names. |
 | 78 | Refused: run without `--dry-run` inside a supervised slice, or telemetry is required but can't be turned on. | |
 
 ## `automation/supervisor/operator_status.py`

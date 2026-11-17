@@ -56,7 +56,7 @@ The supervisor doesn't take the handoff's word for anything it can check itself.
 For a Claude Code runner, Boundroom chooses a profile ([SPEC-008](../architecture/plugin-settings.md#a-safer-default-for-the-claude-code-runner)):
 
 - The default since v0.4.0 is `bounded`: anything not pre-approved is denied, the sandbox is on and fails closed, the network is closed, and the slice has a budget cap.
-- A **ceiling** limits whatever profile is requested or resolved. The default ceiling is `edits`. `unbounded` needs `BOUNDROOM_CLAUDE_ISOLATED=1`, the operator's declaration that the run is in a container or VM, or an explicit ceiling of `unbounded`.
+- A **ceiling** limits every profile except `custom`, whether requested or resolved. The default ceiling is `edits`. `unbounded` needs `BOUNDROOM_CLAUDE_ISOLATED=1`, the operator's declaration that the run is in a container or VM, or an explicit ceiling of `unbounded`.
 - A run started from a Claude Code session in plan mode is refused.
 - `custom` is the operator's own settings file, and isn't capped.
 
