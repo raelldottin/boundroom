@@ -44,6 +44,10 @@ nav:
   - Rename to Boundroom: architecture/boundroom-rename.md
   - Settings reference: reference/settings.md
   - Compatibility and deprecation: reference/compatibility.md
+  - Architecture overview: reference/architecture.md
+  - Security model: reference/security-model.md
+  - Exit codes and errors: reference/exit-codes.md
+  - Troubleshooting: reference/troubleshooting.md
   - Traceable Agent Runs with Logfire: architecture/agent-telemetry.md
   - Plugin Settings You Can See: architecture/plugin-settings.md
   - Enterprise Readiness (proposed): architecture/enterprise-readiness.md
