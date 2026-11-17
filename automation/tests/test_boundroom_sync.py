@@ -990,6 +990,13 @@ class BoundroomImportGuardTests(unittest.TestCase):
         self.assertEqual(2, undeclared.returncode)
         self.assertIn("names component 'extras', which optional_components doesn't declare", undeclared.stderr)
 
+        malformed_entry = {**self.entry("core", "automation/core", kind="directory"), "component": ["extras"]}
+        self.write_manifest([malformed_entry], optional_components=self.EXTRAS)
+        malformed = self.run_tool("--sync", pin=pin)
+        self.assertEqual(2, malformed.returncode, msg=malformed.stderr)
+        self.assertIn("has a component that isn't a string", malformed.stderr)
+        self.assertNotIn("Traceback", malformed.stderr)
+
     def test_11e_without_omit_every_component_syncs(self) -> None:
         pin = self.extras_case()
 
@@ -1011,6 +1018,27 @@ class BoundroomImportGuardTests(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("locally modified files: automation/extras/one.py", result.stderr)
         self.assertTrue((self.target / "docs/workflows/extras.md").exists(), "a refusal changes nothing")
+
+    def test_11f2_a_core_file_inside_an_omitted_directory_is_kept(self) -> None:
+        """Writes run before removals, so an omission must never claim what a kept entry writes."""
+        pin = self.canonical_source_with(("extras/one.py", "one\n"), ("shared.py", "core\n"))
+        self.write_manifest(
+            [
+                self.entry("extras", "automation/extras", kind="directory", delete_stale=True, component="extras"),
+                self.entry("shared.py", "automation/extras/shared.py"),
+            ],
+            optional_components=self.EXTRAS,
+        )
+        self.init_consumer()
+        self.assertEqual(0, self.run_tool("--sync", pin=pin).returncode)
+        self.commit_consumer()
+
+        result = self.run_tool("--sync", "--omit", "extras", pin=pin)
+
+        self.assertEqual(0, result.returncode, msg=result.stderr)
+        self.assertFalse((self.target / "automation/extras/one.py").exists())
+        self.assertEqual("core\n", (self.target / "automation/extras/shared.py").read_text(encoding="utf-8"))
+        self.assertEqual(0, self.run_tool("--check", "--omit", "extras").returncode)
 
     def test_11g_a_consumer_synced_without_the_benchmark_passes_its_checks(self) -> None:
         """RA-ENT-013's acceptance: the real manifest, with the benchmark left out, then the

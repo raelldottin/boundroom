@@ -138,7 +138,7 @@ Use `Tools/boundroom-sync.sh` for manifest-owned sync:
 
 ### Optional components
 
-Most of the manifest is core, which every consumer gets. The manifest's `optional_components` block names the parts a consumer can leave out, and each of their entries sets `"component"` to that name. Today there is one, `benchmark`: the effectiveness benchmark under `automation/benchmark/`, its tests, its fixture and [its guide](effectiveness-benchmark.md). The supervisor never imports it, a test fails if any core file names it, and you don't need it to supervise a Claude Code or Codex runner.
+Most of the manifest is core, which every consumer gets. The manifest's `optional_components` block names the parts a consumer can leave out, and each of their entries sets `"component"` to that name. Today there is one, `benchmark`: the effectiveness benchmark under `automation/benchmark/`, its tests, its fixture and [its guide](effectiveness-benchmark.md). The supervisor never imports it, a test fails if any core Python or shell file names its package or a file it ships, and you don't need it to supervise a Claude Code or Codex runner.
 
 To leave it out, pass `--omit benchmark`:
 

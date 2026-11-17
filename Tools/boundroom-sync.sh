@@ -186,6 +186,8 @@ def parse_entry(raw: object, optional_components: dict[str, str] | None = None) 
             )
 
     component = raw.get("component")
+    if component is not None and not isinstance(component, str):
+        raise SyncError(f"manifest entry {source!r} has a component that isn't a string: {component!r}")
     if component is not None and component not in (optional_components or {}):
         raise SyncError(
             f"manifest entry {source!r} names component {component!r}, which optional_components doesn't declare"
@@ -409,14 +411,12 @@ def omitted_files(target_root: Path, entry: Entry, expected: set[Path]) -> list[
     A template entry is the consumer's once copied, so nothing of it is ever removed."""
     if entry.template:
         return []
-    destination = resolve_under(target_root, entry.destination, must_exist=False)
-    if entry.kind == "directory" and entry.delete_stale and destination.is_dir():
-        candidates = [child for child in sorted(destination.rglob("*")) if not should_skip(child) and not child.is_dir()]
-    else:
-        candidates = sorted(expected)
+    if entry.kind == "directory" and entry.delete_stale:
+        # Nothing under the directory is expected any more, so all of it is stale.
+        return stale_files(target_root, entry, set())
     return [
         (path, path.relative_to(target_root).as_posix())
-        for path in candidates
+        for path in sorted(expected)
         if path.is_file() or path.is_symlink()
     ]
 
@@ -503,16 +503,21 @@ def plan_entries(
     issues: list[str] = []
     file_count = 0
 
-    for entry in entries:
-        pairs = source_files(source_root, target_root_resolved, entry)
-        file_count += len(pairs)
+    planned = [(entry, source_files(source_root, target_root_resolved, entry)) for entry in entries]
+    # What the kept entries write is never an omission, even inside an omitted directory.
+    kept = {target for entry, pairs in planned if entry.component not in omit for _, target, _ in pairs}
+
+    for entry, pairs in planned:
         expected = {target for _, target, _ in pairs}
 
         if entry.component in omit:
             for path, display in omitted_files(target_root_resolved, entry, expected):
-                issues.append(f"omitted: {display}")
-                omissions.append((path, display))
+                if path not in kept:
+                    issues.append(f"omitted: {display}")
+                    omissions.append((path, display))
             continue
+
+        file_count += len(pairs)
 
         for source, target, display in pairs:
             if entry.template and target.exists() and not force_templates:
