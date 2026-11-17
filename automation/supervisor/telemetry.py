@@ -347,13 +347,26 @@ def _metric_reader() -> Any:
 
 
 def _metric_views(logfire: Any) -> list[Any]:
-    """Logfire's default views, with its exponential histogram replaced by explicit duration buckets."""
-    from opentelemetry.sdk.metrics import Histogram  # noqa: PLC0415
-    from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View  # noqa: PLC0415
+    """Logfire's default views, with its exponential histogram replaced by explicit duration buckets.
 
-    kept = [view for view in logfire.MetricsOptions.DEFAULT_VIEWS if getattr(view, "_instrument_type", None) is not Histogram]
+    Only the exponential view is dropped, so any other default view, such as one that drops a
+    noisy instrument, is kept. The duration buckets apply only to the catalogue's instruments,
+    which are all in seconds; any other histogram gets the SDK's default buckets.
+    """
+    from opentelemetry.sdk.metrics import Histogram  # noqa: PLC0415
+    from opentelemetry.sdk.metrics.view import (  # noqa: PLC0415
+        ExplicitBucketHistogramAggregation,
+        ExponentialBucketHistogramAggregation,
+        View,
+    )
+
+    kept = [
+        view
+        for view in logfire.MetricsOptions.DEFAULT_VIEWS
+        if not isinstance(getattr(view, "_aggregation", None), ExponentialBucketHistogramAggregation)
+    ]
     buckets = ExplicitBucketHistogramAggregation(boundaries=telemetry_metrics.DURATION_BUCKETS_SECONDS)
-    return [*kept, View(instrument_type=Histogram, aggregation=buckets)]
+    return [*kept, View(instrument_type=Histogram, instrument_name="boundroom.*", aggregation=buckets)]
 
 
 def _otlp_metric_exporter(settings: TelemetrySettings) -> tuple[Any, str]:

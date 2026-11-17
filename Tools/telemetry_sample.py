@@ -136,13 +136,16 @@ def points(data: Any) -> Iterator[tuple[str, Any]]:
     for resource_metrics in data.resource_metrics:
         for scope_metrics in resource_metrics.scope_metrics:
             for metric in scope_metrics.metrics:
+                if metric.name not in telemetry_metrics.BY_NAME:
+                    continue  # only the catalogue, as the metrics file (telemetry.metric_records)
                 for point in metric.data.data_points:
                     yield metric.name, point
 
 
 def render() -> str:
     families: dict[str, list[str]] = {instrument.name: [] for instrument in telemetry_metrics.CATALOGUE}
-    with tempfile.TemporaryDirectory(prefix="boundroom-sample-") as out, contextlib.redirect_stderr(io.StringIO()):
+    said = io.StringIO()
+    with tempfile.TemporaryDirectory(prefix="boundroom-sample-") as out, contextlib.redirect_stderr(said):
         for index, run in enumerate(RUNS):
             instance = f"sample-run-{index + 1:03d}"
             timestamp = START + index * STEP_SECONDS
@@ -161,6 +164,9 @@ def render() -> str:
                     lines.append(f"{bucket}{labels({**base, 'le': number(bound)})} {cumulative} {timestamp}")
                 lines.append(f"{count}{labels(base)} {point.count} {timestamp}")
                 lines.append(f"{total}{labels(base)} {number(point.sum)} {timestamp}")
+    if said.getvalue():
+        # A metric that wasn't recorded or a flush that failed would leave the sample short.
+        raise SystemExit(f"telemetry_sample: telemetry reported a problem:\n{said.getvalue()}")
     text = []
     for instrument in telemetry_metrics.CATALOGUE:
         family = prometheus_name(instrument)

@@ -209,4 +209,4 @@ Writes the sample metrics the example dashboard is checked against (`automation/
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | 0 | Wrote the sample, or with `--check`, the sample is current. | |
-| 1 | With `--check`, the sample is stale. | Run `uv run python Tools/telemetry_sample.py`. |
+| 1 | With `--check`, the sample is stale. Or telemetry didn't start, or reported a problem while recording, and stderr says what. | Run `uv run python Tools/telemetry_sample.py`, or fix what stderr names. |

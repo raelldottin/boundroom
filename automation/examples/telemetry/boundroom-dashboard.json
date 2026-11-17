@@ -153,7 +153,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(last_over_time(boundroom_runs_total{job=~\"$job\",outcome=~\"failed|refused|error\"}[$__range]))",
+          "expr": "sum(last_over_time(boundroom_runs_total{job=~\"$job\",outcome!=\"ok\"}[$__range]))",
           "legendFormat": "not ok",
           "instant": true,
           "range": false

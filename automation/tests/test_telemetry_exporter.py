@@ -156,6 +156,23 @@ class SdkConfigurationTests(ExporterCase):
         self.assertFalse(telemetry._inside(Path(kwargs["data_dir"]), REPO_ROOT))
         self.assertEqual(1, len(kwargs["additional_span_processors"]))
 
+    def test_logfires_real_default_views_lose_only_the_exponential_histogram(self) -> None:
+        import logfire  # noqa: PLC0415
+        from opentelemetry.sdk.metrics.view import (  # noqa: PLC0415
+            ExplicitBucketHistogramAggregation,
+            ExponentialBucketHistogramAggregation,
+        )
+
+        defaults = logfire.MetricsOptions.DEFAULT_VIEWS
+        views = telemetry._metric_views(logfire)
+        self.assertFalse(any(isinstance(view._aggregation, ExponentialBucketHistogramAggregation) for view in views))
+        others = [view for view in defaults if not isinstance(view._aggregation, ExponentialBucketHistogramAggregation)]
+        self.assertEqual(others, views[:-1])
+        explicit = views[-1]
+        self.assertIsInstance(explicit._aggregation, ExplicitBucketHistogramAggregation)
+        self.assertEqual("boundroom.*", explicit._instrument_name)
+        self.assertEqual(telemetry_metrics.DURATION_BUCKETS_SECONDS, tuple(explicit._aggregation._boundaries))
+
     def test_without_the_sdk_a_warning_or_with_required_a_refusal(self) -> None:
         with mock.patch.dict(sys.modules, {"logfire": None}):
             handle = telemetry.configure(self.file_settings(), repo_root=REPO_ROOT, run_id="r")

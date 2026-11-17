@@ -202,7 +202,7 @@ A value outside its vocabulary is recorded as `other`, and a key outside the lis
 
 Every histogram is a duration and is exported with explicit bucket bounds, in seconds: `1, 2, 5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200` (`DURATION_BUCKETS_SECONDS`). That replaces Logfire's default view, an exponential histogram, which a Prometheus-compatible backend can store only as a native histogram. An [example dashboard](https://github.com/raelldottin/boundroom/blob/main/automation/examples/telemetry/README.md) reads the catalogue from such a backend (SPEC-009 RA-ENT-010).
 
-The flush still takes at most five seconds in all. Spans go first; metrics get what is left, and are dropped with a stderr message if nothing is. A failure to record or export a metric is reported on stderr and never changes a verdict or exit code. Logfire is configured with `metrics=MetricsOptions(additional_readers=[<that reader>])`, so it adds no reader of its own.
+The flush still takes at most five seconds in all. Spans go first; metrics get what is left, and are dropped with a stderr message if nothing is. A failure to record or export a metric is reported on stderr and never changes a verdict or exit code. Logfire is configured with `metrics=MetricsOptions(additional_readers=[<that reader>], views=<its default views, with the duration buckets>)`, so it adds no reader of its own.
 
 ## Offline switch and egress chokepoint
 
