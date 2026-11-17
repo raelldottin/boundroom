@@ -72,7 +72,7 @@ class TaskSpec:
 
 def _tasks_dir() -> Optional[Path]:
     try:
-        from programbench.constants import TASKS_DIR  # ty: ignore[unresolved-import]
+        from programbench.constants import TASKS_DIR  # ty: ignore[import-not-found]
     except Exception:  # pragma: no cover - programbench optional.
         return None
     tasks_dir = Path(TASKS_DIR)

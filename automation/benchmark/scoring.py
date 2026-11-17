@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:  # Reuse ProgramBench's thresholds when the package is installed.
-    from programbench.submission import NEAR_RESOLVED_THRESHOLD, RESOLVED_THRESHOLD  # ty: ignore[unresolved-import]
+    from programbench.submission import NEAR_RESOLVED_THRESHOLD, RESOLVED_THRESHOLD  # ty: ignore[import-not-found]
 except Exception:  # pragma: no cover - programbench is optional for scoring.
     RESOLVED_THRESHOLD = 1.0
     NEAR_RESOLVED_THRESHOLD = 0.95
