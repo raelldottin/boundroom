@@ -35,6 +35,27 @@ SESSION_OUTCOMES = ("ok", "nonzero", "timeout", "error")
 RUNNERS = ("auto", "claude", "codex", "hermes")
 BOOLEANS = ("true", "false")
 CHANGE_KINDS = ("synced", "removed")
+# Every histogram is a duration, exported with these explicit bucket bounds in seconds, from a
+# quick refusal to a two-hour session. Logfire's default, an exponential histogram, is stored
+# only as a native histogram, which many Prometheus-compatible backends don't take (RA-ENT-010).
+DURATION_BUCKETS_SECONDS = (
+    1.0,
+    2.0,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+    120.0,
+    300.0,
+    600.0,
+    900.0,
+    1200.0,
+    1800.0,
+    2700.0,
+    3600.0,
+    5400.0,
+    7200.0,
+)
 
 
 @dataclass(frozen=True)

@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest import mock
 
-from automation.supervisor import telemetry
+from automation.supervisor import telemetry, telemetry_metrics
 from automation.supervisor.telemetry_settings import resolve
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -137,6 +137,7 @@ class FileModeTests(ExporterCase):
 class SdkConfigurationTests(ExporterCase):
     def test_ud3_the_sdk_is_configured_only_from_boundrooms_settings(self) -> None:
         fake = mock.Mock()
+        fake.MetricsOptions.DEFAULT_VIEWS = ()
         with mock.patch.object(telemetry, "_import_logfire", return_value=fake):
             telemetry.configure(self.file_settings(), repo_root=REPO_ROOT, run_id="r", service_version="0.3.0")
         kwargs = fake.configure.call_args.kwargs
@@ -144,13 +145,33 @@ class SdkConfigurationTests(ExporterCase):
         self.assertIs(False, kwargs["console"])
         # Metrics go only to Boundroom's own in-memory reader, collected once at flush (RA-TEL-010).
         self.assertIs(fake.MetricsOptions.return_value, kwargs["metrics"])
-        self.assertEqual({"additional_readers"}, set(fake.MetricsOptions.call_args.kwargs))
+        self.assertEqual({"additional_readers", "views"}, set(fake.MetricsOptions.call_args.kwargs))
         self.assertEqual(1, len(fake.MetricsOptions.call_args.kwargs["additional_readers"]))
+        # Histograms use the catalogue's explicit duration buckets, not Logfire's exponential default.
+        (view,) = fake.MetricsOptions.call_args.kwargs["views"]
+        self.assertEqual(telemetry_metrics.DURATION_BUCKETS_SECONDS, tuple(view._aggregation._boundaries))
         self.assertIs(False, kwargs["inspect_arguments"])
         self.assertIs(True, kwargs["local"])
         self.assertEqual("boundroom", kwargs["service_name"])
         self.assertFalse(telemetry._inside(Path(kwargs["data_dir"]), REPO_ROOT))
         self.assertEqual(1, len(kwargs["additional_span_processors"]))
+
+    def test_logfires_real_default_views_lose_only_the_exponential_histogram(self) -> None:
+        import logfire  # noqa: PLC0415
+        from opentelemetry.sdk.metrics.view import (  # noqa: PLC0415
+            ExplicitBucketHistogramAggregation,
+            ExponentialBucketHistogramAggregation,
+        )
+
+        defaults = logfire.MetricsOptions.DEFAULT_VIEWS
+        views = telemetry._metric_views(logfire)
+        self.assertFalse(any(isinstance(view._aggregation, ExponentialBucketHistogramAggregation) for view in views))
+        others = [view for view in defaults if not isinstance(view._aggregation, ExponentialBucketHistogramAggregation)]
+        self.assertEqual(others, views[:-1])
+        explicit = views[-1]
+        self.assertIsInstance(explicit._aggregation, ExplicitBucketHistogramAggregation)
+        self.assertEqual("boundroom.*", explicit._instrument_name)
+        self.assertEqual(telemetry_metrics.DURATION_BUCKETS_SECONDS, tuple(explicit._aggregation._boundaries))
 
     def test_without_the_sdk_a_warning_or_with_required_a_refusal(self) -> None:
         with mock.patch.dict(sys.modules, {"logfire": None}):
