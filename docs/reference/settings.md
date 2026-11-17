@@ -65,6 +65,7 @@ To see the values in effect, run `python3 automation/supervisor/settings_view.py
 | `sync_quality_command` | advanced | `make reusable-check` | `--quality-command` |  |  | The quality gate the source must pass. |
 | `sync_runtime_python` | advanced | computed | `--runtime-python` |  |  | The consumer's interpreter, checked against the manifest's runtime dependencies. |
 | `sync_allow_unverified_source` | security | `false` | `--allow-unverified-source` |  |  | Development only: skip the source checks. AGENTS.md forbids agents from using it. |
+| `sync_omit` | advanced |  | `--omit` |  |  | Leave out an optional component the manifest declares, such as benchmark. Pass it to every sync command. |
 | `sync_force_templates` | security | `false` | `--force-templates` |  |  | Overwrite a consumer's local changes to template files. |
 
 ## Memory

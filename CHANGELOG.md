@@ -13,6 +13,7 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 - Signed build provenance for each release archive, checked with `gh attestation verify` (#244).
 - The compatibility and deprecation policy (#243) and this changelog.
 - A support matrix in the README. CI now also tests Python 3.13 and 3.14, and macOS.
+- Optional components in the sync manifest. A consumer can leave out the effectiveness benchmark with `Tools/boundroom-sync.sh --omit benchmark`. That removes what an earlier sync left of it, and the consumer's synced tests still pass. Pass the flag to every `--check`, `--sync` and `--status`.
 - Operator docs: an architecture overview, a security model, a reference of every exit code, failure reason and decision, and a troubleshooting guide. A test fails if a command can exit with a code the reference doesn't list.
 
 ### Changed

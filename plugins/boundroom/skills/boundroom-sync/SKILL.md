@@ -34,6 +34,8 @@ Tools/boundroom-sync.sh --check --target <consumer-path> --pin <full-sha> --expe
 
 `--check` reports drift and changes nothing. The script refuses a dirty source, a source at a different commit than the pin, a source with the wrong origin, or a source that fails its own quality gate. Report what it says. Don't bypass a refusal, and never use `--allow-unverified-source` here.
 
+A consumer may leave out an optional component, such as the benchmark, with `--omit <component>`. Its own sync command, usually in its Makefile, shows whether it does. If you can't tell, ask the user. Pass the same `--omit` flags to `--status`, `--check` and `--sync`. Without them, the check reports the component as missing and the sync puts it back.
+
 ## 2. Sync only after the user says go
 
 Show the user the status and drift reports and wait for an explicit yes. Then run the same command with `--sync` in place of `--check`.
