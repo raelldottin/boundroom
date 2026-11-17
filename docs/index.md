@@ -48,3 +48,10 @@ real consumer.
 
 Bug reports and adoption questions go to
 [github.com/raelldottin/boundroom/issues](https://github.com/raelldottin/boundroom/issues).
+Report a suspected vulnerability privately, as
+[`SECURITY.md`](https://github.com/raelldottin/boundroom/blob/main/SECURITY.md) describes.
+
+## Contributing
+
+The [contribution guide](https://github.com/raelldottin/boundroom/blob/main/CONTRIBUTING.md)
+says how to set up, what a pull request needs, and who approves it.

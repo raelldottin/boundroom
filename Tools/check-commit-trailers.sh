@@ -2,7 +2,8 @@
 # Fail if any commit in a range carries agent attribution trailers.
 #
 # Usage: Tools/check-commit-trailers.sh [<range>]
-#   default range: origin/main..HEAD
+#   default range: origin/main..HEAD, or origin/main..$PRE_COMMIT_TO_REF when pre-commit's
+#   pre-push hook runs it, so a push checks the ref being pushed, not whatever HEAD is.
 #
 # Rejected trailers (case-insensitive):
 #   Co-Authored-By: ... Claude ... | ... @anthropic.com
@@ -10,7 +11,7 @@
 # Prose mentioning Claude, and non-Claude co-authors, are left alone.
 set -euo pipefail
 
-range="${1:-origin/main..HEAD}"
+range="${1:-origin/main..${PRE_COMMIT_TO_REF:-HEAD}}"
 pattern='^[[:space:]]*(co-authored-by:.*(claude|@anthropic\.com)|claude-session:)'
 
 offenders=()

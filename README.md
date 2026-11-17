@@ -167,6 +167,10 @@ Adding a version is a patch or minor change. Dropping one follows the [compatibi
 
 This repository is the canonical reusable automation distribution extracted from Owlory. Its existing supervisor harness is present. The P0 Kanban / external-memory / wiki integration is specified but not yet implemented; consumer smoke proof and other supervisor roadmap work follow the P0 acceptance gate. Benchmark/effectiveness work is exempt from that ordering and continues in parallel under explicit owner authorization. Treat project-specific examples as templates, not production configuration.
 
+## Contributing
+
+The [contribution guide](CONTRIBUTING.md) says how to set up, what a pull request needs, and who approves it: a person other than its author, with the required checks green on the approved commit. Report a vulnerability privately, as [`SECURITY.md`](SECURITY.md) describes.
+
 ## License
 
 Boundroom is free software under the GNU General Public License, version 2 only (`GPL-2.0-only`). The full text is in [`COPYING`](COPYING). It comes with ABSOLUTELY NO WARRANTY, as `COPYING` explains.

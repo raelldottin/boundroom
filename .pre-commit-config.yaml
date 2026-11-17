@@ -1,0 +1,42 @@
+# Boundroom's quality gate, run before code leaves your machine (SPEC-009 RA-ENT-012).
+#
+# Every hook is local: it runs this repository's own pinned tools through uv and make, so
+# pre-commit downloads no hook code and needs no version pins of its own. CI runs the same gate
+# on every pull request, and CI's result is what counts. automation/tests/test_contributing.py
+# checks that each hook runs a command from the gate.
+#
+#   pre-commit install
+#
+# installs both stages below: ruff on each commit, and the full gate on each push.
+# The push stage checks the commits being pushed for trailers, but runs the gate on your working
+# tree as it is, uncommitted edits included, so commit or stash them first.
+default_install_hook_types: [pre-commit, pre-push]
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check
+        language: system
+        types: [python]
+        stages: [pre-commit]
+      - id: ruff-format
+        name: ruff format --check
+        entry: uv run ruff format --check
+        language: system
+        types: [python]
+        stages: [pre-commit]
+      - id: no-agent-attribution-trailers
+        name: No agent attribution trailers
+        entry: Tools/check-commit-trailers.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: reusable-check
+        name: make reusable-check
+        entry: make reusable-check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
