@@ -1,6 +1,6 @@
 # Changelog
 
-What changed in each Boundroom release, newest first. A pull request that changes what a consumer sees adds a line under **Unreleased**. The release pull request renames that heading to the new version and its date, and `release.yml` publishes the section as the release notes. The [upgrade guide](docs/workflows/upgrading.md) says how to move between releases, and the [compatibility policy](docs/reference/compatibility.md) says what each kind of release may change.
+What changed in each Boundroom release, newest first. A pull request that changes what a consumer sees adds a line under **Unreleased**. The release pull request moves those lines under a new heading with the version and its date, below an empty **Unreleased**, and `release.yml` publishes the section as the release notes. The [upgrade guide](docs/workflows/upgrading.md) says how to move between releases, and the [compatibility policy](docs/reference/compatibility.md) says what each kind of release may change.
 
 Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` reads them.
 
@@ -40,7 +40,7 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ### Fixed
 
-- OTLP headers set in the operator's shell no longer reach the configured telemetry endpoint (#240).
+- OTLP settings from the operator's shell (`OTEL_EXPORTER_OTLP_*`: headers, certificate, compression) no longer reach the configured telemetry endpoint. Set headers with `BOUNDROOM_TELEMETRY_HEADERS` (#240).
 - An error after `run_next.py` claims a slice, up to and including the write of its verdict, now marks the slice `failed` with reason `git_error` or `supervisor_error` and prints a failure report. Before, a Git failure, an error while replaying validations or judging the handoff, or a failed verdict write left the slice `in_progress` and the next run refused to start. If the queue or board refuses the failure too, the report says the slice is still `in_progress` (#256).
 - A handoff that isn't valid JSON or can't be read fails the claimed slice as `handoff_invalid`. A bad handoff left in `automation/handoffs/` no longer stops every later run before it claims a slice (#258).
 

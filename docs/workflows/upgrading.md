@@ -122,7 +122,8 @@ SPEC-009 RA-ENT-002 retires the names from before the 0.3.0 rename and the ones 
 #### Telemetry and removed services
 
 - **Telemetry's service name is now `boundroom`**, not `boundroom-supervisor`. A collector rule, query or dashboard that selects `service.name="boundroom-supervisor"` matches nothing after the upgrade, so change it to `boundroom`. The [example dashboard](https://github.com/raelldottin/boundroom/blob/main/automation/examples/telemetry/README.md) already uses the new name.
-- **Discord and Slack support is gone**, with the knowledge-loop service that 0.4.0 shipped. Nothing replaces it.
+- **OTLP settings from your shell no longer reach the endpoint.** Boundroom now builds its exporters with every `OTEL_*` variable hidden, so `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_CERTIFICATE` and `OTEL_EXPORTER_OTLP_COMPRESSION` stop applying. If your collector needs a token, set it with `BOUNDROOM_TELEMETRY_HEADERS` or the operator file's `headers` key. Boundroom has no setting for a certificate or for compression. A failed export doesn't stop a run, so check that spans still arrive after the upgrade.
+- **Discord and Slack support is gone**, with the knowledge-loop contracts. They lived only in Boundroom's own checkout, and the sync never delivered them, so a consumer has nothing to change. Nothing replaces them.
 
 ### From 0.3.x to 0.4.0 (a safer Claude runner by default)
 
