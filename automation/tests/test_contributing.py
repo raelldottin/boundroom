@@ -212,10 +212,10 @@ class CodeOfConductTests(unittest.TestCase):
         self.assertIn("](CODE_OF_CONDUCT.md)", read(REPO_ROOT / "CONTRIBUTING.md"))
 
     def test_it_names_a_reporting_contact(self) -> None:
-        """The owner chose the contact, so the Reporting section must keep a mailto: link to it."""
+        """The owner chose the contact on 2026-11-18, so the Reporting section must keep a mailto: link to it."""
         self.assertIn("## Reporting", self.text)
         reporting = self.text.split("## Reporting", 1)[1].split("\n## ", 1)[0]
-        self.assertRegex(reporting, r"\(mailto:[^)\s]+@[^)\s]+\)")
+        self.assertIn("(mailto:conduct@raelldottin.com)", reporting)
         self.assertIn("SECURITY.md", reporting)
 
 
