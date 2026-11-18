@@ -27,6 +27,7 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 - The shipped runner prompt names no consumer. A consumer that wants the new `base.md` moves its own layer rules into `automation/runner-rules.md` first (#241).
 - The sync writes only under `automation/` and `docs/workflows/`, and to `THIRD-PARTY-NOTICES.md` and its own scripts. That replaces a list of one consumer's paths (#242).
 - Telemetry's service name is `boundroom`, and a sync drift check marks its run span as an error (#240).
+- pydantic, the one required dependency, is now 2.14.3 (#249).
 
 ### Deprecated
 

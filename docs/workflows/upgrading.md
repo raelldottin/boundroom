@@ -119,6 +119,11 @@ SPEC-009 RA-ENT-002 retires the names from before the 0.3.0 rename and the ones 
 - **The queue, handoffs, proofs, smoke results, the lock and `automation/runner-rules.md` stay refused** inside those places, as before.
 - **`allow_owlory_specific` no longer opts out of anything.** An entry that sets it is checked like any other, with a warning, and v0.6.0 refuses the key.
 
+#### Telemetry and removed services
+
+- **Telemetry's service name is now `boundroom`**, not `boundroom-supervisor`. A collector rule, query or dashboard that selects `service.name="boundroom-supervisor"` matches nothing after the upgrade, so change it to `boundroom`. The [example dashboard](https://github.com/raelldottin/boundroom/blob/main/automation/examples/telemetry/README.md) already uses the new name.
+- **Discord and Slack support is gone**, with the knowledge-loop service that 0.4.0 shipped. Nothing replaces it.
+
 ### From 0.3.x to 0.4.0 (a safer Claude runner by default)
 
 0.4.0 changes one default and adds opt-in features. Nothing a consumer depends on is renamed or removed.
