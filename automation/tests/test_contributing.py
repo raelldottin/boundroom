@@ -201,5 +201,23 @@ class ContributingTests(unittest.TestCase):
         self.assertIn("](CONTRIBUTING.md)", read(REPO_ROOT / "README.md"))
 
 
+class CodeOfConductTests(unittest.TestCase):
+    """The owner chose the Contributor Covenant 2.1 (SPEC-009 RA-ENT-012)."""
+
+    def setUp(self) -> None:
+        self.text = read(REPO_ROOT / "CODE_OF_CONDUCT.md")
+
+    def test_it_adopts_the_contributor_covenant_2_1(self) -> None:
+        self.assertIn("https://www.contributor-covenant.org/version/2/1/code_of_conduct/", self.text)
+        self.assertIn("](CODE_OF_CONDUCT.md)", read(REPO_ROOT / "CONTRIBUTING.md"))
+
+    def test_it_names_a_reporting_contact(self) -> None:
+        """The owner chose the contact on 2026-11-18, so the Reporting section must keep a mailto: link to it."""
+        self.assertIn("## Reporting", self.text)
+        reporting = self.text.split("## Reporting", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("(mailto:conduct@raelldottin.com)", reporting)
+        self.assertIn("SECURITY.md", reporting)
+
+
 if __name__ == "__main__":
     unittest.main()

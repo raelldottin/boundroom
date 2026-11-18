@@ -86,7 +86,7 @@ Report a suspected vulnerability privately, as [`SECURITY.md`](SECURITY.md) desc
 
 ## Conduct
 
-Boundroom hasn't adopted a code of conduct yet. Choosing its text, including how to report a problem, is the owner's decision ([SPEC-009](docs/architecture/enterprise-readiness.md), RA-ENT-012).
+Boundroom follows the Contributor Covenant 2.1. [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) says how to report a problem.
 
 ## License
 
