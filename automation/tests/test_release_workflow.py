@@ -118,6 +118,18 @@ class ReleaseSbomTests(unittest.TestCase):
         self.assertIn("subject-path: dist/boundroom-${{ github.ref_name }}.tar.gz", step)
         self.assertIn("sbom-path: dist/boundroom-${{ github.ref_name }}.cdx.json", step)
 
+    def test_the_sbom_is_checksummed_and_checked_before_it_is_signed(self) -> None:
+        self.assertIn('sha256sum "boundroom-$TAG.cdx.json" > "boundroom-$TAG.cdx.json.sha256"', self.jobs["build"])
+        self.assertIn('sha256sum --check --strict "boundroom-$TAG.cdx.json.sha256"', self.jobs["attest"])
+
+    def test_the_build_uses_a_fixed_uv_for_the_preview_export(self) -> None:
+        self.assertRegex(self.jobs["build"], r'version: "\d+\.\d+\.\d+"')
+
+    def test_a_stale_lock_fails_every_pull_request(self) -> None:
+        """So the release's --locked export never meets one (lint.yml runs the required gate)."""
+        lint = (WORKFLOWS / "lint.yml").read_text(encoding="utf-8")
+        self.assertLess(lint.index("run: uv lock --check"), lint.index("run: make reusable-check"))
+
     def test_the_release_notes_say_how_to_verify_the_sbom(self) -> None:
         self.assertIn("gh attestation verify boundroom-$TAG.cdx.json --repo $GITHUB_REPOSITORY", self.jobs["release"])
 

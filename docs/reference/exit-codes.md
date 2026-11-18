@@ -190,8 +190,8 @@ A person runs these before creating a release tag, and `release.yml` runs them a
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
-| 0 | Every plugin manifest declares the tag's version. | |
-| 1 | A manifest is missing, unreadable or declares another version. | Fix the named manifest. |
+| 0 | Every plugin manifest and `pyproject.toml` declare the tag's version. | |
+| 1 | A manifest is missing, unreadable or declares another version, or `pyproject.toml` has no `[project]` version or another one. | Fix the named file. After bumping `pyproject.toml`, run `uv lock`. |
 | 64 | No tag was given. | Pass the tag. |
 
 ### `Tools/changelog_section.py`
@@ -209,7 +209,7 @@ Writes the release's CycloneDX SBOM from `uv.lock` with `uv export`: Boundroom's
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | 0 | Wrote the SBOM. It lists exactly the packages uv's requirements export lists, and the tag's version. | |
-| 1 | uv couldn't run or failed, its output wasn't a CycloneDX document, the tag isn't `vMAJOR.MINOR.PATCH`, the project's version isn't the tag's, the packages don't match, or the file couldn't be written. stderr says which. | Fix what stderr names: bump `pyproject.toml` for a version mismatch. A package mismatch means uv's preview export changed: don't publish without the SBOM. |
+| 1 | uv couldn't run or failed (including a `uv.lock` that no longer matches `pyproject.toml`), its output wasn't a CycloneDX document, the tag isn't `vMAJOR.MINOR.PATCH`, the project's version isn't the tag's, the packages don't match, or the file couldn't be written. stderr says which. | Fix what stderr names: bump `pyproject.toml` and run `uv lock` for a version mismatch or a stale lock. A package mismatch means uv's preview export changed: don't publish without the SBOM. |
 | 64 | The output path or the tag is missing. | Pass both. |
 
 ### `Tools/telemetry_sample.py`

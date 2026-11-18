@@ -6,7 +6,8 @@ SBOM covers what installing Boundroom brings in: its dependencies and every extr
 locked versions, without the dev group, whose tools the archive doesn't ship. It is written by
 ``uv export --format cyclonedx1.5``. uv marks that format as a preview, so the packages it lists
 must match exactly the ones uv's established requirements export lists for the same selection,
-and the project's own version must be the tag's. release.yml publishes the file and attests it.
+and the project's own version must be the tag's. Both exports refuse a uv.lock that no longer
+matches pyproject.toml. release.yml publishes the file and attests it.
 """
 
 from __future__ import annotations
@@ -18,11 +19,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# The same selection for both exports: every extra, no dependency group, the lock as it is.
-SELECTION = ("--frozen", "--all-extras", "--no-dev", "--no-progress")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_plugin_version import TAG, is_tag_version  # noqa: E402  the one tag-to-version rule
+
+# The same selection for both exports: every extra, no dependency group, and a lock that matches
+# pyproject.toml. --frozen would export a stale lock, with its old version and dependencies.
+SELECTION = ("--locked", "--all-extras", "--no-dev", "--no-progress")
 EXPORT = ("uv", "export", "--format", "cyclonedx1.5", "--preview-features", "sbom-export", *SELECTION)
 REQUIREMENTS = ("uv", "export", "--format", "requirements.txt", "--no-hashes", "--no-header", "--no-annotate", *SELECTION)
-TAG = re.compile(r"v(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?")
 PINNED = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)")
 EX_USAGE = 64
 
@@ -35,9 +39,14 @@ def required(requirements: str) -> set[tuple[str, str]]:
     """Every package the requirements export pins, as (name, version)."""
     found = set()
     for line in requirements.splitlines():
-        match = PINNED.match(line.strip())
-        if match:
-            found.add((match.group(1).lower(), match.group(2)))
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = PINNED.match(line)
+        if not match:
+            # Such as a "name @ url" dependency, whose version this check can't compare.
+            raise SbomError(f"can't read the requirement {line!r}: extend Tools/release_sbom.py for it")
+        found.add((match.group(1).lower(), match.group(2)))
     return found
 
 
@@ -53,9 +62,10 @@ def check(sbom: dict[str, Any], requirements: str, tag: str) -> None:
     if not release:
         raise SbomError(f"{tag} isn't a vMAJOR.MINOR.PATCH tag")
     root = sbom.get("metadata", {}).get("component", {})
-    if root.get("name") != "boundroom" or not str(root.get("version", "")).startswith(release.group(1)):
+    if root.get("name") != "boundroom" or not is_tag_version(str(root.get("version", "")), *release.groups()):
         raise SbomError(
-            f"the SBOM describes {root.get('name')} {root.get('version')}, not boundroom {release.group(1)}: bump pyproject.toml"
+            f"the SBOM describes {root.get('name')} {root.get('version')}, not boundroom {release.group(1)}: "
+            "bump pyproject.toml and run uv lock"
         )
     expected, actual = required(requirements), listed(sbom)
     if not expected:

@@ -56,7 +56,7 @@
 | The release archive is published with a SHA-256 checksum | Enforced: `release.yml` | Release assets |
 | The release archive carries signed SLSA build provenance, checked against its checksum first | Enforced: `release.yml`'s attest job (`actions/attest`, pinned by commit), from the first release after v0.4.0 | `gh attestation verify` on a release archive; the repository's attestations |
 | **Signed commits on `main`** | **Gap.** Commits on `main` are verified today only because GitHub signs squash merges. The ruleset doesn't require signatures. | Commit verification |
-| Each release carries a signed CycloneDX SBOM of what installing it brings in, also attested against the archive | Enforced: `release.yml` (`Tools/release_sbom.py`, with uv, which the build already runs, checked against uv's requirements export and the tag; `actions/attest` with `sbom-path`), from the first release after v0.4.0 | The release's `boundroom-<tag>.cdx.json`; `gh attestation verify` on it |
+| Each release carries a signed CycloneDX SBOM of what installing it brings in, also attested against the archive | Enforced: `release.yml` (`Tools/release_sbom.py`, with uv, which the build already runs, checked against uv's requirements export and the tag, with a fixed uv and a checksum checked before signing; `actions/attest` with `sbom-path`; a stale `uv.lock` fails every pull request), from the first release after v0.4.0 | The release's `boundroom-<tag>.cdx.json`; `gh attestation verify` on it |
 
 ## Owner actions, in this order
 

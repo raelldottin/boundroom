@@ -12,7 +12,7 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 - An example Grafana dashboard for the metric catalogue, in `automation/examples/telemetry/`, with sample data and the queries a Prometheus-compatible backend needs. Duration histograms are exported with explicit buckets from 1 second to 2 hours, so any such backend stores them as classic histograms (#261).
 - A repository's own runner rules in `automation/runner-rules.md`, which the sync never writes and the supervisor adds to every runner prompt (#241).
 - Signed build provenance for each release archive, checked with `gh attestation verify` (#244).
-- A signed CycloneDX SBOM with each release, listing Boundroom's dependencies and extras at their locked versions, and attested against the archive.
+- A signed CycloneDX SBOM with each release, listing Boundroom's dependencies and extras at their locked versions, and attested against the archive. `Tools/check_plugin_version.py` now also requires `pyproject.toml` to declare the tag's version, and CI refuses a `uv.lock` that no longer matches `pyproject.toml`.
 - The compatibility and deprecation policy (#243) and this changelog.
 - A support matrix in the README. CI now also tests Python 3.13 and 3.14, and macOS.
 - Optional components in the sync manifest. A consumer can leave out the effectiveness benchmark with `Tools/boundroom-sync.sh --omit benchmark`. That removes what an earlier sync left of it, and the consumer's synced tests still pass. Pass the flag to every `--check`, `--sync` and `--status`.

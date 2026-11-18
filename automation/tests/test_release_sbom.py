@@ -57,14 +57,32 @@ class CheckTests(unittest.TestCase):
         with self.assertRaisesRegex(release_sbom.SbomError, "boundroom 0.4.0, not boundroom 0.5.0: bump pyproject.toml"):
             release_sbom.check(bom(("pydantic", "2.14.3"), ("colorama", "0.4.6"), version="0.4.0"), REQUIREMENTS, "v0.5.0")
 
+    def test_a_version_that_only_starts_with_the_tags_is_refused(self) -> None:
+        """0.5.10 isn't 0.5.1, and a final release isn't its own release candidate."""
+        for version, tag in (("0.5.10", "v0.5.1"), ("0.5.0rc1", "v0.5.0"), ("0.5.0.dev0", "v0.5.0"), ("0.5.01", "v0.5.0-rc1")):
+            with self.subTest(version=version, tag=tag), self.assertRaisesRegex(release_sbom.SbomError, "bump pyproject.toml"):
+                release_sbom.check(bom(("pydantic", "2.14.3"), ("colorama", "0.4.6"), version=version), REQUIREMENTS, tag)
+
     def test_a_malformed_tag_an_empty_export_or_another_format_is_refused(self) -> None:
         for document, requirements, tag, said in (
             (COMPLETE, REQUIREMENTS, "0.5.0", "isn't a vMAJOR"),
+            (COMPLETE, REQUIREMENTS, "v0.05.0", "isn't a vMAJOR"),
             (COMPLETE, "", "v0.5.0", "lists no packages"),
             ({**COMPLETE, "bomFormat": "SPDX"}, REQUIREMENTS, "v0.5.0", "CycloneDX"),
         ):
             with self.subTest(said=said), self.assertRaisesRegex(release_sbom.SbomError, said):
                 release_sbom.check(document, requirements, tag)
+
+
+class RequirementTests(unittest.TestCase):
+    def test_a_requirement_it_cant_read_is_refused_not_skipped(self) -> None:
+        with self.assertRaisesRegex(
+            release_sbom.SbomError, "can't read the requirement 'tool @ https://example.invalid/tool.whl'"
+        ):
+            release_sbom.required("pydantic==2.14.3\ntool @ https://example.invalid/tool.whl\n")
+
+    def test_comments_and_blank_lines_are_ignored(self) -> None:
+        self.assertEqual({("pydantic", "2.14.3")}, release_sbom.required("# via boundroom\n\npydantic==2.14.3\n"))
 
 
 class MainTests(unittest.TestCase):
