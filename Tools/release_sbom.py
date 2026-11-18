@@ -1,34 +1,29 @@
 #!/usr/bin/env python3
-"""Write the release's CycloneDX SBOM from uv.lock, or refuse when it misses a package (SPEC-009 RA-ENT-004).
+"""Write the release's CycloneDX SBOM from uv.lock, or refuse one that is wrong (SPEC-009 RA-ENT-004).
 
-Usage: Tools/release_sbom.py <output>, run from the repository root with uv on PATH. It runs
-``uv export --format cyclonedx1.5`` over the locked versions of every extra and dependency group,
-then checks that the SBOM names every package in uv.lock at its locked version, because uv marks
-that format as a preview. release.yml publishes the file and attests it against the archive.
+Usage: Tools/release_sbom.py <output> <tag>, run from the repository root with uv on PATH. The
+SBOM covers what installing Boundroom brings in: its dependencies and every extra, at their
+locked versions, without the dev group, whose tools the archive doesn't ship. It is written by
+``uv export --format cyclonedx1.5``. uv marks that format as a preview, so the packages it lists
+must match exactly the ones uv's established requirements export lists for the same selection,
+and the project's own version must be the tag's. release.yml publishes the file and attests it.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 from typing import Any
 
-LOCK = Path("uv.lock")
-EXPORT = (
-    "uv",
-    "export",
-    "--format",
-    "cyclonedx1.5",
-    "--preview-features",
-    "sbom-export",
-    "--frozen",
-    "--all-extras",
-    "--all-groups",
-    "--no-progress",
-)
+# The same selection for both exports: every extra, no dependency group, the lock as it is.
+SELECTION = ("--frozen", "--all-extras", "--no-dev", "--no-progress")
+EXPORT = ("uv", "export", "--format", "cyclonedx1.5", "--preview-features", "sbom-export", *SELECTION)
+REQUIREMENTS = ("uv", "export", "--format", "requirements.txt", "--no-hashes", "--no-header", "--no-annotate", *SELECTION)
+TAG = re.compile(r"v(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?")
+PINNED = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)")
 EX_USAGE = 64
 
 
@@ -36,53 +31,70 @@ class SbomError(Exception):
     pass
 
 
-def locked(lock_text: str) -> set[tuple[str, str]]:
-    """Every package in the lock, as (name, version)."""
-    return {(package["name"], package.get("version", "")) for package in tomllib.loads(lock_text).get("package", [])}
+def required(requirements: str) -> set[tuple[str, str]]:
+    """Every package the requirements export pins, as (name, version)."""
+    found = set()
+    for line in requirements.splitlines():
+        match = PINNED.match(line.strip())
+        if match:
+            found.add((match.group(1).lower(), match.group(2)))
+    return found
 
 
 def listed(sbom: dict[str, Any]) -> set[tuple[str, str]]:
-    """Every package the SBOM names, the project itself included, as (name, version)."""
-    root = sbom.get("metadata", {}).get("component")
-    components = [root, *sbom.get("components", [])] if root else sbom.get("components", [])
-    return {(component.get("name", ""), component.get("version", "")) for component in components}
+    """Every package the SBOM lists besides the project itself, as (name, version)."""
+    return {(component.get("name", "").lower(), component.get("version", "")) for component in sbom.get("components", [])}
 
 
-def check(sbom: dict[str, Any], lock_text: str) -> None:
+def check(sbom: dict[str, Any], requirements: str, tag: str) -> None:
     if sbom.get("bomFormat") != "CycloneDX":
         raise SbomError("uv export didn't write a CycloneDX document")
-    missing = locked(lock_text) - listed(sbom)
-    if missing:
-        names = ", ".join(f"{name} {version}" for name, version in sorted(missing))
-        raise SbomError(f"the SBOM misses locked packages: {names}")
+    release = TAG.fullmatch(tag)
+    if not release:
+        raise SbomError(f"{tag} isn't a vMAJOR.MINOR.PATCH tag")
+    root = sbom.get("metadata", {}).get("component", {})
+    if root.get("name") != "boundroom" or not str(root.get("version", "")).startswith(release.group(1)):
+        raise SbomError(
+            f"the SBOM describes {root.get('name')} {root.get('version')}, not boundroom {release.group(1)}: bump pyproject.toml"
+        )
+    expected, actual = required(requirements), listed(sbom)
+    if not expected:
+        raise SbomError("uv's requirements export lists no packages")
+    if missing := expected - actual:
+        raise SbomError("the SBOM misses packages: " + ", ".join(f"{name} {version}" for name, version in sorted(missing)))
+    if extra := actual - expected:
+        raise SbomError(
+            "the SBOM lists packages an install doesn't bring in: "
+            + ", ".join(f"{name} {version}" for name, version in sorted(extra))
+        )
 
 
-def export() -> dict[str, Any]:
+def run(command: tuple[str, ...]) -> str:
     try:
-        result = subprocess.run(EXPORT, capture_output=True, text=True, check=False)
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
     except OSError as error:
         raise SbomError(f"can't run uv: {error}") from error
     if result.returncode != 0:
-        raise SbomError(f"uv export failed: {result.stderr.strip()}")
-    try:
-        return json.loads(result.stdout)
-    except ValueError as error:
-        raise SbomError(f"uv export didn't write JSON: {error}") from error
+        raise SbomError(f"{' '.join(command[:4])} failed: {result.stderr.strip()}")
+    return result.stdout
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 1:
-        print("usage: Tools/release_sbom.py <output>", file=sys.stderr)
+    if len(argv) != 2:
+        print("usage: Tools/release_sbom.py <output> <tag>", file=sys.stderr)
         return EX_USAGE
-    output = Path(argv[0])
+    output, tag = Path(argv[0]), argv[1]
     try:
-        sbom = export()
-        check(sbom, LOCK.read_text(encoding="utf-8"))
+        try:
+            sbom = json.loads(run(EXPORT))
+        except ValueError as error:
+            raise SbomError(f"uv export didn't write JSON: {error}") from error
+        check(sbom, run(REQUIREMENTS), tag)
         output.write_text(json.dumps(sbom, indent=2) + "\n", encoding="utf-8")
-    except (OSError, tomllib.TOMLDecodeError, SbomError) as error:
+    except (OSError, SbomError) as error:
         print(f"release_sbom: {error}", file=sys.stderr)
         return 1
-    print(f"wrote {output}: {len(listed(sbom))} packages")
+    print(f"wrote {output}: boundroom and {len(listed(sbom))} packages")
     return 0
 
 

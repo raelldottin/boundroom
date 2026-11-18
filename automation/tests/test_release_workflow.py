@@ -44,7 +44,7 @@ class ReleaseAttestationTests(unittest.TestCase):
         attest = self.jobs["attest"]
         self.assertIn("needs: build", attest)
         self.assertRegex(attest, r"uses: actions/attest@[0-9a-f]{40} # v4")
-        self.assertIn("subject-path: dist/boundroom-${{ github.ref_name }}.tar.gz", attest)
+        self.assertIn("            dist/boundroom-${{ github.ref_name }}.tar.gz\n", attest)
         self.assertIn('sha256sum --check --strict "boundroom-$TAG.tar.gz.sha256"', attest)
 
     def test_only_the_attest_job_can_mint_an_oidc_token(self) -> None:
@@ -102,8 +102,14 @@ class ReleaseSbomTests(unittest.TestCase):
 
     def test_the_build_writes_the_sbom_into_the_release_files(self) -> None:
         build = self.jobs["build"]
-        self.assertIn('python3 Tools/release_sbom.py "dist/boundroom-$TAG.cdx.json"', build)
+        self.assertIn('python3 Tools/release_sbom.py "dist/boundroom-$TAG.cdx.json" "$TAG"', build)
         self.assertLess(build.index("Tools/release_sbom.py"), build.index("name: Upload release files"))
+
+    def test_the_provenance_signs_the_sbom_file_itself(self) -> None:
+        """So the downloaded .cdx.json can be verified; the .sha256 covers only the archive."""
+        provenance = self.jobs["attest"].split("- name: Attest build provenance", 1)[1].split("- name:", 1)[0]
+        self.assertIn("dist/boundroom-${{ github.ref_name }}.tar.gz\n", provenance)
+        self.assertIn("dist/boundroom-${{ github.ref_name }}.cdx.json\n", provenance)
 
     def test_the_attest_job_binds_the_sbom_to_the_archive(self) -> None:
         attest = self.jobs["attest"]
@@ -113,7 +119,7 @@ class ReleaseSbomTests(unittest.TestCase):
         self.assertIn("sbom-path: dist/boundroom-${{ github.ref_name }}.cdx.json", step)
 
     def test_the_release_notes_say_how_to_verify_the_sbom(self) -> None:
-        self.assertIn("--predicate-type https://cyclonedx.org/bom", self.jobs["release"])
+        self.assertIn("gh attestation verify boundroom-$TAG.cdx.json --repo $GITHUB_REPOSITORY", self.jobs["release"])
 
 
 if __name__ == "__main__":

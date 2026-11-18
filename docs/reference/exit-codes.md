@@ -204,13 +204,13 @@ A person runs these before creating a release tag, and `release.yml` runs them a
 
 ### `Tools/release_sbom.py`
 
-Writes the release's CycloneDX SBOM from `uv.lock` with `uv export`. `release.yml` runs it.
+Writes the release's CycloneDX SBOM from `uv.lock` with `uv export`: Boundroom's dependencies and extras, without the dev group. `release.yml` runs it.
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
-| 0 | Wrote the SBOM, and it names every locked package. | |
-| 1 | uv couldn't run or failed, its output wasn't a CycloneDX document, it missed a locked package, or a file couldn't be read or written. stderr says which. | Fix what stderr names. A missed package means uv's preview export changed: don't publish without the SBOM. |
-| 64 | No output path was given. | Pass the output path. |
+| 0 | Wrote the SBOM. It lists exactly the packages uv's requirements export lists, and the tag's version. | |
+| 1 | uv couldn't run or failed, its output wasn't a CycloneDX document, the tag isn't `vMAJOR.MINOR.PATCH`, the project's version isn't the tag's, the packages don't match, or the file couldn't be written. stderr says which. | Fix what stderr names: bump `pyproject.toml` for a version mismatch. A package mismatch means uv's preview export changed: don't publish without the SBOM. |
+| 64 | The output path or the tag is missing. | Pass both. |
 
 ### `Tools/telemetry_sample.py`
 

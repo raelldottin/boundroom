@@ -54,13 +54,15 @@ sha256sum -c boundroom-<tag>.tar.gz.sha256
 
 `gh attestation verify` prints the commit the archive was built from. It should be the commit the tag points to, which is what you pass to the sync as `--pin`. Releases up to v0.4.0 have no attestation, so for those the checksum is the check. The sync itself still runs from a checkout of the tag, with all its protections.
 
-From the same release, `boundroom-<tag>.cdx.json` is a CycloneDX bill of materials listing every package in the tag's `uv.lock`, at its locked version. It is attested against the archive, so you can check that the release workflow wrote it for this archive:
+From the same release, `boundroom-<tag>.cdx.json` is a CycloneDX bill of materials: Boundroom's dependencies and its extras, at the versions in the tag's `uv.lock`. It leaves out the development tools, which the archive doesn't ship. The release workflow signs the file, so check the copy you downloaded the same way:
 
 ```bash
-gh attestation verify boundroom-<tag>.tar.gz --repo raelldottin/boundroom \
-  --signer-workflow raelldottin/boundroom/.github/workflows/release.yml \
-  --predicate-type https://cyclonedx.org/bom
+gh release download <tag> -R raelldottin/boundroom -p 'boundroom-<tag>.cdx.json'
+gh attestation verify boundroom-<tag>.cdx.json --repo raelldottin/boundroom \
+  --signer-workflow raelldottin/boundroom/.github/workflows/release.yml
 ```
+
+The SBOM is also attested against the archive, as a CycloneDX predicate (`--predicate-type https://cyclonedx.org/bom` on the archive), for tools that read SBOMs from attestations.
 
 ## Moving to a new release
 
