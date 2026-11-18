@@ -3,14 +3,15 @@ set -euo pipefail
 
 # SPEC-005: the BOUNDROOM_* names replaced REPO_AUTOMATION_* in 0.3.0. A legacy name is still
 # honoured when its new name is unset, so an operator's existing settings keep working; when both
-# are set, the new name wins. SPEC-009 RA-ENT-002: each legacy name warns, and v0.5.0 stops
-# reading them.
+# are set, the new name wins. SPEC-009 RA-ENT-002: each legacy name warns, and legacy_removal
+# stops reading them. Keep it equal to LEGACY_ENV_REMOVAL in settings.py.
+legacy_removal="v0.6.0"
 legacy_warning() {
   local legacy_name="$1" new_name="$2"
   if [[ -n "${!new_name+x}" ]]; then
-    echo "warning: $legacy_name is deprecated and stops working in v0.5.0; use $new_name; $new_name is also set, so $legacy_name is ignored." >&2
+    echo "warning: $legacy_name is deprecated and stops working in $legacy_removal; use $new_name; $new_name is also set, so $legacy_name is ignored." >&2
   else
-    echo "warning: $legacy_name is deprecated and stops working in v0.5.0; use $new_name." >&2
+    echo "warning: $legacy_name is deprecated and stops working in $legacy_removal; use $new_name." >&2
   fi
 }
 for legacy_suffix in AGENT_RUNNER CODEX_BIN CLAUDE_BIN CLAUDE_PERMISSION_MODE HERMES_BIN HERMES_USAGE_DIR \
@@ -63,7 +64,7 @@ Runner selection:
 
 Legacy OWLORY_CODEX_BIN and each REPO_AUTOMATION_* name from before 0.3.0 are
 honoured when the BOUNDROOM_* name is unset, with a deprecation warning, until
-v0.5.0. The supervisor still exports REPO_AUTOMATION_SUPERVISOR_* and
+v0.6.0. The supervisor still exports REPO_AUTOMATION_SUPERVISOR_* and
 OWLORY_SUPERVISOR_* until then.
 USAGE
 }
@@ -265,7 +266,7 @@ export REPO_AUTOMATION_SUPERVISOR_SLICE_ID="$slice_id"
 export OWLORY_SUPERVISOR_CONTEXT_FILE="$context_file"
 export OWLORY_SUPERVISOR_HANDOFF_FILE="$handoff_file"
 export OWLORY_SUPERVISOR_SLICE_ID="$slice_id"
-# The REPO_AUTOMATION_SUPERVISOR_* and OWLORY_SUPERVISOR_* exports above end in v0.5.0
+# The REPO_AUTOMATION_SUPERVISOR_* and OWLORY_SUPERVISOR_* exports above end in v0.6.0
 # (SPEC-009 RA-ENT-002). A runner should read BOUNDROOM_SUPERVISOR_*.
 
 cd "$repo_root"

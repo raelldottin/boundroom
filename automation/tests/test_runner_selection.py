@@ -172,10 +172,10 @@ class RunnerSelectionTests(unittest.TestCase):
         self.assertSelected("claude", result)
 
     def test_a_legacy_name_warns_that_it_stops_working(self) -> None:
-        """SPEC-009 RA-ENT-002: warn through v0.4.x, stop reading the name in v0.5.0."""
+        """SPEC-009 RA-ENT-002: warn through v0.5.x, stop reading the name in v0.6.0."""
         result = self.run_wrapper([SHELL, LOGIN], REPO_AUTOMATION_AGENT_RUNNER="hermes")
         self.assertIn(
-            "warning: REPO_AUTOMATION_AGENT_RUNNER is deprecated and stops working in v0.5.0; use BOUNDROOM_AGENT_RUNNER.",
+            "warning: REPO_AUTOMATION_AGENT_RUNNER is deprecated and stops working in v0.6.0; use BOUNDROOM_AGENT_RUNNER.",
             result.stderr,
         )
 
@@ -186,7 +186,7 @@ class RunnerSelectionTests(unittest.TestCase):
     def test_the_old_codex_name_warns(self) -> None:
         result = self.run_wrapper([SHELL, LOGIN], runner="claude", OWLORY_CODEX_BIN="codex")
         self.assertIn(
-            "warning: OWLORY_CODEX_BIN is deprecated and stops working in v0.5.0; use BOUNDROOM_CODEX_BIN;",
+            "warning: OWLORY_CODEX_BIN is deprecated and stops working in v0.6.0; use BOUNDROOM_CODEX_BIN;",
             result.stderr,
         )
 

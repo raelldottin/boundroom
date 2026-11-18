@@ -83,14 +83,14 @@ The shipped `automation/prompts/base.md` no longer carries Owlory's layer rules 
 
 Until step 2, the old `base.md` and the new rules file both reach the runner, which repeats the rules but doesn't conflict. To roll back, restore the previous `base.md`; the rules file can stay.
 
-#### Old names stop working in v0.5.0
+#### Old names stop working in v0.6.0
 
-SPEC-009 RA-ENT-002 retires the names from before the 0.3.0 rename and the ones Owlory used. They keep working through the 0.4.x releases, and v0.5.0 stops reading or setting them, as the [compatibility policy](../reference/compatibility.md#how-something-is-retired) allows once a 0.4.x release has carried the warnings.
+SPEC-009 RA-ENT-002 retires the names from before the 0.3.0 rename and the ones Owlory used. They keep working through the 0.5.x releases, and v0.6.0 stops reading or setting them, as the [compatibility policy](../reference/compatibility.md#how-something-is-retired) allows once a 0.5.x release has carried the warnings.
 
 - **Variables you set.** `run_next.py` and `automation/supervisor/run_agent.sh` print a warning for each old name in the environment, naming its replacement. Rename them in your shell profile, CI and launchers. Run `python3 automation/supervisor/settings_view.py` to see any that are still in effect.
-- **Variables the supervisor sets for its runner.** It still exports the old `REPO_AUTOMATION_SUPERVISOR_*` and `OWLORY_SUPERVISOR_*` names until v0.5.0. A script a runner calls should read `BOUNDROOM_SUPERVISOR_*`.
+- **Variables the supervisor sets for its runner.** It still exports the old `REPO_AUTOMATION_SUPERVISOR_*` and `OWLORY_SUPERVISOR_*` names until v0.6.0. A script a runner calls should read `BOUNDROOM_SUPERVISOR_*`.
 
-| Old name | Replacement | Until v0.5.0 |
+| Old name | Replacement | Until v0.6.0 |
 | --- | --- | --- |
 | `REPO_AUTOMATION_AGENT_RUNNER` | `BOUNDROOM_AGENT_RUNNER` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
 | `REPO_AUTOMATION_CLAUDE_PERMISSION_MODE` | `BOUNDROOM_CLAUDE_PERMISSION_MODE` | Read with a warning when the new name is unset; ignored, with a warning, when it is set. |
@@ -117,7 +117,7 @@ SPEC-009 RA-ENT-002 retires the names from before the 0.3.0 rename and the ones 
 
 - **An import writes only under `automation/` and `docs/workflows/`, and to `THIRD-PARTY-NOTICES.md`, `Tools/boundroom-sync.sh` and `Tools/repo-automation-sync.sh`.** Any other destination is refused, which protects every consumer's own code without naming it. The shipped manifest writes nowhere else.
 - **The queue, handoffs, proofs, smoke results, the lock and `automation/runner-rules.md` stay refused** inside those places, as before.
-- **`allow_owlory_specific` no longer opts out of anything.** An entry that sets it is checked like any other, with a warning, and v0.5.0 refuses the key.
+- **`allow_owlory_specific` no longer opts out of anything.** An entry that sets it is checked like any other, with a warning, and v0.6.0 refuses the key.
 
 ### From 0.3.x to 0.4.0 (a safer Claude runner by default)
 

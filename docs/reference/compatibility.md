@@ -47,11 +47,11 @@ When the old and the new name are both set, the new one wins, and the warning sa
 
 | What | Replacement | Warns | Stops working |
 | --- | --- | --- | --- |
-| The `REPO_AUTOMATION_*` variables an operator sets, from before 0.3.0 | The `BOUNDROOM_*` variable of the same setting | Yes, from `run_next.py` and `run_agent.sh` | v0.5.0 |
-| `OWLORY_CODEX_BIN` | `BOUNDROOM_CODEX_BIN` | Yes, from `run_next.py` and `run_agent.sh` | v0.5.0 |
-| `REPO_AUTOMATION_SUPERVISOR_*` and `OWLORY_SUPERVISOR_*`, which the supervisor sets for its runner | `BOUNDROOM_SUPERVISOR_*` | No; documented in the upgrade guide | v0.5.0 |
-| The manifest key `allow_owlory_specific`, which no longer opts out of anything | None: remove the key | Yes, from `Tools/boundroom-sync.sh` | v0.5.0 |
+| The `REPO_AUTOMATION_*` variables an operator sets, from before 0.3.0 | The `BOUNDROOM_*` variable of the same setting | Yes, from `run_next.py` and `run_agent.sh` | v0.6.0 |
+| `OWLORY_CODEX_BIN` | `BOUNDROOM_CODEX_BIN` | Yes, from `run_next.py` and `run_agent.sh` | v0.6.0 |
+| `REPO_AUTOMATION_SUPERVISOR_*` and `OWLORY_SUPERVISOR_*`, which the supervisor sets for its runner | `BOUNDROOM_SUPERVISOR_*` | No; documented in the upgrade guide | v0.6.0 |
+| The manifest key `allow_owlory_specific`, which no longer opts out of anything | None: remove the key | Yes, from `Tools/boundroom-sync.sh` | v0.6.0 |
 | `Tools/repo-automation-sync.sh` | `Tools/boundroom-sync.sh` | A notice that it was renamed, every time it runs | Not decided |
 | The lock name `automation/repo-automation.lock` | `automation/boundroom.lock` | No; renaming it is the consumer owner's change | Not decided |
 
-The warnings for the first four rows arrive with the first release after v0.4.0. If that release is v0.5.0 itself, step 3 moves their removal to v0.6.0, and this table and the upgrade guide change with it.
+The warnings for the first four rows ship in the first release after v0.4.0, planned as v0.5.0. No release before it carries them, so step 3 moves their removal from v0.5.0 to v0.6.0. A person chooses each release's number; if the next one isn't v0.5.0, this table and the upgrade guide change with it.

@@ -548,7 +548,7 @@ class BoundroomImportGuardTests(unittest.TestCase):
         self.assertNotEqual(0, refused.returncode)
         self.assertIn("forbidden source is never shipped: Makefile", refused.stderr)
         self.assertIn("allow_owlory_specific, which is deprecated and ignored", refused.stderr)
-        self.assertIn("refused from v0.5.0", refused.stderr)
+        self.assertIn("refused from v0.6.0", refused.stderr)
 
         ordinary = self.entry("payload.txt", "automation/payload.txt")
         ordinary["allow_owlory_specific"] = False

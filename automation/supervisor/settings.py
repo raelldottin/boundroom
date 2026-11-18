@@ -765,7 +765,7 @@ def env_names() -> dict[str, Setting]:
 
 
 # The release that stops reading the legacy names an operator sets (SPEC-009 RA-ENT-002).
-LEGACY_ENV_REMOVAL = "v0.5.0"
+LEGACY_ENV_REMOVAL = "v0.6.0"
 # Names the supervisor sets for its runner, not settings an operator chooses. It keeps setting
 # their legacy names until LEGACY_ENV_REMOVAL, so finding one in the environment is no news.
 SUPERVISOR_EXPORTS = frozenset({"supervisor_context_file", "supervisor_handoff_file", "supervisor_slice_id"})
