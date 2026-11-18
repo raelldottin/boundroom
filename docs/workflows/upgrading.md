@@ -43,7 +43,7 @@ It exits 0 when everything matches and 1 when something needs attention. The las
 
 ## Verifying a release
 
-From the first release after v0.4.0, each release archive carries signed build provenance. Before you sync, you can check that GitHub's release workflow built the archive from this repository, at the tag's commit:
+From v0.5.0, each release archive carries signed build provenance. Before you sync, you can check that GitHub's release workflow built the archive from this repository, at the tag's commit:
 
 ```bash
 gh release download <tag> -R raelldottin/boundroom
@@ -72,7 +72,7 @@ The SBOM is also attested against the archive, as a CycloneDX predicate (`--pred
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.
 5. **Update the plugin** to the same tag, if you use it: change the marketplace source to the new tag, then update the plugin. Only a rename, as in 0.3.0, needs an uninstall and reinstall.
 
-### After 0.4.0, not yet released (a generic runner prompt)
+### From 0.4.x to 0.5.0 (a generic runner prompt)
 
 The shipped `automation/prompts/base.md` no longer carries Owlory's layer rules (SPEC-009 RA-ENT-001). A repository's own rules now live in `automation/runner-rules.md`, which the repository owns and the sync never writes. The supervisor adds it to every runner prompt under "Repository Rules". See [repository runner rules](boundroom.md#repository-runner-rules).
 
@@ -118,6 +118,12 @@ SPEC-009 RA-ENT-002 retires the names from before the 0.3.0 rename and the ones 
 - **An import writes only under `automation/` and `docs/workflows/`, and to `THIRD-PARTY-NOTICES.md`, `Tools/boundroom-sync.sh` and `Tools/repo-automation-sync.sh`.** Any other destination is refused, which protects every consumer's own code without naming it. The shipped manifest writes nowhere else.
 - **The queue, handoffs, proofs, smoke results, the lock and `automation/runner-rules.md` stay refused** inside those places, as before.
 - **`allow_owlory_specific` no longer opts out of anything.** An entry that sets it is checked like any other, with a warning, and v0.6.0 refuses the key.
+
+#### Telemetry and removed services
+
+- **Telemetry's service name is now `boundroom`**, not `boundroom-supervisor`. A collector rule, query or dashboard that selects `service.name="boundroom-supervisor"` matches nothing after the upgrade, so change it to `boundroom`. The [example dashboard](https://github.com/raelldottin/boundroom/blob/main/automation/examples/telemetry/README.md) already uses the new name.
+- **OTLP settings from your shell no longer reach the endpoint.** Boundroom now builds its exporters with every `OTEL_*` variable hidden, so `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_CERTIFICATE` and `OTEL_EXPORTER_OTLP_COMPRESSION` stop applying. If your collector needs a token, set it with `BOUNDROOM_TELEMETRY_HEADERS` or the operator file's `headers` key. Boundroom has no setting for a certificate or for compression. A failed export doesn't stop a run, so check that spans still arrive after the upgrade.
+- **Discord and Slack support is gone**, with the knowledge-loop contracts. They lived only in Boundroom's own checkout, and the sync never delivered them, so a consumer has nothing to change. Nothing replaces them.
 
 ### From 0.3.x to 0.4.0 (a safer Claude runner by default)
 
