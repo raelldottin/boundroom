@@ -40,9 +40,9 @@
 | Locked dependencies (`uv.lock`) audited by `pip-audit` on push, pull request and weekly | Enforced: workflow | Workflow runs |
 | Pull requests that add a high-severity vulnerable dependency are refused | Enforced: required `Review dependency graph diff` | Check runs |
 | Dependabot version updates for `uv` and GitHub Actions, weekly | Enforced: `.github/dependabot.yml` | Dependabot pull requests |
-| **Dependabot alerts** | **Gap: disabled.** Dependabot security updates need them. | Security tab alerts |
-| **Dependabot security updates** | **Gap: disabled** | Dependabot pull requests |
-| **Static analysis (code scanning, for example CodeQL)** | **Gap: not configured.** No analyses exist. | Code-scanning alerts |
+| Dependabot alerts | Enforced: repository security setting (checked 2026-11-18) | Security tab alerts |
+| Dependabot security updates | Enforced: repository security setting (checked 2026-11-18) | Dependabot pull requests |
+| Static analysis: CodeQL for Python and the workflows, on pull requests, pushes to `main` and weekly | Enforced: `.github/workflows/codeql.yml`, pinned by commit. It reports and isn't a required check; whether it becomes one is the owner's decision (SPEC-009 RA-ENT-005). | Code-scanning alerts; `test_code_scanning.py` |
 | Private vulnerability reporting (`SECURITY.md`) | Enforced since 2026-11-10: repository security setting | Security advisories |
 
 | Supervisor telemetry is off by default and goes only to a destination the user names (SPEC-006) | Enforced in code and tests: no SDK import, file or connection while off; no built-in destination and `send_to_logfire=False`; the kill switch wins; ambient `OTEL_*` and `LOGFIRE_*` are ignored; the repository can only reduce; plain `http://` only to loopback. Sending agent activity from the company machine to a hosted destination remains the owner's data-handling decision. | `test_telemetry_settings.py`, `test_telemetry_exporter.py`, each run's `telemetry` report block |
@@ -51,7 +51,7 @@
 
 | Control | Status | Evidence |
 | --- | --- | --- |
-| Third-party actions pinned to full commit SHAs, with the version as a comment, and updated by Dependabot | **Enforced by a required check.** `test_release_workflow.py`, part of `make reusable-check`, fails if any `uses:` in `.github/workflows/` isn't pinned to a full commit SHA with its version as a comment. All 30 references are pinned. The repository settings don't require it. | Workflow files |
+| Third-party actions pinned to full commit SHAs, with the version as a comment, and updated by Dependabot | **Enforced by a required check.** `test_release_workflow.py`, part of `make reusable-check`, fails if any `uses:` in `.github/workflows/` isn't pinned to a full commit SHA with its version as a comment. Every reference is pinned, or the gate fails. The repository settings don't require it. | Workflow files |
 | **Only approved actions may run** | **Gap.** The repository allows all actions. | Actions settings |
 | The release archive is published with a SHA-256 checksum | Enforced: `release.yml` | Release assets |
 | The release archive carries signed SLSA build provenance, checked against its checksum first | Enforced: `release.yml`'s attest job (`actions/attest`, pinned by commit), from the first release after v0.4.0 | `gh attestation verify` on a release archive; the repository's attestations |
@@ -71,17 +71,8 @@ These are repository and account security settings. The agent doesn't change the
 
    The CIS guide recommends two approvers. With one maintainer, one approving review plus required checks is the achievable control. Record that as a known deviation.
 3. **Turn on private vulnerability reporting.** Done on 2026-11-10.
-4. **Turn on Dependabot alerts, then Dependabot security updates.** Security updates fail while alerts are off, so run these in order:
-
-   ```bash
-   gh api -X PUT repos/raelldottin/boundroom/vulnerability-alerts
-   ```
-
-   ```bash
-   gh api -X PUT repos/raelldottin/boundroom/automated-security-fixes
-   ```
-
-5. **Turn on code scanning** (CodeQL default setup, free for public repositories): **Settings → Code security → Code scanning → Default**.
+4. **Turn on Dependabot alerts, then Dependabot security updates.** Done (checked 2026-11-18).
+5. **Code scanning.** `.github/workflows/codeql.yml` runs CodeQL (advanced setup). Don't turn on default setup as well: GitHub refuses the workflow's uploads while it is on. To make CodeQL block merges, add `CodeQL (python)` and `CodeQL (actions)` to the `main` ruleset's required checks.
 6. **Require SHA-pinned actions:** **Settings → Actions → General → Require actions to be pinned to a full-length commit SHA**. To also close the "only approved actions" gap, choose **Allow select actions** there and allow GitHub-created actions plus the third-party actions the workflows use.
 7. **Confirm multi-factor authentication** on every account with write access, and turn on commit signing (vigilant mode) for your account.
 8. **Require signed commits on `main`:** add **Require signed commits** to the `main` ruleset. GitHub signs squash merges itself, so squash merges keep working. Rebase merges of unsigned commits would be blocked, so keep using squash.
