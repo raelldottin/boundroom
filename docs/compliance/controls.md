@@ -56,7 +56,7 @@
 | The release archive is published with a SHA-256 checksum | Enforced: `release.yml` | Release assets |
 | The release archive carries signed SLSA build provenance, checked against its checksum first | Enforced: `release.yml`'s attest job (`actions/attest`, pinned by commit), from the first release after v0.4.0 | `gh attestation verify` on a release archive; the repository's attestations |
 | **Signed commits on `main`** | **Gap.** Commits on `main` are verified today only because GitHub signs squash merges. The ruleset doesn't require signatures. | Commit verification |
-| **SBOM** | **Gap.** SPEC-009 RA-ENT-004 needs the owner to approve a generator. | Not available |
+| Each release carries a CycloneDX SBOM of every package in `uv.lock`, attested against the archive | Enforced: `release.yml` (`Tools/release_sbom.py`, with uv, which the build already runs; `actions/attest` with `sbom-path`), from the first release after v0.4.0 | The release's `boundroom-<tag>.cdx.json`; `gh attestation verify --predicate-type https://cyclonedx.org/bom` |
 
 ## Owner actions, in this order
 
@@ -89,6 +89,5 @@ These are repository and account security settings. The agent doesn't change the
 
 ## Agent-side follow-ups (pull requests, each approved by a person)
 
-- **SBOM:** a bill of materials for each release (SPEC-009 RA-ENT-004), once the owner approves the generator.
 - **Workflow change control:** a CODEOWNERS entry and required review for `.github/` once the owner adds a second reviewer.
 - **Periodic evidence:** a scheduled export of ruleset configuration and recent pull request reviews, so an auditor can sample a period.

@@ -202,6 +202,16 @@ A person runs these before creating a release tag, and `release.yml` runs them a
 | 1 | The section is missing, empty, duplicated or has a malformed heading, or the changelog can't be read. | Fix `CHANGELOG.md`. |
 | 64 | No tag was given, or it isn't `vMAJOR.MINOR.PATCH`. | Pass a valid tag. |
 
+### `Tools/release_sbom.py`
+
+Writes the release's CycloneDX SBOM from `uv.lock` with `uv export`. `release.yml` runs it.
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| 0 | Wrote the SBOM, and it names every locked package. | |
+| 1 | uv couldn't run or failed, its output wasn't a CycloneDX document, it missed a locked package, or a file couldn't be read or written. stderr says which. | Fix what stderr names. A missed package means uv's preview export changed: don't publish without the SBOM. |
+| 64 | No output path was given. | Pass the output path. |
+
 ### `Tools/telemetry_sample.py`
 
 Writes the sample metrics the example dashboard is checked against (`automation/examples/telemetry/`).

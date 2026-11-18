@@ -54,6 +54,14 @@ sha256sum -c boundroom-<tag>.tar.gz.sha256
 
 `gh attestation verify` prints the commit the archive was built from. It should be the commit the tag points to, which is what you pass to the sync as `--pin`. Releases up to v0.4.0 have no attestation, so for those the checksum is the check. The sync itself still runs from a checkout of the tag, with all its protections.
 
+From the same release, `boundroom-<tag>.cdx.json` is a CycloneDX bill of materials listing every package in the tag's `uv.lock`, at its locked version. It is attested against the archive, so you can check that the release workflow wrote it for this archive:
+
+```bash
+gh attestation verify boundroom-<tag>.tar.gz --repo raelldottin/boundroom \
+  --signer-workflow raelldottin/boundroom/.github/workflows/release.yml \
+  --predicate-type https://cyclonedx.org/bom
+```
+
 ## Moving to a new release
 
 1. **Read the release notes** for every tag between your pin and the target. Each release's notes are its section of the [changelog](https://github.com/raelldottin/boundroom/blob/main/CHANGELOG.md). A minor release (`0.x.0`) may rename or remove something; a patch release doesn't. The [compatibility and deprecation policy](../reference/compatibility.md) says exactly what each may change, and lists what is deprecated now.

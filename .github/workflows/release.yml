@@ -2,8 +2,8 @@ name: Release
 
 # A maintainer pushes a semver tag (vMAJOR.MINOR.PATCH) on a commit already on main.
 # This workflow refuses anything else, reruns the canonical gate, stages exactly the
-# manifest's distributed tree with the consumer sync tool itself, attests the archive's
-# build provenance, and publishes it.
+# manifest's distributed tree with the consumer sync tool itself, writes an SBOM of uv.lock,
+# attests the archive's build provenance and the SBOM, and publishes them.
 
 on:
   push:
@@ -178,6 +178,13 @@ jobs:
           tar -tzf "dist/$name.tar.gz"
           cat "dist/$name.tar.gz.sha256"
 
+      # SPEC-009 RA-ENT-004: every package in this tag's uv.lock, as CycloneDX. A release asset,
+      # and attested against the archive below.
+      - name: Write the SBOM
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 Tools/release_sbom.py "dist/boundroom-$TAG.cdx.json"
+
       - name: Upload release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -232,6 +239,14 @@ jobs:
         with:
           subject-path: dist/boundroom-${{ github.ref_name }}.tar.gz
 
+      # The same action with sbom-path binds the SBOM to the archive, verifiable with
+      # `gh attestation verify --predicate-type https://cyclonedx.org/bom`.
+      - name: Attest the SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/boundroom-${{ github.ref_name }}.tar.gz
+          sbom-path: dist/boundroom-${{ github.ref_name }}.cdx.json
+
   release:
     name: Publish GitHub release
     needs: [build, attest]
@@ -269,6 +284,8 @@ jobs:
             echo "Manifest-owned tree of $GITHUB_REPOSITORY at commit $COMMIT. Consumers sync from this tag; see docs/workflows/boundroom.md#releases."
             echo
             echo "Verify the archive: \`gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml\`"
+            echo
+            echo "The SBOM, \`boundroom-$TAG.cdx.json\`, lists every locked package. Verify it is this archive's: add \`--predicate-type https://cyclonedx.org/bom\` to that command."
           } > "$RUNNER_TEMP/release-notes.md"
           gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \

@@ -1,4 +1,4 @@
-"""The release workflow attests its archive, and only one job may sign (SPEC-009 RA-ENT-003)."""
+"""The release workflow attests its archive and its SBOM, and only one job may sign (SPEC-009 RA-ENT-003, RA-ENT-004)."""
 
 from __future__ import annotations
 
@@ -92,6 +92,28 @@ class ReleaseAttestationTests(unittest.TestCase):
 
     def test_the_release_notes_say_how_to_verify(self) -> None:
         self.assertIn("gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY", self.jobs["release"])
+
+
+class ReleaseSbomTests(unittest.TestCase):
+    """Each release publishes an SBOM of uv.lock, attested against the archive (SPEC-009 RA-ENT-004)."""
+
+    def setUp(self) -> None:
+        self.jobs = jobs(RELEASE)
+
+    def test_the_build_writes_the_sbom_into_the_release_files(self) -> None:
+        build = self.jobs["build"]
+        self.assertIn('python3 Tools/release_sbom.py "dist/boundroom-$TAG.cdx.json"', build)
+        self.assertLess(build.index("Tools/release_sbom.py"), build.index("name: Upload release files"))
+
+    def test_the_attest_job_binds_the_sbom_to_the_archive(self) -> None:
+        attest = self.jobs["attest"]
+        step = attest.split("- name: Attest the SBOM", 1)[1]
+        self.assertRegex(step, r"uses: actions/attest@[0-9a-f]{40} # v4")
+        self.assertIn("subject-path: dist/boundroom-${{ github.ref_name }}.tar.gz", step)
+        self.assertIn("sbom-path: dist/boundroom-${{ github.ref_name }}.cdx.json", step)
+
+    def test_the_release_notes_say_how_to_verify_the_sbom(self) -> None:
+        self.assertIn("--predicate-type https://cyclonedx.org/bom", self.jobs["release"])
 
 
 if __name__ == "__main__":
