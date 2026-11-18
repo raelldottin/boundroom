@@ -99,3 +99,43 @@ def test_the_cli_requires_exactly_one_tag():
     result = subprocess.run([sys.executable, str(SCRIPT)], cwd=REPO_ROOT, capture_output=True, text=True)
 
     assert result.returncode == gate.EX_USAGE
+
+
+def write_project(root: Path, version: str) -> None:
+    (root / gate.PYPROJECT).write_text(
+        f'[project]\nname = "boundroom"\nversion = "{version}"\n\n[tool.uv]\nversion = "9.9.9"\n', encoding="utf-8"
+    )
+
+
+def test_the_real_pyproject_passes_for_its_own_version():
+    version = gate.PROJECT_VERSION.search((REPO_ROOT / gate.PYPROJECT).read_text(encoding="utf-8")).group(1)
+
+    assert gate.project_problems(REPO_ROOT, f"v{version}") == []
+
+
+@pytest.mark.parametrize(
+    ("version", "tag", "ok"),
+    [
+        ("0.5.0", "v0.5.0", True),
+        ("0.4.0", "v0.5.0", False),
+        ("0.5.10", "v0.5.1", False),
+        ("0.5.0rc1", "v0.5.0", False),
+        ("0.5.0rc1", "v0.5.0-rc1", True),
+        ("0.5.0", "v0.5.0-rc1", True),
+    ],
+)
+def test_pyproject_must_declare_the_tags_version(tmp_path, version, tag, ok):
+    """A tag over an unbumped pyproject.toml is refused before the tag is pushed (SPEC-009 RA-ENT-004)."""
+    write_project(tmp_path, version)
+
+    found = gate.project_problems(tmp_path, tag)
+
+    assert (found == []) is ok, found
+    if not ok:
+        assert "run uv lock after bumping it" in found[0]
+
+
+def test_a_pyproject_without_a_project_version_is_refused(tmp_path):
+    assert gate.project_problems(tmp_path, "v0.5.0") == ["pyproject.toml: no readable [project] version"]
+    (tmp_path / gate.PYPROJECT).write_text('[tool.uv]\nversion = "0.5.0"\n', encoding="utf-8")
+    assert gate.project_problems(tmp_path, "v0.5.0") == ["pyproject.toml: no readable [project] version"]

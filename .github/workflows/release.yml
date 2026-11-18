@@ -2,8 +2,8 @@ name: Release
 
 # A maintainer pushes a semver tag (vMAJOR.MINOR.PATCH) on a commit already on main.
 # This workflow refuses anything else, reruns the canonical gate, stages exactly the
-# manifest's distributed tree with the consumer sync tool itself, attests the archive's
-# build provenance, and publishes it.
+# manifest's distributed tree with the consumer sync tool itself, writes an SBOM of uv.lock,
+# attests the archive's build provenance and the SBOM, and publishes them.
 
 on:
   push:
@@ -134,9 +134,12 @@ jobs:
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
+      # A fixed uv, because the SBOM comes from its preview cyclonedx1.5 export, which a newer uv
+      # may change. Raise it on purpose, with the SBOM tests passing on the new version.
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
+          version: "0.13.7"
           enable-cache: true
 
       - name: Install Python 3.12
@@ -177,6 +180,15 @@ jobs:
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
           tar -tzf "dist/$name.tar.gz"
           cat "dist/$name.tar.gz.sha256"
+
+      # SPEC-009 RA-ENT-004: what installing Boundroom brings in, from this tag's uv.lock, as
+      # CycloneDX. A release asset, signed itself and attested against the archive below.
+      - name: Write the SBOM
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 Tools/release_sbom.py "dist/boundroom-$TAG.cdx.json" "$TAG"
+          (cd dist && sha256sum "boundroom-$TAG.cdx.json" > "boundroom-$TAG.cdx.json.sha256")
 
       - name: Upload release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -219,18 +231,30 @@ jobs:
           name: release
           path: dist
 
-      - name: Check the archive against its checksum
+      - name: Check the archive and the SBOM against their checksums
         working-directory: dist
         env:
           TAG: ${{ github.ref_name }}
-        run: sha256sum --check --strict "boundroom-$TAG.tar.gz.sha256"
+        run: |
+          sha256sum --check --strict "boundroom-$TAG.tar.gz.sha256"
+          sha256sum --check --strict "boundroom-$TAG.cdx.json.sha256"
 
       # actions/attest is what attest-build-provenance wraps since v4, and what its README
       # recommends. With only subject-path it writes SLSA build provenance.
       - name: Attest build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
+          subject-path: |
+            dist/boundroom-${{ github.ref_name }}.tar.gz
+            dist/boundroom-${{ github.ref_name }}.cdx.json
+
+      # The provenance above signs the SBOM file itself. This binds its content to the archive,
+      # verifiable with `gh attestation verify --predicate-type https://cyclonedx.org/bom`.
+      - name: Attest the SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
           subject-path: dist/boundroom-${{ github.ref_name }}.tar.gz
+          sbom-path: dist/boundroom-${{ github.ref_name }}.cdx.json
 
   release:
     name: Publish GitHub release
@@ -269,6 +293,8 @@ jobs:
             echo "Manifest-owned tree of $GITHUB_REPOSITORY at commit $COMMIT. Consumers sync from this tag; see docs/workflows/boundroom.md#releases."
             echo
             echo "Verify the archive: \`gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml\`"
+            echo
+            echo "The SBOM, \`boundroom-$TAG.cdx.json\`, lists what installing Boundroom brings in. Verify it the same way: \`gh attestation verify boundroom-$TAG.cdx.json --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml\`"
           } > "$RUNNER_TEMP/release-notes.md"
           gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \

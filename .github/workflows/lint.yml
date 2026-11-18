@@ -35,6 +35,11 @@ jobs:
       - name: Install Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      # A uv.lock that no longer matches pyproject.toml fails here, not at release, where the
+      # SBOM's export refuses it (SPEC-009 RA-ENT-004).
+      - name: Require an up-to-date uv.lock
+        run: uv lock --check
+
       - name: Sync dev dependencies
         run: uv sync --frozen --python ${{ matrix.python-version }}
 

@@ -1,4 +1,4 @@
-"""The release workflow attests its archive, and only one job may sign (SPEC-009 RA-ENT-003)."""
+"""The release workflow attests its archive and its SBOM, and only one job may sign (SPEC-009 RA-ENT-003, RA-ENT-004)."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ class ReleaseAttestationTests(unittest.TestCase):
         attest = self.jobs["attest"]
         self.assertIn("needs: build", attest)
         self.assertRegex(attest, r"uses: actions/attest@[0-9a-f]{40} # v4")
-        self.assertIn("subject-path: dist/boundroom-${{ github.ref_name }}.tar.gz", attest)
+        self.assertIn("            dist/boundroom-${{ github.ref_name }}.tar.gz\n", attest)
         self.assertIn('sha256sum --check --strict "boundroom-$TAG.tar.gz.sha256"', attest)
 
     def test_only_the_attest_job_can_mint_an_oidc_token(self) -> None:
@@ -92,6 +92,46 @@ class ReleaseAttestationTests(unittest.TestCase):
 
     def test_the_release_notes_say_how_to_verify(self) -> None:
         self.assertIn("gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY", self.jobs["release"])
+
+
+class ReleaseSbomTests(unittest.TestCase):
+    """Each release publishes an SBOM of uv.lock, attested against the archive (SPEC-009 RA-ENT-004)."""
+
+    def setUp(self) -> None:
+        self.jobs = jobs(RELEASE)
+
+    def test_the_build_writes_the_sbom_into_the_release_files(self) -> None:
+        build = self.jobs["build"]
+        self.assertIn('python3 Tools/release_sbom.py "dist/boundroom-$TAG.cdx.json" "$TAG"', build)
+        self.assertLess(build.index("Tools/release_sbom.py"), build.index("name: Upload release files"))
+
+    def test_the_provenance_signs_the_sbom_file_itself(self) -> None:
+        """So the downloaded .cdx.json can be verified; the .sha256 covers only the archive."""
+        provenance = self.jobs["attest"].split("- name: Attest build provenance", 1)[1].split("- name:", 1)[0]
+        self.assertIn("dist/boundroom-${{ github.ref_name }}.tar.gz\n", provenance)
+        self.assertIn("dist/boundroom-${{ github.ref_name }}.cdx.json\n", provenance)
+
+    def test_the_attest_job_binds_the_sbom_to_the_archive(self) -> None:
+        attest = self.jobs["attest"]
+        step = attest.split("- name: Attest the SBOM", 1)[1]
+        self.assertRegex(step, r"uses: actions/attest@[0-9a-f]{40} # v4")
+        self.assertIn("subject-path: dist/boundroom-${{ github.ref_name }}.tar.gz", step)
+        self.assertIn("sbom-path: dist/boundroom-${{ github.ref_name }}.cdx.json", step)
+
+    def test_the_sbom_is_checksummed_and_checked_before_it_is_signed(self) -> None:
+        self.assertIn('sha256sum "boundroom-$TAG.cdx.json" > "boundroom-$TAG.cdx.json.sha256"', self.jobs["build"])
+        self.assertIn('sha256sum --check --strict "boundroom-$TAG.cdx.json.sha256"', self.jobs["attest"])
+
+    def test_the_build_uses_a_fixed_uv_for_the_preview_export(self) -> None:
+        self.assertRegex(self.jobs["build"], r'version: "\d+\.\d+\.\d+"')
+
+    def test_a_stale_lock_fails_every_pull_request(self) -> None:
+        """So the release's --locked export never meets one (lint.yml runs the required gate)."""
+        lint = (WORKFLOWS / "lint.yml").read_text(encoding="utf-8")
+        self.assertLess(lint.index("run: uv lock --check"), lint.index("run: make reusable-check"))
+
+    def test_the_release_notes_say_how_to_verify_the_sbom(self) -> None:
+        self.assertIn("gh attestation verify boundroom-$TAG.cdx.json --repo $GITHUB_REPOSITORY", self.jobs["release"])
 
 
 if __name__ == "__main__":
