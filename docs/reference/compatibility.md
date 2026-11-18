@@ -54,4 +54,4 @@ When the old and the new name are both set, the new one wins, and the warning sa
 | `Tools/repo-automation-sync.sh` | `Tools/boundroom-sync.sh` | A notice that it was renamed, every time it runs | Not decided |
 | The lock name `automation/repo-automation.lock` | `automation/boundroom.lock` | No; renaming it is the consumer owner's change | Not decided |
 
-The warnings for the first four rows ship in the first release after v0.4.0, planned as v0.5.0. No release before it carries them, so step 3 moves their removal from v0.5.0 to v0.6.0. A person chooses each release's number; if the next one isn't v0.5.0, this table and the upgrade guide change with it.
+The warnings for the first four rows first ship in v0.5.0. No release before it carried them, so step 3 moved their removal from v0.5.0 to v0.6.0.

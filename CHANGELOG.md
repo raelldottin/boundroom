@@ -6,19 +6,21 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+## 0.5.0 (2026-11-18)
+
 ### Added
 
-- `CODE_OF_CONDUCT.md`: the Contributor Covenant 2.1, with how to report a problem.
+- `CODE_OF_CONDUCT.md`: the Contributor Covenant 2.1, with how to report a problem (#264).
 - Telemetry metrics from one catalogue with bounded labels, standard resource attributes, error status on failed spans, a telemetry block in operator status, and `BOUNDROOM_OFFLINE`, which stops every network call Boundroom makes (#240).
 - An example Grafana dashboard for the metric catalogue, in `automation/examples/telemetry/`, with sample data and the queries a Prometheus-compatible backend needs. Duration histograms are exported with explicit buckets from 1 second to 2 hours, so any such backend stores them as classic histograms (#261).
 - A repository's own runner rules in `automation/runner-rules.md`, which the sync never writes and the supervisor adds to every runner prompt (#241).
 - Signed build provenance for each release archive, checked with `gh attestation verify` (#244).
-- A signed CycloneDX SBOM with each release, listing Boundroom's dependencies and extras at their locked versions, and attested against the archive. `Tools/check_plugin_version.py` now also requires `pyproject.toml` to declare the tag's version, and CI refuses a `uv.lock` that no longer matches `pyproject.toml`.
-- CodeQL analysis of the Python code and the workflows, on pull requests, pushes to `main` and weekly. It reports to code scanning and isn't a required check.
-- The compatibility and deprecation policy (#243) and this changelog.
-- A support matrix in the README. CI now also tests Python 3.13 and 3.14, and macOS.
-- Optional components in the sync manifest. A consumer can leave out the effectiveness benchmark with `Tools/boundroom-sync.sh --omit benchmark`. That removes what an earlier sync left of it, and the consumer's synced tests still pass. Pass the flag to every `--check`, `--sync` and `--status`.
-- Operator docs: an architecture overview, a security model, a reference of every exit code, failure reason and decision, and a troubleshooting guide. A test fails if a command can exit with a code the reference doesn't list.
+- A signed CycloneDX SBOM with each release, listing Boundroom's dependencies and extras at their locked versions, and attested against the archive. `Tools/check_plugin_version.py` now also requires `pyproject.toml` to declare the tag's version, and CI refuses a `uv.lock` that no longer matches `pyproject.toml` (#262).
+- CodeQL analysis of the Python code and the workflows, on pull requests, pushes to `main` and weekly. It reports to code scanning and isn't a required check (#263).
+- The compatibility and deprecation policy (#243) and this changelog (#245).
+- A support matrix in the README. CI now also tests Python 3.13 and 3.14, and macOS (#246).
+- Optional components in the sync manifest. A consumer can leave out the effectiveness benchmark with `Tools/boundroom-sync.sh --omit benchmark`. That removes what an earlier sync left of it, and the consumer's synced tests still pass. Pass the flag to every `--check`, `--sync` and `--status` (#260).
+- Operator docs: an architecture overview, a security model, a reference of every exit code, failure reason and decision, and a troubleshooting guide. A test fails if a command can exit with a code the reference doesn't list (#255).
 
 ### Changed
 
@@ -38,8 +40,8 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 ### Fixed
 
 - OTLP headers set in the operator's shell no longer reach the configured telemetry endpoint (#240).
-- An error after `run_next.py` claims a slice, up to and including the write of its verdict, now marks the slice `failed` with reason `git_error` or `supervisor_error` and prints a failure report. Before, a Git failure, an error while replaying validations or judging the handoff, or a failed verdict write left the slice `in_progress` and the next run refused to start. If the queue or board refuses the failure too, the report says the slice is still `in_progress`.
-- A handoff that isn't valid JSON or can't be read fails the claimed slice as `handoff_invalid`. A bad handoff left in `automation/handoffs/` no longer stops every later run before it claims a slice.
+- An error after `run_next.py` claims a slice, up to and including the write of its verdict, now marks the slice `failed` with reason `git_error` or `supervisor_error` and prints a failure report. Before, a Git failure, an error while replaying validations or judging the handoff, or a failed verdict write left the slice `in_progress` and the next run refused to start. If the queue or board refuses the failure too, the report says the slice is still `in_progress` (#256).
+- A handoff that isn't valid JSON or can't be read fails the claimed slice as `handoff_invalid`. A bad handoff left in `automation/handoffs/` no longer stops every later run before it claims a slice (#258).
 
 ## 0.4.0 (2026-11-13)
 

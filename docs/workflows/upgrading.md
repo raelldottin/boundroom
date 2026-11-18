@@ -43,7 +43,7 @@ It exits 0 when everything matches and 1 when something needs attention. The las
 
 ## Verifying a release
 
-From the first release after v0.4.0, each release archive carries signed build provenance. Before you sync, you can check that GitHub's release workflow built the archive from this repository, at the tag's commit:
+From v0.5.0, each release archive carries signed build provenance. Before you sync, you can check that GitHub's release workflow built the archive from this repository, at the tag's commit:
 
 ```bash
 gh release download <tag> -R raelldottin/boundroom
@@ -72,7 +72,7 @@ The SBOM is also attested against the archive, as a CycloneDX predicate (`--pred
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.
 5. **Update the plugin** to the same tag, if you use it: change the marketplace source to the new tag, then update the plugin. Only a rename, as in 0.3.0, needs an uninstall and reinstall.
 
-### After 0.4.0, not yet released (a generic runner prompt)
+### From 0.4.x to 0.5.0 (a generic runner prompt)
 
 The shipped `automation/prompts/base.md` no longer carries Owlory's layer rules (SPEC-009 RA-ENT-001). A repository's own rules now live in `automation/runner-rules.md`, which the repository owns and the sync never writes. The supervisor adds it to every runner prompt under "Repository Rules". See [repository runner rules](boundroom.md#repository-runner-rules).
 
