@@ -28,8 +28,8 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ### Deprecated
 
-- Each `REPO_AUTOMATION_*` variable and `OWLORY_CODEX_BIN` now prints a warning naming its replacement. They stop working in v0.5.0, as do the `REPO_AUTOMATION_SUPERVISOR_*` and `OWLORY_SUPERVISOR_*` names the supervisor sets for its runner (#242).
-- The manifest key `allow_owlory_specific` no longer opts out of anything, and v0.5.0 refuses it (#242).
+- Each `REPO_AUTOMATION_*` variable and `OWLORY_CODEX_BIN` now prints a warning naming its replacement. They stop working in v0.6.0, as do the `REPO_AUTOMATION_SUPERVISOR_*` and `OWLORY_SUPERVISOR_*` names the supervisor sets for its runner (#242).
+- The manifest key `allow_owlory_specific` no longer opts out of anything, and v0.6.0 refuses it (#242).
 
 ### Removed
 

@@ -44,9 +44,9 @@ ALLOWED_DESTINATION_PREFIXES = ("automation/", "docs/workflows/")
 ALLOWED_DESTINATION_FILES = {"THIRD-PARTY-NOTICES.md", "Tools/boundroom-sync.sh", "Tools/repo-automation-sync.sh"}
 
 # A manifest key that used to let an entry ship a source on the list above. It no longer
-# does: an entry that sets it is checked like any other, with a warning, and from v0.5.0 the
+# does: an entry that sets it is checked like any other, with a warning, and from v0.6.0 the
 # key is refused.
-DEPRECATED_ENTRY_KEYS = {"allow_owlory_specific": "v0.5.0"}
+DEPRECATED_ENTRY_KEYS = {"allow_owlory_specific": "v0.6.0"}
 
 # Destinations a consumer owns outright, inside or outside the allowed places. The canonical
 # repository supplies both the file list and this tool, so without a destination check an

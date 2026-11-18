@@ -37,7 +37,7 @@ These stop the run before it claims its next slice. That slice is unchanged, so 
 | `stop: telemetry: file_dir <dir> isn't writable` | 78 | Required file telemetry can't write its directory. | Fix the directory's permissions. |
 | `stop: --single-slice runs one slice and refuses --autonomous-limit.` | 64 | The two flags contradict each other. | Pass one. |
 
-A warning that names a `REPO_AUTOMATION_*` or `OWLORY_*` variable doesn't stop the run. That name stops working in v0.5.0. The [upgrade guide](../workflows/upgrading.md) gives its replacement.
+A warning that names a `REPO_AUTOMATION_*` or `OWLORY_*` variable doesn't stop the run. That name stops working in v0.6.0. The [upgrade guide](../workflows/upgrading.md) gives its replacement.
 
 ## During a slice
 
