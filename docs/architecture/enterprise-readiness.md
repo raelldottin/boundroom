@@ -135,7 +135,7 @@ Each slice is one pull request by the agent, approved by a person, with tests wh
 ## Open decisions for the owner
 
 1. The license (RA-ENT-015). Decided on 2026-11-18: `GPL-2.0-only`.
-2. Whether to publish a PyPI package or a container image (RA-ENT-014). Decided on 2026-11-18: neither, for now.
+2. Whether to publish a PyPI package or a container image (RA-ENT-014). Decided on 2026-11-18: neither, for now. [SPEC-010](installed-supervisor.md) proposes reopening it for one channel, a wheel attached to the GitHub release.
 3. Whether CodeQL becomes a required check (RA-ENT-005). RA-ENT-004's generator question is settled: on 2026-11-18 the owner approved #262, which writes the SBOM with uv's export.
 4. Enabling secret scanning and push protection in the repository's settings, which agents never change. Done: both were on when checked on 2026-11-18.
 5. The text of a code of conduct (RA-ENT-012). Decided: the Contributor Covenant 2.1.
