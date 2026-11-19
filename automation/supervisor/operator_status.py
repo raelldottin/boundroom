@@ -48,16 +48,24 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from automation.supervisor import egress, kanban_projection, local_board, policy, run_next, telemetry_settings
+from automation.supervisor import (
+    egress,
+    kanban_projection,
+    local_board,
+    policy,
+    run_next,
+    sync_pin,
+    telemetry,
+    telemetry_settings,
+)
 from automation.supervisor.handoff_summary import safe
 
 SCHEMA = "boundroom.operator-status/1"
 DEFAULT_QUEUE = "automation/queue/slices.json"
 # The plugin manifest the release check reads first (Tools/check_plugin_version.py). A consumer's
 # synced copy has no plugin directory, so there the sync pin is what identifies the copy.
-VERSION_FILE = "plugins/boundroom/plugin.json"
-# The consumer's lock, then the name a consumer that adopted before 0.3.0 keeps (SPEC-005).
-LOCK_FILES = ("automation/boundroom.lock", "automation/repo-automation.lock")
+VERSION_FILE = telemetry.VERSION_FILE
+LOCK_FILES = sync_pin.LOCK_FILES
 LOCK_FIELDS = ("commit", "remote", "repository", "imported_at")
 # Refusals that mean the report itself is incomplete, rather than that run_next would stop.
 INCOMPLETE = frozenset({"queue_unreadable", "board_unreadable", "git_unavailable"})
@@ -109,25 +117,6 @@ def read_version(repo_root: Path, reader: _Reader) -> dict[str, Any]:
     return {"value": value if isinstance(value, str) else None, "source": VERSION_FILE}
 
 
-def parse_lock(text: str) -> dict[str, Any]:
-    """The lock's fields: a JSON object, or ``key = value`` / ``key: value`` lines."""
-    try:
-        document = json.loads(text)
-    except ValueError:
-        document = None
-    if isinstance(document, dict):
-        return document
-    fields: dict[str, Any] = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        separator = min((index for index in (line.find("="), line.find(":")) if index > 0), default=-1)
-        if separator > 0:
-            fields[line[:separator].strip()] = line[separator + 1 :].strip().strip("\"'")
-    return fields
-
-
 def read_sync_pin(repo_root: Path, reader: _Reader) -> Optional[dict[str, Any]]:
     """The consumer's sync pin, or None when the repository keeps no lock (as Boundroom itself)."""
     for name in LOCK_FILES:
@@ -137,7 +126,7 @@ def read_sync_pin(repo_root: Path, reader: _Reader) -> Optional[dict[str, Any]]:
         reader.read(path)
         pin: dict[str, Any] = {"path": name, "legacy": name != LOCK_FILES[0]}
         try:
-            fields = parse_lock(path.read_text(encoding="utf-8"))
+            fields = sync_pin.parse_lock(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError) as error:
             fields = {}
             pin["error"] = f"unreadable lock: {error}"

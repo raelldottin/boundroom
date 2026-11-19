@@ -111,3 +111,59 @@ def test_every_span_carries_the_standard_and_the_operators_resource_attributes(t
             "deployment.environment.name": "ci",
             "team.name": "payments",
         }
+
+
+def test_service_version_is_boundroom_s_own_release():
+    manifest = json.loads((REPO_ROOT / telemetry.VERSION_FILE).read_text(encoding="utf-8"))
+
+    assert telemetry.version(REPO_ROOT) == manifest["version"]
+
+
+def test_a_consumer_s_spans_name_the_commit_its_lock_pins(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "consumer"\nversion = "3.1.4"\n', encoding="utf-8")
+    (tmp_path / "automation").mkdir()
+    (tmp_path / "automation" / "boundroom.lock").write_text(json.dumps({"commit": "a" * 40}), encoding="utf-8")
+
+    assert telemetry.version(tmp_path) == "a" * 40
+
+
+@pytest.mark.parametrize("commit", ["main", "a" * 39, "A" * 40, "a" * 40 + "\n; x", 7])
+def test_a_lock_commit_that_isn_t_a_full_sha_gives_no_version(tmp_path, commit):
+    (tmp_path / "automation").mkdir()
+    (tmp_path / "automation" / "boundroom.lock").write_text(json.dumps({"commit": commit}), encoding="utf-8")
+
+    assert telemetry.version(tmp_path) == telemetry.UNKNOWN_VERSION
+
+
+def test_a_consumer_that_kept_the_pre_rename_lock_is_labelled_with_its_pin(tmp_path):
+    (tmp_path / "automation").mkdir()
+    (tmp_path / "automation" / "repo-automation.lock").write_text(
+        'repository = "raelldottin/repo-automation"\ncommit = "' + "b" * 40 + '"\n', encoding="utf-8"
+    )
+
+    assert telemetry.version(tmp_path) == "b" * 40
+
+
+def test_without_a_manifest_or_lock_the_version_is_unknown_not_the_consumer_s(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "consumer"\nversion = "3.1.4"\n', encoding="utf-8")
+
+    assert telemetry.version(tmp_path) == telemetry.UNKNOWN_VERSION
+
+
+@pytest.mark.parametrize("text", ["{", "[]", '{"name": "boundroom"}', '{"version": 5}', '{"version": ""}'])
+def test_an_unreadable_manifest_gives_no_version(tmp_path, text):
+    manifest = tmp_path / telemetry.VERSION_FILE
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(text, encoding="utf-8")
+
+    assert telemetry.version(tmp_path) == telemetry.UNKNOWN_VERSION
+
+
+def test_spans_never_carry_the_git_commit_of_the_repository_they_run_in(tmp_path):
+    settings = resolve(flags={"telemetry": "file", "telemetry_file_dir": str(tmp_path / "spans")}, environ={}, operator_file=None)
+    handle = telemetry.configure(settings, repo_root=REPO_ROOT, run_id="run-1", service_version="")
+    with handle.span("boundroom.run"):
+        pass
+    assert handle.flush()
+    lines = [json.loads(line) for line in (tmp_path / "spans/run-1.spans.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert lines and all(line["resource"]["service.version"] == telemetry.UNKNOWN_VERSION for line in lines)

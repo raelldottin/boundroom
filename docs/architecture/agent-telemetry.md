@@ -145,7 +145,7 @@ An exception that escapes a span is caught before the SDK sees it, because the S
 Every span and data point carries these resource attributes:
 
 - `service.name`: `boundroom`. Before RA-TEL-009 it was `boundroom-supervisor`.
-- `service.version`: the Boundroom version from `pyproject.toml`, when the checkout has one.
+- `service.version`: the Boundroom version from `plugins/boundroom/plugin.json`. A consumer's synced copy has no such file, so there it is the Boundroom commit the consumer's lock pins, or `unknown` when there is no lock. It is never the consumer's own version or git commit.
 - `deployment.environment.name`: the `environment` setting.
 - the operator's own `resource_attributes`.
 
