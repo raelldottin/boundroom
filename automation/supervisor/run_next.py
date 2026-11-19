@@ -261,6 +261,8 @@ def _run(args: argparse.Namespace) -> int:
         tracer.annotate(root, exit_code=code)
         if code != 0:
             tracer.fail(root, "exit_nonzero")
+        if code is None:  # unreachable: the try assigned code or raised
+            raise RuntimeError("no exit code")
         return code
 
 
@@ -595,7 +597,7 @@ def run_agent(
         handoff = str(handoff_path.resolve())
     if profile is not None and profile.effective != "custom":
         # The same rules the settings file gives the runner, so it doesn't spend turns on denied calls (SPEC-008).
-        settings = runner_profile.slice_settings(slice_record, queue_data["policy"], profile, handoff)
+        settings = runner_profile.slice_settings(slice_record, queue_data["policy"], profile, handoff, repo_root)
         prompt_text = f"{prompt_text.rstrip()}\n\n{runner_profile.runner_notes(settings)}"
 
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as prompt_handle:
@@ -625,7 +627,7 @@ def run_agent(
             return result.returncode
         # The profile builds on that environment, so its own variables win (SPEC-008).
         with runner_profile.runner_environment(
-            slice_record, queue_data["policy"], profile, environ or os.environ, handoff=handoff
+            slice_record, queue_data["policy"], profile, environ or os.environ, handoff=handoff, repo_root=repo_root
         ) as env:
             result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds, env=env)
             return result.returncode

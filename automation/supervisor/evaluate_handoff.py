@@ -567,6 +567,8 @@ def main() -> int:
         tracer.flush()
 
     print(json.dumps(result, indent=2))
+    if code is None:  # unreachable: the try assigned code or raised
+        raise RuntimeError("no exit code")
     return code
 
 

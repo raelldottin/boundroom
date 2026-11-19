@@ -1419,5 +1419,33 @@ class PreRenameNamesTests(unittest.TestCase):
             self.assertIn(path, destinations)
 
 
+class SyncedDocLinkTests(unittest.TestCase):
+    """A synced document's relative links must resolve in a consumer, which gets only the manifest's files."""
+
+    def test_every_relative_link_in_a_synced_document_resolves_to_a_synced_file(self) -> None:
+        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+        shipped: set[str] = set()
+        documents: dict[Path, str] = {}
+        for entry in manifest["entries"]:
+            source, destination = REPO_ROOT / entry["source"], entry.get("destination", entry["source"])
+            files = [path for path in source.rglob("*") if path.is_file()] if source.is_dir() else [source]
+            for path in files:
+                shipped_path = destination if not source.is_dir() else f"{destination}/{path.relative_to(source).as_posix()}"
+                shipped.add(shipped_path)
+                if path.suffix == ".md":
+                    documents[path] = shipped_path
+        broken = []
+        for path, shipped_path in sorted(documents.items()):
+            for target in re.findall(r"\]\(([^)\s]+)\)", path.read_text(encoding="utf-8")):
+                if re.match(r"[a-z][a-z0-9+.-]*:|#", target):
+                    continue
+                resolved = os.path.normpath(os.path.join(os.path.dirname(shipped_path), target.split("#")[0])).replace(
+                    os.sep, "/"
+                )
+                if resolved not in shipped and not any(name.startswith(f"{resolved}/") for name in shipped):
+                    broken.append(f"{path.relative_to(REPO_ROOT)} -> {target}")
+        self.assertEqual([], broken, "link to the file on GitHub instead, as the consumer doesn't get it")
+
+
 if __name__ == "__main__":
     unittest.main()

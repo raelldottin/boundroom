@@ -150,17 +150,19 @@ def parent_launch_mode(start_pid: Optional[int] = None) -> Optional[str]:
 # The default since v0.4.0, by the owner's decision (SPEC-008 decision 1, 2026-11-12).
 DEFAULT_PROFILE = "bounded"
 LEGACY_MODE_ENV = "BOUNDROOM_CLAUDE_PERMISSION_MODE"
+PRE_RENAME_MODE_ENV = "REPO_AUTOMATION_CLAUDE_PERMISSION_MODE"
 _ASK_PS = object()  # choose() walks the process tree only when the profile is parent
 
 
 def configured(flags: Mapping[str, Any], environ: Mapping[str, str]) -> bool:
     """Whether a profile applies. It always does, unless the operator set only the mode override.
 
-    ``BOUNDROOM_CLAUDE_PERMISSION_MODE`` on its own keeps its old meaning, the runner's permission
+    ``BOUNDROOM_CLAUDE_PERMISSION_MODE`` (or ``REPO_AUTOMATION_CLAUDE_PERMISSION_MODE``) on its own keeps its old meaning, the runner's permission
     mode and nothing else, so an operator who set it gets exactly what they asked for.
     """
     chose_profile = bool(flags.get("runner_profile") or environ.get(PROFILE_ENV))
-    return chose_profile or not environ.get(LEGACY_MODE_ENV)
+    # The pre-0.3.0 name still works until v0.6.0, as run_agent.sh and the deprecation warning say.
+    return chose_profile or not (environ.get(LEGACY_MODE_ENV) or environ.get(PRE_RENAME_MODE_ENV))
 
 
 def choose(flags: Mapping[str, Any], environ: Mapping[str, str], parent_mode: Any = _ASK_PS) -> RunnerProfile:
@@ -260,15 +262,58 @@ def _resolve_parent(parent_mode: Optional[str], reasons: list[str]) -> str:
 # --- the slice allowlist --------------------------------------------------------------------------
 
 
+def _owned_prefix(entry: str) -> str:
+    """A supervisor-owned entry as the path prefix the policy matches (``a/``, ``a/**`` and ``a`` alike)."""
+    prefix = entry.strip()
+    while prefix.endswith("/**") or prefix.endswith("/"):
+        prefix = prefix[:-3] if prefix.endswith("/**") else prefix[:-1]
+    return prefix or "."
+
+
+def _covers(prefix: str, path: str) -> bool:
+    return prefix == "." or path == prefix or path.startswith(f"{prefix}/")
+
+
+def _owned_denies(owned: list[str], handoff: Optional[str], repo_root: Optional[Path]) -> list[str]:
+    """Deny rules for the supervisor-owned paths, leaving the runner's own handoff writable.
+
+    Deny beats allow in Claude Code, so denying a directory that holds the handoff, such as the
+    example queue's ``automation/handoffs/``, would deny the handoff too. Such an entry is denied
+    file by file instead: every file already under it except the handoff.
+    """
+    deny: list[str] = []
+    for entry in owned:
+        prefix = _owned_prefix(entry)
+        if not handoff or not _covers(prefix, handoff):
+            deny.append(f"Edit({entry})")
+            continue
+        if repo_root is None:
+            continue
+        base = repo_root if prefix == "." else repo_root / prefix
+        if base.is_file():
+            continue  # the entry is the handoff itself
+        for file in sorted(base.rglob("*")) if base.is_dir() else []:
+            relative = file.relative_to(repo_root).as_posix()
+            if file.is_file() and relative != handoff and not relative.startswith(".git/"):
+                deny.append(f"Edit({relative})")
+    return deny
+
+
 def slice_settings(
-    slice_record: Mapping[str, Any], policy: Mapping[str, Any], profile: RunnerProfile, handoff: Optional[str] = None
+    slice_record: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    profile: RunnerProfile,
+    handoff: Optional[str] = None,
+    repo_root: Optional[Path] = None,
 ) -> dict[str, Any]:
-    """The per-slice ``--settings`` file: a pure function of the slice record, the policy and the
-    handoff path the supervisor chose (PS-11). Nothing an agent or a repository file writes adds a rule.
+    """The per-slice ``--settings`` file: a pure function of the slice record, the policy, the
+    handoff path the supervisor chose and the files under supervisor-owned paths (PS-11). Nothing an
+    agent or a repository file writes adds a rule.
 
     Deny rules win over allow rules in Claude Code, so the supervisor-owned paths, ``.git`` and
-    ``.claude`` stay denied even inside an allowed path (PS-12). Claude Code applies only ``Edit``
-    rules to its file tools, and ``Edit`` covers every one of them, so there are no ``Write`` rules.
+    ``.claude`` stay denied even inside an allowed path (PS-12), except the handoff itself. Claude Code
+    applies only ``Edit`` rules to its file tools, and ``Edit`` covers every one of them, so there are
+    no ``Write`` rules.
     """
     allowed = list(slice_record["allowed_paths"])
     allow = [f"Edit({path})" for path in allowed]
@@ -279,7 +324,7 @@ def slice_settings(
     allow += ["Bash(git status)", "Bash(git diff:*)", "Bash(git rev-list:*)", "Bash(git commit:*)", "Bash(git push)"]
     allow += [f"Bash(git add {path})" for path in allowed]
     owned = list(policy.get("supervisor_owned_paths", []))
-    deny = [f"Edit({path})" for path in (*owned, ".git/**", ".claude/**")]
+    deny = _owned_denies(owned, handoff, repo_root) + ["Edit(.git/**)", "Edit(.claude/**)"]
     deny += ["Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/**)", "WebFetch", "WebSearch"]
     permissions: dict[str, Any] = {"allow": allow, "deny": deny}
     if profile.mode:
@@ -327,6 +372,7 @@ def runner_environment(
     profile: RunnerProfile,
     environ: Mapping[str, str],
     handoff: Optional[str] = None,
+    repo_root: Optional[Path] = None,
 ) -> Generator[dict[str, str], None, None]:
     """The runner's environment, with the slice settings file in a temporary directory.
 
@@ -342,7 +388,9 @@ def runner_environment(
             env.pop(RUNNER_MODE_ENV, None)
         else:
             path = directory / "settings.json"
-            path.write_text(json.dumps(slice_settings(slice_record, policy, profile, handoff), indent=2) + "\n", encoding="utf-8")
+            path.write_text(
+                json.dumps(slice_settings(slice_record, policy, profile, handoff, repo_root), indent=2) + "\n", encoding="utf-8"
+            )
             env[RUNNER_SETTINGS_ENV] = str(path)
             env[RUNNER_MODE_ENV] = str(profile.mode)
         yield env
