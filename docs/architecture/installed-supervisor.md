@@ -46,7 +46,7 @@ boundroom check
 
 The wheel is published as a release asset beside the archive, with its `.sha256`, the same SLSA provenance attestation, and an entry in the release's CycloneDX SBOM. Before publishing, the release installs the wheel into a clean environment and runs `boundroom check` against Boundroom's example queue, so a wheel that can't run never ships.
 
-The benchmark stays out of the wheel. It already ships apart from the supervisor (RA-ENT-013), and a consumer that wants it keeps syncing it.
+The benchmark stays out of the wheel. It already ships apart from the supervisor (RA-ENT-013). It imports `automation.supervisor`, so it can't run beside an installed supervisor with no vendored copy; a consumer that wants it stays in vendored mode until a later spec packages it.
 
 ### 2. The repository pins one build
 
@@ -72,7 +72,7 @@ The plugin's skills don't call a globally installed `boundroom`. They read the l
 uvx --from "boundroom @ https://github.com/raelldottin/boundroom/releases/download/v0.6.0/boundroom-0.6.0-py3-none-any.whl#sha256=<wheel_sha256>" boundroom run-next --single-slice --repo-root .
 ```
 
-uv refuses a wheel whose hash differs from the lock, and caches each version separately. RA-INST-005 proves both on the owner's uv (0.13.7) before any consumer relies on them. Two repositories pinned to different versions each run their own, on the same machine, at the same time. This is what removes SPEC-002's split: the version is chosen by the repository's reviewed lock, never by whatever plugin version the user installed.
+uv refuses a wheel whose hash differs from the lock, and caches each version separately. RA-INST-005 proves both on the owner's uv (0.13.7) before any consumer relies on them. Two repositories pinned to different versions each run their own on the same machine. They still take turns: `run_next.py` holds one run lock per user (`$XDG_STATE_HOME/boundroom/run.lock`), and this spec doesn't change that. This is what removes SPEC-002's split: the version is chosen by the repository's reviewed lock, never by whatever plugin version the user installed.
 
 The plugin itself still carries no supervisor code. It finds the lock, builds that command and runs it.
 
@@ -84,11 +84,13 @@ The plugin itself still carries no supervisor code. It finds the lock, builds th
 
 ### 5. Each run records what gated it
 
-The decision report, the handoff summary and telemetry's `service.version` name the version and the wheel's SHA-256 for every run. With vendored code, an audit read the consumer's git history. In installed mode, the lock's history says which build was approved, and each run's record says which build ran.
+The decision report and the handoff summary name the version and the wheel's SHA-256 for every run. Telemetry's `service.version` is the version, read from the installed package's metadata: today `telemetry.version()` reads `plugins/boundroom/plugin.json` or the lock's `commit`, and an installed-mode consumer has neither, so it would report `unknown`. The wheel's hash goes in its own resource attribute, not in `service.version`. With vendored code, an audit read the consumer's git history. In installed mode, the lock's history says which build was approved, and each run's record says which build ran.
 
 ### 6. The supervisor finds the repository from an argument
 
 Today `run_next.py`, `evaluate_handoff.py`, `operator_status.py`, `handoff_summary.py`, `settings_view.py` and `build_context.py` find the repository from their own location (`Path(__file__).parents[2]`). An installed package lives outside the repository, so each takes `--repo-root`, defaulting to the git top level of the current directory. In vendored mode, the default resolves to the same directory as today, so nothing changes for synced consumers.
+
+The queue's `agent_command_template` names the runner by a repository path, `automation/supervisor/run_agent.sh`, which an installed-mode consumer doesn't have. In installed mode the template names `boundroom run-agent`, which runs the `run_agent.sh` inside the wheel, and the supervisor refuses a template that points at a missing file.
 
 ### 7. Consumer CI and hooks
 
@@ -109,6 +111,7 @@ Some parts of the current policy survive unchanged:
 Others change, each in its own pull request:
 
 - `AGENTS.md`, "Consumer Repositories": consumers receive Boundroom through the sync script **or** through a lock pin in installed mode. The agent may set `version` and `wheel_sha256` in an installed-mode lock, after showing the owner the values, as it may set `commit` and `imported_at` today.
+- `AGENTS.md`, "Agent-Harness Plugin": its skills drive the supervisor copy the sync placed, "or the build the lock pins", and a repository with neither has nothing for the plugin to run. The rules against supervisor code in the plugin and a bundled fallback stay.
 - SPEC-002: the skills support both modes and refuse an ambiguous repository.
 - SPEC-009, RA-ENT-014: decided on 2026-11-18 as "neither, for now". This spec reopens it for one channel only, a wheel attached to the GitHub release. PyPI and container images stay out.
 
@@ -117,9 +120,9 @@ Others change, each in its own pull request:
 | ID | Slice | Acceptance |
 | --- | --- | --- |
 | RA-INST-001 | This spec. | Merged after the owner's review. |
-| RA-INST-002 | `--repo-root` for every supervisor entry point, defaulting to today's directory in a synced copy. | A synced consumer's checks pass unchanged; the supervisor runs against a repository it doesn't live in. |
-| RA-INST-003 | *Owner gate (RA-ENT-014).* Package the supervisor: the `boundroom` command, a wheel in `release.yml` with its `.sha256`, provenance attestation and SBOM entry, and a clean-install smoke test before publishing. | A release carries a wheel that installs in a clean environment and passes `boundroom check`. |
-| RA-INST-004 | The lock's `delivery`, `version` and `wheel_sha256` fields, the supervisor's version check, and the run record of version and wheel hash. | A mismatched or ambiguous repository is refused with a named reason; every decision report names the build. |
+| RA-INST-002 | `--repo-root` for every supervisor entry point, defaulting to today's directory in a synced copy, and a `boundroom run-agent` path for the queue's agent command. | A synced consumer's checks pass unchanged; the supervisor runs against a repository it doesn't live in. |
+| RA-INST-003 | *Owner gate (RA-ENT-014).* Package the supervisor: the `boundroom` command (which needs `pyproject.toml` to drop `[tool.uv] package = false`), a wheel in `release.yml` with its `.sha256`, provenance attestation and SBOM entry, and a clean-install smoke test before publishing. | A release carries a wheel that installs in a clean environment and passes `boundroom check`. |
+| RA-INST-004 | The lock's `delivery`, `version` and `wheel_sha256` fields, the supervisor's version check, and the run record of version and wheel hash, with `service.version` from the package's metadata. | A mismatched or ambiguous repository is refused with a named reason; every decision report names the build. |
 | RA-INST-005 | The plugin's skills run the pinned wheel through `uvx` in installed mode, and refuse an ambiguous repository. | Two scratch repositories pinned to different versions each run their own version on one machine. |
 | RA-INST-006 | `boundroom check` for a consumer's CI and pre-push hook, with attestation verification on a lock change. | A consumer in installed mode has a CI check that fails on a wrong hash. |
 | RA-INST-007 | Docs: the upgrade guide, the compatibility policy (how long vendored mode is supported), the workflow guide, and the `AGENTS.md` and SPEC-002 amendments. | `mkdocs build --strict` passes; the rules match the code. |
