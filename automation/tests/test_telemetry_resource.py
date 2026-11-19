@@ -127,6 +127,23 @@ def test_a_consumer_s_spans_name_the_commit_its_lock_pins(tmp_path):
     assert telemetry.version(tmp_path) == "a" * 40
 
 
+@pytest.mark.parametrize("commit", ["main", "a" * 39, "A" * 40, "a" * 40 + "\n; x", 7])
+def test_a_lock_commit_that_isn_t_a_full_sha_gives_no_version(tmp_path, commit):
+    (tmp_path / "automation").mkdir()
+    (tmp_path / "automation" / "boundroom.lock").write_text(json.dumps({"commit": commit}), encoding="utf-8")
+
+    assert telemetry.version(tmp_path) == telemetry.UNKNOWN_VERSION
+
+
+def test_a_consumer_that_kept_the_pre_rename_lock_is_labelled_with_its_pin(tmp_path):
+    (tmp_path / "automation").mkdir()
+    (tmp_path / "automation" / "repo-automation.lock").write_text(
+        'repository = "raelldottin/repo-automation"\ncommit = "' + "b" * 40 + '"\n', encoding="utf-8"
+    )
+
+    assert telemetry.version(tmp_path) == "b" * 40
+
+
 def test_without_a_manifest_or_lock_the_version_is_unknown_not_the_consumer_s(tmp_path):
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "consumer"\nversion = "3.1.4"\n', encoding="utf-8")
 

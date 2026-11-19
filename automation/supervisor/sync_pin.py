@@ -7,6 +7,7 @@ consumer's spans with its commit, because a synced copy has no plugin manifest t
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,10 @@ def parse_lock(text: str) -> dict[str, Any]:
 
 
 def pinned_commit(repo_root: Path) -> str:
-    """The commit the first lock found names, or "" when there is none or it names none."""
+    """The full commit SHA the first lock found names, or "" when there is none or it names none.
+
+    The sync pins a full SHA, so anything else in ``commit`` is a hand edit and isn't reported.
+    """
     for name in LOCK_FILES:
         path = repo_root / name
         if not path.is_file():
@@ -43,5 +47,5 @@ def pinned_commit(repo_root: Path) -> str:
             value = parse_lock(path.read_text(encoding="utf-8")).get("commit")
         except (OSError, UnicodeDecodeError):
             return ""
-        return value if isinstance(value, str) else ""
+        return value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) else ""
     return ""
