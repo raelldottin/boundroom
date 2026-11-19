@@ -90,5 +90,6 @@ The sync writes only Boundroom's own files, under `automation/` and `docs/workfl
 
 - **The control plane in [SPEC-001](../architecture/control-plane.md):** Hermes Kanban, self-hosted Hindsight memory and a generated Swarm Wiki above the supervisor. Parts exist as optional adapters, listed above, but the file queue is still the authority. Moving that authority needs a person's approval.
 - **Supervisor-controlled delegation.** Today a runner may launch its own sub-agents within one session, but no worker or sub-agent may start the next slice.
+- **Native batch execution in [SPEC-011](../architecture/native-batch-execution.md).** Proposed only: a compatible executor could execute a frozen, approved manifest while Boundroom checks every resulting unit independently. No `/batch` strategy adapter, batch scheduler or production integration exists today. Vendor-native delegation remains inside the current one-slice boundary until a separately accepted design and tested canary prove otherwise.
 
 See [the security model](security-model.md) for what each part is trusted with, and [troubleshooting](troubleshooting.md) when a run stops.

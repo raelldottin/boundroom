@@ -34,6 +34,8 @@ These are complementary responsibilities, not four competing task stores. The pl
 
 **Positioning:** a supervised repository-work harness, **not** a new IDE, general agent framework, replacement for Hermes Kanban, hosted model provider, issue tracker, autonomous merge bot or mandatory orchestration daemon.
 
+**Execution-strategy boundary (proposal, 2026-11-19):** [SPEC-011](architecture/native-batch-execution.md) evaluates Claude Code's native `/batch` workflow and similar future native executors. Boundroom should **avoid building a competing parallel-agent scheduler**: authorization, policy, independently verified evidence and continuation remain in its control plane, while a compatible native executor may implement a pre-approved manifest. Today there is **no supervised batch adapter**, and native subagent activity within a session is not supervisor-controlled delegation. P0 Kanban/Hindsight/Wiki acceptance stays ahead of new runtime functionality; authorized capability research and effectiveness benchmarking may proceed independently.
+
 ## 2. Evidence-based starting point
 
 Use three statuses consistently: **SHIPPED** means code or a release exists; **PROVEN IN A BOUNDED TEST** means the claimed path has evidence but is not fleet-enabled; **NOT ACCEPTED** means an end-to-end product gate remains unmet.
@@ -214,6 +216,8 @@ These are *proposed work packages*, not created issues or an authorization to ru
 | RA-PROD-010 | P1 | Release operations / SBOM / recovery | Exact pins, notices, vulnerability disposition, backup and rollback drill | H4 |
 | RA-PROD-011 | P1 | Stable-interface policy and 1.0 go/no-go report | Accepted support, SLO, upgrade and security contracts | H5 |
 | RA-EXP-001 | Parallel | Controlled ProgramBench experiments | Scored official artifacts, provider failure classification and budget receipt | R |
+| RA-STRAT-001/002 | Research / proposed | [SPEC-011](architecture/native-batch-execution.md): pinned native `/batch` capability probe and typed strategy/manifest/receipt contracts | Verified read-only plan gate, independent scope policy, negative fixtures, no parallel queue or production activation | R / post-P0 implementation |
+| RA-STRAT-003/004 | Deferred / proposed | Optional, explicitly opted-in Claude batch adapter **only if** capability gate passes; fair comparison to current supervised one-slice and native delegation | Per-unit verification/cancel/recovery evidence, approved cost ceiling, baseline and exact pins; owner go/no-go before rollout | After acceptance / R |
 | RA-PROD-012 | P3 | Optional ontology / portfolio view exploration | Separate design decision; no new canonical store or dispatch authority | Later |
 
 **Immediate recommended order:** (1) security/dependency triage, (2) documentation and operator smoke tests, while (3) local Hindsight/reflect and real Wiki proof proceed as the P0 critical path; (4) validate Kanban gateway races before integrating a real owner task. Do not “finish P0” by changing roadmap statuses alone.
@@ -261,6 +265,7 @@ Metrics must be generated from independently inspectable receipts. The targets b
 | Plugin/harness drift | Claude/Codex/Hermes manifests and installed versions change | Pinned releases, tested install matrix, manifest version gate and compatibility table |
 | Experimental contamination | Benchmarks can consume budget, reuse dirty containers or hide provider failures | Separate manual dispatch, cleanroom receipts, exact pins and failure classification |
 | Scope inflation | A generic orchestration service expands the trusted computing base | No second coordinator, hidden daemon, alternate task database or automatic next-slice chaining |
+| Native batch bypass | A vendor's parallel executor may invent work units, broaden scope or make unverified PR claims | [SPEC-011](architecture/native-batch-execution.md): approved immutable manifest, version-pinned capability gate, per-unit Git/validation receipts, fail closed and no implicit execution |
 
 **Deliberately out of scope for this roadmap:** replacing Hermes Kanban or its dispatcher; cloud-hosted SaaS as the required runtime; a new proprietary model service; unreviewed autonomous PR merging; credentials embedded in skills; automatic consumer sync; migrating real project memory without owner authorization; and ontology-backed scheduling.
 
@@ -275,6 +280,8 @@ Metrics must be generated from independently inspectable receipts. The targets b
 **Enterprise readiness (proposed 2026-11-14):** [SPEC-009](architecture/enterprise-readiness.md) compares Boundroom with a mature open-source developer tool and orders the work to close the gaps: a generic runner prompt, release attestations and an SBOM, a changelog, a compatibility policy, a support matrix, telemetry metrics and an offline switch, and operator docs. The owner decided both open questions on 2026-11-18: the license stays `GPL-2.0-only` (RA-ENT-015), and there is no PyPI package or container image for now (RA-ENT-014).
 
 **Installed supervisor (proposed 2026-11-19):** [SPEC-010](architecture/installed-supervisor.md) proposes delivering Boundroom as a version-pinned wheel that the plugin runs through `uvx`, so a consumer keeps only its queue, rules and a lock, rather than vendoring the supervisor. It keeps SPEC-002's one-version-per-repository guarantee through the lock's hash, and reopens RA-ENT-014 for a GitHub release wheel only.
+
+**Native batch execution (proposed 2026-11-19):** [SPEC-011](architecture/native-batch-execution.md) narrows the product's strategic boundary, proposes native-executor strategy contracts, and defers a real `/batch` adapter until read-only planning, scope isolation, independent evidence and cancellation are verifiably supported. This is a design proposal, not acceptance of any batch execution or spending.
 
 **Evidence references, not substitutes for live acceptance:** [technical roadmap](roadmap.md), [SPEC-001](architecture/control-plane.md), [RA-CP-001 inventory](architecture/control-plane-inventory.md), [Kanban projection](architecture/kanban-projection.md), [Kanban write-back and canary](architecture/kanban-cutover.md), [Hindsight live proof](architecture/memory-interface.md), [Swarm Wiki compiler pin](architecture/swarm-wiki-compiler.md), [SPEC-002 plugin trial](architecture/agent-plugin.md), [consumer distribution workflow](workflows/boundroom.md), [effectiveness benchmark](workflows/effectiveness-benchmark.md), [CodSpeed removal history](codspeed-removal.md), [release history](https://github.com/raelldottin/boundroom/releases) and the draft [agentic SDLC and GitOps standard](architecture/agentic-gitops-sdlc-standard.md) for consumer rollout ([#170](https://github.com/raelldottin/boundroom/issues/170)).
 

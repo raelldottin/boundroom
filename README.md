@@ -8,6 +8,8 @@ Reusable supervised automation for bounded agent work.
 
 **Current product roadmap:** [Product Roadmap](docs/product-roadmap.md) covers shipped capabilities, next release horizons, Kanban/Hindsight/Swarm Wiki acceptance gates, product metrics, release dependencies and scoped delivery slices. The older [technical roadmap](docs/roadmap.md) remains as an implementation-history reference.
 
+**Native batch strategy (proposed):** [SPEC-011](docs/architecture/native-batch-execution.md) explains why Boundroom should govern authorized work rather than duplicate Claude Code's native parallel executor. It proposes a strictly opt-in, independently verified batch integration only after a pinned capability probe and owner-approved experiment. **No batch adapter is shipped or enabled.**
+
 ## What It Provides
 
 - A machine-readable queue model for pre-classified implementation slices.
@@ -23,6 +25,7 @@ Reusable supervised automation for bounded agent work.
 - A live work queue for your project.
 - Silent commits or remote pushes for consumer repositories.
 - Recursive self-spawning from inside an agent run.
+- A built-in multi-agent batch scheduler, a Claude `/batch` adapter, or authority for native workers to approve additional slices.
 
 Each consuming repository owns its queue, validation commands, domain docs, handoff history, and local safety policy. The reusable policy expects each task to finish with a clean GitHub stop: all touched repositories committed, pushed to their GitHub upstreams, locally clean, and even with upstream. Consumers may decide how to automate that requirement, but they should not claim a clean stop until `git status --short` is empty and `git rev-list --left-right --count HEAD...@{u}` returns `0 0`.
 

@@ -41,6 +41,7 @@ nav:
   - Memory Interface Contract: architecture/memory-interface.md
   - Swarm Wiki Compiler Pin: architecture/swarm-wiki-compiler.md
   - Agent Plugin Specification: architecture/agent-plugin.md
+  - Native Batch Execution (proposed): architecture/native-batch-execution.md
   - Rename to Boundroom: architecture/boundroom-rename.md
   - Settings reference: reference/settings.md
   - Compatibility and deprecation: reference/compatibility.md
