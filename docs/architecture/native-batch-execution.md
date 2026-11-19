@@ -3,7 +3,9 @@
 Status: **proposed; documentation only; not an implementation or approval to execute**  
 Date: 2026-11-19  
 Priority: **design decision / discovery; no change to the SPEC-001 P0 acceptance order**  
-Related: [SPEC-001](control-plane.md), [SPEC-008](plugin-settings.md), [product roadmap](../product-roadmap.md), [effectiveness benchmark](../workflows/effectiveness-benchmark.md), and [repository approval policy](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md).
+Related: [SPEC-001](control-plane.md), [SPEC-008](plugin-settings.md), [product roadmap](../product-roadmap.md), [effectiveness benchmark](../workflows/effectiveness-benchmark.md), [portable three-runner batch experience](portable-batch-experience.md), and [repository approval policy](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md).
+
+**Cross-runner addendum:** [Portable batch experience](portable-batch-experience.md) describes the shared Claude/Codex/Hermes interface and an **offline-only** plan validator. It does not enable any native batch integration or authorize runtime execution.
 
 ## Context and product boundary
 
