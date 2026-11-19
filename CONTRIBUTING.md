@@ -76,7 +76,7 @@ If the head changes after the approval, the agent asks for a new approval. The f
 
 ## Releases and consumer syncs
 
-A person creates each release tag, or approves a named tag on a named commit, after `python3 Tools/check_plugin_version.py <tag>` passes and the commit's required checks are green. `release.yml` builds, attests and publishes the archive from the tag. Nobody hand-builds or edits a release asset.
+A person creates each release tag, after `python3 Tools/check_plugin_version.py <tag>` passes and the commit's required checks are green. `release.yml` builds, attests and publishes the archive from the tag. Nobody hand-builds or edits a release asset.
 
 Consumers receive changes only through `Tools/boundroom-sync.sh` and a pull request in the consumer repository, which the consumer's owner approves. See [`AGENTS.md`](AGENTS.md#consumer-repositories).
 

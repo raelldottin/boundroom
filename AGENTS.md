@@ -17,7 +17,7 @@ The owner requires this project to meet CIS and SOC 2 change-management expectat
 **A person must approve, as a separate recorded action** (segregation of duties: the author is never the approver):
 
 - **merging any pull request into `main`.** This needs an approving review from a person other than the change's author, with the required checks green at the approved head. After that approval, the agent may perform the merge, pinned to the approved head (`gh pr merge --match-head-commit <sha>`). If the head changes, the approval must be given again;
-- **creating a release tag:** a person creates it, or approves a named tag on a named commit;
+- **creating a release tag:** a person creates it. The release-tag ruleset lets only the admin role create one;
 - **merging a consumer sync pull request** (see Consumer Repositories);
 - **approving a task on a board** outside a disposable canary;
 - **spending:** benchmark runs and model, provider or budget changes;
@@ -66,7 +66,7 @@ The documentation site deploys to GitHub Pages only from `.github/workflows/publ
 
 ### Releases
 
-A release is a `vMAJOR.MINOR.PATCH` tag (optionally `-prerelease`) on a commit already on `main`, built and published by `.github/workflows/release.yml`, which reruns the required gate and publishes the archive and its `.sha256`. A person creates the tag, or approves a named tag on a named commit, after `python3 Tools/check_plugin_version.py <tag>` and `python3 Tools/changelog_section.py <tag>` pass and the commit's required checks are green. The agent may push only a tag a person approved that way.
+A release is a `vMAJOR.MINOR.PATCH` tag (optionally `-prerelease`) on a commit already on `main`, built and published by `.github/workflows/release.yml`, which reruns the required gate and publishes the archive and its `.sha256`. A person creates the tag, after `python3 Tools/check_plugin_version.py <tag>` and `python3 Tools/changelog_section.py <tag>` pass and the commit's required checks are green. The release-tag ruleset lets only the admin role create, move or delete a `v*` tag, so the agent can't push one; it prepares the release pull request and reports the commit to tag ([the control map](docs/compliance/controls.md)).
 
 Agents MUST NOT hand-build, upload, or edit a release asset, and MUST NOT move or delete an existing release tag. Until `release.yml` exists on `main`, no release may be published.
 
