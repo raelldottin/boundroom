@@ -88,7 +88,7 @@ The decision report and the handoff summary name the version and the wheel's SHA
 
 ### 6. The supervisor finds the repository from an argument
 
-Today `run_next.py`, `evaluate_handoff.py`, `operator_status.py`, `handoff_summary.py`, `settings_view.py` and `build_context.py` find the repository from their own location (`Path(__file__).parents[2]`). An installed package lives outside the repository, so each takes `--repo-root`, defaulting to the git top level of the current directory. In vendored mode, the default resolves to the same directory as today, so nothing changes for synced consumers.
+Today `run_next.py`, `evaluate_handoff.py`, `operator_status.py`, `handoff_summary.py`, `settings_view.py` and `build_context.py` find the repository from their own location (`Path(__file__).parents[2]`). The same `REPO_ROOT` also puts the repository on `sys.path`, so `automation.supervisor` imports from the vendored copy. An installed package lives outside the repository, so each takes `--repo-root`. Its default depends on the mode. A vendored copy keeps today's default, its own location, so a run started from another directory, by cron or a hook, finds the same repository as before. An installed copy defaults to the git top level of the current directory, and imports from its own package with no `sys.path` change.
 
 The queue's `agent_command_template` names the runner by a repository path, `automation/supervisor/run_agent.sh`, which an installed-mode consumer doesn't have. In installed mode the template names `boundroom run-agent`, which runs the `run_agent.sh` inside the wheel, and the supervisor refuses a template that points at a missing file.
 
