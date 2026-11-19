@@ -1,4 +1,4 @@
-# SPEC-009: Native batch execution under Boundroom supervision
+# SPEC-011: Native batch execution under Boundroom supervision
 
 Status: **proposed; documentation only; not an implementation or approval to execute**  
 Date: 2026-11-19  
