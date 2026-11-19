@@ -537,6 +537,7 @@ def _supervise(
                 validation_replays=validation_replays,
                 post_run_commit_sha=post_run_commit_sha,
                 committed_paths=committed_paths,
+                handoff_path=repo_relative(handoff_path, repo_root),
             )
             completed_runs += 1
 
@@ -591,10 +592,7 @@ def run_agent(
     prompt_text = render_prompt(
         repo_root=repo_root, slice_record=slice_record, context_bundle=context_bundle, handoff_path=handoff_path
     )
-    try:
-        handoff = handoff_path.resolve().relative_to(repo_root.resolve()).as_posix()
-    except ValueError:  # a --handoff-dir outside the repository
-        handoff = str(handoff_path.resolve())
+    handoff = repo_relative(handoff_path, repo_root)
     if profile is not None and profile.effective != "custom":
         # The same rules the settings file gives the runner, so it doesn't spend turns on denied calls (SPEC-008).
         settings = runner_profile.slice_settings(slice_record, queue_data["policy"], profile, handoff, repo_root)
@@ -634,6 +632,14 @@ def run_agent(
     finally:
         prompt_path.unlink(missing_ok=True)
         context_path.unlink(missing_ok=True)
+
+
+def repo_relative(path: Path, repo_root: Path) -> str:
+    """``path`` relative to the repository, or absolute when it lies outside it."""
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:  # a --handoff-dir outside the repository
+        return str(path.resolve())
 
 
 def format_agent_command(

@@ -1219,6 +1219,49 @@ exit 7
         self.assertFalse(decision.should_continue)
         self.assertEqual(["git diff --check"], decision.required_validation_failures)
 
+    def _owned_handoff_directory_decision(self, extra_paths: list[str]) -> policy.CompletionDecision:
+        first_slice_id = self.example_slice_id_at(0)
+        queue_data = self.example_queue_with_slice_status(first_slice_id, "in_progress")
+        self.assertIn("automation/handoffs/", queue_data["policy"]["supervisor_owned_paths"])
+        slice_record = self.require_slice_record(queue_data, first_slice_id)
+        handoff = policy.load_json(self.example_handoff_path)
+        handoff["recommended_next_slice"] = ""
+        handoff["recommended_next_reason"] = ""
+        own = "automation/handoffs/20261119T000000Z-own.json"
+        return policy.evaluate_completion(
+            queue_data=queue_data,
+            slice_record=slice_record,
+            handoff=handoff,
+            dirty_paths_before_run=["automation/handoffs/earlier.json"],
+            dirty_paths_after_run=[*handoff["files_touched"], "automation/handoffs/earlier.json", own, *extra_paths],
+            completed_autonomous_runs=1,
+            run_limit=2,
+            handoff_path=own,
+        )
+
+    def test_completion_decision_accepts_the_run_s_own_handoff_in_an_owned_directory(self) -> None:
+        decision = self._owned_handoff_directory_decision([])
+        self.assertEqual("done", decision.queue_status)
+        self.assertEqual([], decision.dirty_paths_outside_scope)
+
+    def test_completion_decision_fails_a_new_file_beside_the_handoff(self) -> None:
+        # A runner may write its handoff inside an owned directory; anything else it writes there,
+        # such as another slice's handoff, fails the slice (v0.5.1).
+        forged = ["automation/handoffs/20261119T000000Z-other-slice.json", "automation/handoffs/nested/x.json"]
+        decision = self._owned_handoff_directory_decision(forged)
+        self.assertEqual("failed", decision.queue_status)
+        self.assertEqual("stop_failed", decision.decision)
+        self.assertEqual(forged, [path for path in decision.dirty_paths_outside_scope if path in forged])
+
+    def test_stray_owned_paths_leaves_the_supervisor_s_and_the_slice_s_paths_alone(self) -> None:
+        owned = [".", "automation/queue/**", "./automation/handoffs/"]
+        handoff = "automation/handoffs/h.json"
+        changed = ["automation/queue/slices.json", handoff, "automation/handoffs/other.json", "src/app.py", "docs/x.md"]
+        self.assertEqual(
+            ["automation/handoffs/other.json", "docs/x.md"], policy.stray_owned_paths(changed, ["src/"], owned, handoff)
+        )
+        self.assertEqual([], policy.stray_owned_paths(changed, ["src/"], owned, None))
+
     def test_completion_decision_rejects_unknown_recommended_next_slice(self) -> None:
         first_slice_id = self.example_slice_id_at(0)
         queue_data = self.example_queue_with_slice_status(first_slice_id, "in_progress")

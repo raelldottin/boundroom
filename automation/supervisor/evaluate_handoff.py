@@ -296,6 +296,14 @@ def evaluate(
 
     supervisor_owned = queue_data["policy"]["supervisor_owned_paths"]
     out_of_scope = policy.out_of_scope_paths(changed, slice_record["allowed_paths"], supervisor_owned)
+    try:
+        handoff_relative: Optional[str] = handoff_path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:  # a handoff outside the repository
+        handoff_relative = None
+    out_of_scope = sorted(
+        set(out_of_scope)
+        | set(policy.stray_owned_paths(changed, slice_record["allowed_paths"], supervisor_owned, handoff_relative))
+    )
 
     if out_of_scope:
         return _fail(
