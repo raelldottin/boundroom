@@ -6,14 +6,16 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+## 0.5.1 (2026-11-19)
+
 ### Fixed
 
-- In a consumer, `service.version` is now the Boundroom commit the consumer's lock pins, or `unknown` without a lock. It was the consumer's own `pyproject.toml` version, or the consumer's git commit when that had none.
-- A bounded runner can write its handoff when the queue owns the handoff directory, as the example queue's `automation/handoffs/` does. The directory's deny rule beat the handoff's allow rule, so every slice under the default profile ended with no handoff. Files already in that directory stay denied one by one, and the supervisor fails a slice that writes any other file under it, such as another slice's handoff, in `run_next` and `evaluate_handoff` alike.
-- `REPO_AUTOMATION_CLAUDE_PERMISSION_MODE` set alone overrides the runner profile again, as `BOUNDROOM_CLAUDE_PERMISSION_MODE` does, until v0.6.0.
-- Two exit codes typed `Optional[int]` in `run_next.py` and `evaluate_handoff.py`, which a consumer running pyright reported as errors.
-- The README and workflow guide describe the Claude runner's permissions under the runner profile, not `bypassPermissions`.
-- Links in synced documents to files a consumer doesn't get now point to GitHub, and a test keeps them that way.
+- In a consumer, `service.version` is now the Boundroom commit the consumer's lock pins, or `unknown` without a lock or when its `commit` isn't a full SHA. It was the consumer's own `pyproject.toml` version, or the consumer's git commit when that had none (#268).
+- A bounded runner can write its handoff when the queue owns the handoff directory, as the example queue's `automation/handoffs/` does. The directory's deny rule beat the handoff's allow rule, so every slice under the default profile ended with no handoff. Files already in that directory stay denied one by one, and the supervisor fails a slice that writes any other file under it, such as another slice's handoff, in `run_next` and `evaluate_handoff` alike. That applies to every runner and profile, as a restriction under the compatibility policy's security exception: a runner should write only its handoff there. The check skips a slice's own `allowed_paths`, so a queue that lists the handoff directory there keeps no protection until it drops that entry (#271).
+- `REPO_AUTOMATION_CLAUDE_PERMISSION_MODE` set alone overrides the runner profile again, as `BOUNDROOM_CLAUDE_PERMISSION_MODE` does, until v0.6.0 (#271).
+- Two exit codes typed `Optional[int]` in `run_next.py` and `evaluate_handoff.py`, which a consumer running pyright reported as errors (#271).
+- The README and workflow guide describe the Claude runner's permissions under the runner profile, not `bypassPermissions` (#271).
+- Links in synced documents to files a consumer doesn't get now point to GitHub, and a test keeps them that way (#271).
 
 ## 0.5.0 (2026-11-18)
 
