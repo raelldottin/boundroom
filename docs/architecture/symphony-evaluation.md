@@ -41,7 +41,7 @@ The *proposed* boundary is:
 | Versioned `WORKFLOW.md` plus reload | `AGENTS.md`, queue/overlay, prompt fragments and typed settings | Evaluate a schema-validated compatibility view, not a second source of truth | Config reload cannot widen permissions or silently approve additional work |
 | Runtime dashboard and counters | Operator status, handoff summary, opt-in telemetry/metrics | Read-only running/blocked/retrying/review, durations and usage view | Local/offline by default; redact content; dashboard does not mutate authority |
 | Remote worker support | Local supervised invocation; remote profile is not proven | Later opt-in worker host with isolation and attested receipts | No default remote credentials, fleet deployment or cloud egress |
-| Automatic continuation on active issues | Each approved slice has an explicit stop and review boundary | **Do not port as-is**; optionally continue *within* the same approved slice under bounded turns | Never chain into another slice on an agent's assertion or tracker status alone |
+| Automatic continuation on active issues | Each slice ends with a handoff the supervisor evaluates. Below `consecutive_autonomous_limit` (2 in the example queue), `run_next` then starts the next eligible slice itself (`policy.next_slice_eligibility`); `--single-slice` stops after one. On a board, a dependent task stays `todo` until a person approves its parent | **Do not port as-is**; optionally continue *within* the same approved slice under bounded turns | Never chain into another slice on an agent's assertion or tracker status alone |
 
 ## 3. Invariants
 
