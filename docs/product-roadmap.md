@@ -65,7 +65,7 @@ Use three statuses consistently: **SHIPPED** means code or a release exists; **P
 
 ## 4. Release horizons and milestone map
 
-Horizon names are **planning increments**, not committed dates or promises of a particular semantic version. Version numbers after v0.5.0 are illustrative until the maintainer approves a release tag. P0 control-plane acceptance takes priority over optional supervisor expansion. Authorized effectiveness research is exempt and can run in parallel.
+Horizon names are **planning increments**, not committed dates or promises of a particular semantic version. Version numbers after v0.5.0 are illustrative until a person creates the release tag. P0 control-plane acceptance takes priority over optional supervisor expansion. Authorized effectiveness research is exempt and can run in parallel.
 
 | Horizon | Indicative window | Product result | Dependency / exit decision |
 | --- | --- | --- | --- |
