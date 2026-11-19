@@ -14,6 +14,22 @@ The owner asked (2026-11-19) for Boundroom to be delivered the way [headroom](ht
 
 This spec keeps that guarantee by a different means: **the repository names the exact build that gates it, and nothing else runs.** Headroom doesn't need this, because it holds no per-repository state.
 
+## How projects and agents use Boundroom
+
+Three models were weighed on 2026-11-19. They differ in where the supervisor's code lives; a project's work (its queue, handoffs, runner rules and validations) stays in its own repository in every model, because its pull requests review it and the supervisor checks an agent against it.
+
+| Model | Code | Agents reach it through | Comparable to |
+| --- | --- | --- | --- |
+| A. Vendored per repository (today) | a copy in each consumer | the plugin's skills, or the copy run directly | — |
+| **B. Installed per machine, pinned per repository (this spec)** | the uv cache, one entry per pinned version | the plugin's skills, which run the pinned command | [Serena](https://github.com/oraios/serena), minus its MCP server |
+| C. One central service | a long-running server | every agent, on every repository, connects to it | headroom's proxy |
+
+**B is chosen.** It gives "install once, use from any agent" while keeping one reviewed version per repository, and it needs no long-running process.
+
+**No MCP server (owner decision, 2026-11-19).** B needs none: a skill reads the lock and runs a command, which any agent with a shell, a person, CI or a git hook can also run. An MCP server would be one more way in that must repeat the version pin and its refusals. It can be proposed later, as a thin layer over the same command, if an agent without plugin support needs one.
+
+**C is out of scope.** Managing several agents centrally needs a dispatcher with expiring claims, per-agent identity, a decision on where state lives and a process that is always running. That is the control-plane layer [SPEC-001](control-plane.md) proposes, and `AGENTS.md` forbids a parallel queue or coordination daemon without a separate design decision. It would be its own spec, built on B.
+
 ## Design
 
 ### 1. Boundroom becomes an installable package
@@ -87,7 +103,7 @@ An upgrade is a pull request that changes the lock's `version` and `wheel_sha256
 Some parts of the current policy survive unchanged:
 
 - The plugin is still "skills and manifests only", with no supervisor, policy, queue or schema code in it, and no fallback to a bundled copy.
-- No hook, MCP server or background process is added. Headroom reaches agents as an MCP server; Boundroom doesn't need one, because a skill calling a command does the job without a long-running process.
+- No hook, MCP server or background process is added (see "How projects and agents use Boundroom").
 - A consumer still changes only through a pull request that its owner approves.
 
 Others change, each in its own pull request:
