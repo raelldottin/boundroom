@@ -74,12 +74,12 @@ The SBOM is also attested against the archive, as a CycloneDX predicate (`--pred
 
 ### From 0.5.0 to 0.5.1 (fixes only)
 
-Sync as usual. Nothing to change in the consumer, but two fixes change what a run does:
+Sync as usual. Two fixes change what a run does:
 
 - Under the default `bounded` runner profile, a runner can now write its handoff when the queue owns the handoff directory, as `automation/handoffs/` is in the example queue. In 0.5.0 such a slice always ended with no handoff.
-- A run that writes any other file in that directory, such as another slice's handoff, now fails as out of scope.
+- A run that writes any other file in that directory, such as another slice's handoff, now fails as out of scope. This holds for every runner and profile. Before, the scope check skipped supervisor-owned paths, so a runner outside the `bounded` profile could write there unnoticed. This is a restriction under the compatibility policy's [security exception](../reference/compatibility.md#what-a-consumer-depends-on). **What to do:** if a runner writes anything besides its handoff in that directory, have it write that output under the slice's `allowed_paths` instead. Nothing else in the consumer changes.
 
-`REPO_AUTOMATION_CLAUDE_PERMISSION_MODE`, set alone, overrides the runner profile again until v0.6.0. Telemetry's `service.version` in a consumer is the Boundroom commit its lock pins. See the [changelog](https://github.com/raelldottin/boundroom/blob/main/CHANGELOG.md).
+`REPO_AUTOMATION_CLAUDE_PERMISSION_MODE`, set alone, overrides the runner profile again until v0.6.0. Telemetry's `service.version` in a consumer is the Boundroom commit its lock pins, or `unknown` when the lock names no full commit SHA. See the [changelog](https://github.com/raelldottin/boundroom/blob/main/CHANGELOG.md).
 
 ### From 0.4.x to 0.5.0 (a generic runner prompt)
 
