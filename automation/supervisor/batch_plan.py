@@ -79,13 +79,23 @@ def evaluate_candidate(
     try:
         plan = BatchPlan.model_validate(proposed)
     except ValidationError:
-        return {"admissible_candidate": False, "runner": runner, "execution_started": False,
-                "unit_count": 0, "refusals": ["invalid_plan_contract"]}
+        return {
+            "admissible_candidate": False,
+            "runner": runner,
+            "execution_started": False,
+            "unit_count": 0,
+            "refusals": ["invalid_plan_contract"],
+        }
     try:
         queue = SliceQueue.model_validate(canonical_queue)
     except ValidationError:
-        return {"admissible_candidate": False, "runner": runner, "execution_started": False,
-                "unit_count": len(plan.units), "refusals": ["invalid_queue_contract"]}
+        return {
+            "admissible_candidate": False,
+            "runner": runner,
+            "execution_started": False,
+            "unit_count": len(plan.units),
+            "refusals": ["invalid_queue_contract"],
+        }
 
     if validate_queue_integrity(queue.model_dump(exclude_unset=True)):
         refusals.append("invalid_queue_integrity")
@@ -142,7 +152,7 @@ def evaluate_candidate(
     # Conservative first milestone: no path-sharing between units, even when ordered
     # by dependencies. The implementation of merging overlapping work is not accepted.
     for index, left in enumerate(plan.units):
-        for right in plan.units[index + 1:]:
+        for right in plan.units[index + 1 :]:
             if any(_overlap(a, b) for a in left.allowed_paths for b in right.allowed_paths):
                 refusals.append("overlapping_scopes")
 
@@ -172,10 +182,13 @@ def main() -> int:
         plan = json.loads(raw_plan)
         head = subprocess.run(
             ["git", "-C", str(args.repo_root), "rev-parse", "HEAD"],
-            check=True, text=True, capture_output=True,
+            check=True,
+            text=True,
+            capture_output=True,
         ).stdout.strip()
         outcome = evaluate_candidate(
-            plan, queue,
+            plan,
+            queue,
             repository=args.repository,
             observed_base_sha=head,
             queue_bytes=raw_queue,
@@ -183,8 +196,13 @@ def main() -> int:
             max_concurrency=args.max_concurrency,
         )
     except (OSError, ValueError, subprocess.CalledProcessError):
-        outcome = {"admissible_candidate": False, "runner": args.runner, "execution_started": False,
-                   "unit_count": 0, "refusals": ["unreadable_input_or_repository"]}
+        outcome = {
+            "admissible_candidate": False,
+            "runner": args.runner,
+            "execution_started": False,
+            "unit_count": 0,
+            "refusals": ["unreadable_input_or_repository"],
+        }
     print(json.dumps(outcome, sort_keys=True))
     return 0 if outcome["admissible_candidate"] else 1
 
