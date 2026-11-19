@@ -4,6 +4,8 @@
 
 This directory holds the supervised slice-chaining harness.
 
+**Experimental runner-neutral batch candidate check:** `automation/supervisor/batch_plan.py` checks a proposed immutable-looking JSON plan against queue contents and the observed Git HEAD for Claude, Codex or Hermes. It **never launches an agent or records human authorization**. See [the portable batch addendum](https://github.com/raelldottin/boundroom/blob/main/docs/architecture/portable-batch-experience.md) for exact scope and limitations. The one-slice supervisor remains the only shipped execution entrypoint.
+
 Its job is narrow:
 
 - keep a machine-readable queue of slices
