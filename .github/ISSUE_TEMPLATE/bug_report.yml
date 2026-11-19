@@ -13,7 +13,7 @@ body:
     attributes:
       label: Boundroom version
       description: The release tag, or the commit in your automation/boundroom.lock (automation/repo-automation.lock if you adopted before 0.3.0).
-      placeholder: v0.5.0
+      placeholder: v0.5.1
     validations:
       required: true
   - type: input

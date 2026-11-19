@@ -6,6 +6,8 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+## 0.5.1 (2026-11-19)
+
 ### Fixed
 
 - In a consumer, `service.version` is now the Boundroom commit the consumer's lock pins, or `unknown` without a lock. It was the consumer's own `pyproject.toml` version, or the consumer's git commit when that had none.

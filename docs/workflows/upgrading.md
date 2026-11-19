@@ -72,6 +72,15 @@ The SBOM is also attested against the archive, as a CycloneDX predicate (`--pred
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.
 5. **Update the plugin** to the same tag, if you use it: change the marketplace source to the new tag, then update the plugin. Only a rename, as in 0.3.0, needs an uninstall and reinstall.
 
+### From 0.5.0 to 0.5.1 (fixes only)
+
+Sync as usual. Nothing to change in the consumer, but two fixes change what a run does:
+
+- Under the default `bounded` runner profile, a runner can now write its handoff when the queue owns the handoff directory, as `automation/handoffs/` is in the example queue. In 0.5.0 such a slice always ended with no handoff.
+- A run that writes any other file in that directory, such as another slice's handoff, now fails as out of scope.
+
+`REPO_AUTOMATION_CLAUDE_PERMISSION_MODE`, set alone, overrides the runner profile again until v0.6.0. Telemetry's `service.version` in a consumer is the Boundroom commit its lock pins. See the [changelog](https://github.com/raelldottin/boundroom/blob/main/CHANGELOG.md).
+
 ### From 0.4.x to 0.5.0 (a generic runner prompt)
 
 The shipped `automation/prompts/base.md` no longer carries Owlory's layer rules (SPEC-009 RA-ENT-001). A repository's own rules now live in `automation/runner-rules.md`, which the repository owns and the sync never writes. The supervisor adds it to every runner prompt under "Repository Rules". See [repository runner rules](boundroom.md#repository-runner-rules).
