@@ -8,7 +8,7 @@ Reusable supervised automation for bounded agent work.
 
 **Current product roadmap:** [Product Roadmap](docs/product-roadmap.md) covers shipped capabilities, next release horizons, Kanban/Hindsight/Swarm Wiki acceptance gates, product metrics, release dependencies and scoped delivery slices. The older [technical roadmap](docs/roadmap.md) remains as an implementation-history reference.
 
-**Native batch strategy (proposed):** [SPEC-011](docs/architecture/native-batch-execution.md) explains why Boundroom should govern authorized work rather than duplicate Claude Code's native parallel executor. It proposes a strictly opt-in, independently verified batch integration only after a pinned capability probe and owner-approved experiment. **No batch adapter is shipped or enabled.**
+**Native batch strategy (proposed):** [SPEC-011](docs/architecture/native-batch-execution.md) explains why Boundroom should govern authorized work rather than duplicate Claude Code's native parallel executor. A [portable three-runner addendum](docs/architecture/portable-batch-experience.md) defines the future Claude/Codex/Hermes experience and a read-only candidate gate that rejects unauthorized extra units before any worker runs. It proposes a strictly opt-in, independently verified batch integration only after a pinned capability probe and owner-approved experiment. **No batch execution adapter is shipped or enabled.**
 
 ## What It Provides
 
