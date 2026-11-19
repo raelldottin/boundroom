@@ -9,6 +9,11 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 ### Fixed
 
 - In a consumer, `service.version` is now the Boundroom commit the consumer's lock pins, or `unknown` without a lock. It was the consumer's own `pyproject.toml` version, or the consumer's git commit when that had none.
+- A bounded runner can write its handoff when the queue owns the handoff directory, as the example queue's `automation/handoffs/` does. The directory's deny rule beat the handoff's allow rule, so every slice under the default profile ended with no handoff. Files already in that directory stay denied one by one, and the supervisor fails a slice that writes any other file under it, such as another slice's handoff, in `run_next` and `evaluate_handoff` alike.
+- `REPO_AUTOMATION_CLAUDE_PERMISSION_MODE` set alone overrides the runner profile again, as `BOUNDROOM_CLAUDE_PERMISSION_MODE` does, until v0.6.0.
+- Two exit codes typed `Optional[int]` in `run_next.py` and `evaluate_handoff.py`, which a consumer running pyright reported as errors.
+- The README and workflow guide describe the Claude runner's permissions under the runner profile, not `bypassPermissions`.
+- Links in synced documents to files a consumer doesn't get now point to GitHub, and a test keeps them that way.
 
 ## 0.5.0 (2026-11-18)
 

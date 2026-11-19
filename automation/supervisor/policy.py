@@ -447,6 +447,43 @@ def out_of_scope_paths(dirty_paths: list[str], allowed_paths: list[str], supervi
     return sorted(set(unexpected))
 
 
+def owned_entry_prefix(entry: str) -> str:
+    """A supervisor-owned entry as the prefix ``path_matches_prefix`` matches (``a/``, ``a/**`` and ``a`` alike)."""
+    prefix = normalize_repo_path(entry)
+    while prefix.endswith("/**"):
+        prefix = prefix[:-3]
+    return normalize_repo_path(prefix) if prefix else "."
+
+
+def stray_owned_paths(
+    changed_paths: list[str], allowed_paths: list[str], supervisor_owned_paths: list[str], handoff: Optional[str]
+) -> list[str]:
+    """Paths a run changed under a supervisor-owned entry that holds its handoff, other than the handoff
+    and the slice's own allowed paths.
+
+    A runner may write its own handoff inside such an entry (the example queue owns
+    ``automation/handoffs/``), so a scope check that skips owned paths would also let it write
+    anything else there, such as another slice's handoff. Paths that a narrower owned entry, one
+    without the handoff, covers stay the supervisor's own writes and aren't reported.
+    """
+    if not handoff:
+        return []
+    handoff_path = normalize_repo_path(handoff)
+    prefixes = [owned_entry_prefix(entry) for entry in supervisor_owned_paths]
+    holding = [prefix for prefix in prefixes if path_matches_prefix(handoff_path, prefix)]
+    others = [prefix for prefix in prefixes if not path_matches_prefix(handoff_path, prefix)]
+    stray: set[str] = set()
+    for path in changed_paths:
+        normalized = normalize_repo_path(path)
+        if normalized == handoff_path or any(path_matches_prefix(normalized, prefix) for prefix in others):
+            continue
+        if any(path_matches_prefix(normalized, prefix) for prefix in allowed_paths):
+            continue
+        if any(path_matches_prefix(normalized, prefix) for prefix in holding):
+            stray.add(normalized)
+    return sorted(stray)
+
+
 def introduced_paths(before_paths: list[str], after_paths: list[str]) -> list[str]:
     before = {normalize_repo_path(path) for path in before_paths}
     after = {normalize_repo_path(path) for path in after_paths}
@@ -826,6 +863,7 @@ def evaluate_completion(
     validation_replays: list[ValidationReplayResult] = [],
     post_run_commit_sha: str = "",
     committed_paths: Optional[list[str]] = None,
+    handoff_path: Optional[str] = None,
 ) -> CompletionDecision:
     validation_replays = validation_replays or []
     supervisor_owned_paths = queue_data["policy"]["supervisor_owned_paths"]
@@ -842,7 +880,10 @@ def evaluate_completion(
             + validation_replay_failures(validation_replays)
         )
     )
-    unexpected_dirty_paths = out_of_scope_paths(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths)
+    unexpected_dirty_paths = sorted(
+        set(out_of_scope_paths(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths))
+        | set(stray_owned_paths(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path))
+    )
     files_touched = normalize_paths(handoff["files_touched"])
     files_touched_outside_scope = out_of_scope_paths(files_touched, slice_record["allowed_paths"], supervisor_owned_paths)
     reported_out_of_scope = sorted(set(handoff["dirty_paths_outside_scope"]))

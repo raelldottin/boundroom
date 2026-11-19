@@ -162,6 +162,8 @@ class ChoiceTests(unittest.TestCase):
         both = {"BOUNDROOM_CLAUDE_PERMISSION_MODE": "acceptEdits", "BOUNDROOM_CLAUDE_PROFILE": "edits"}
         self.assertTrue(rp.configured({}, both))
         self.assertTrue(rp.configured({"runner_profile": "edits"}, {"BOUNDROOM_CLAUDE_PERMISSION_MODE": "acceptEdits"}))
+        # The pre-0.3.0 name keeps working until v0.6.0, as its deprecation warning says.
+        self.assertFalse(rp.configured({}, {"REPO_AUTOMATION_CLAUDE_PERMISSION_MODE": "bypassPermissions"}))
 
     def test_the_ceiling_flag_wins_over_its_variable(self) -> None:
         profile = rp.choose(
@@ -236,6 +238,72 @@ class SliceSettingsTests(TempCase):
         with rp.runner_environment(SLICE, POLICY, choose("bounded"), {}, handoff=handoff) as env:
             written = json.loads(Path(env[rp.RUNNER_SETTINGS_ENV]).read_text(encoding="utf-8"))
         self.assertIn(f"Edit({handoff})", written["permissions"]["allow"])
+
+    def test_an_owned_handoff_directory_still_lets_the_runner_write_its_handoff(self) -> None:
+        # v0.5.0: the example queue owns automation/handoffs/, and deny beats allow in Claude Code,
+        # so a deny for that directory blocked every bounded runner's handoff.
+        example = json.loads(Path("automation/examples/example-slices.json").read_text(encoding="utf-8"))
+        policy = example["policy"]
+        self.assertIn("automation/handoffs/", policy["supervisor_owned_paths"])
+        handoff = "automation/handoffs/20261119T000000Z-S-1.json"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "automation/handoffs").mkdir(parents=True)
+            (root / "automation/handoffs/earlier.json").write_text("{}", encoding="utf-8")
+            (root / handoff).write_text("{}", encoding="utf-8")
+            permissions = rp.slice_settings(SLICE, policy, choose("bounded"), handoff, root)["permissions"]
+        self.assertIn(f"Edit({handoff})", permissions["allow"])
+        covering = [
+            rule for rule in permissions["deny"] if rule.startswith("Edit(") and handoff.startswith(rule[5:-1].rstrip("*/"))
+        ]
+        self.assertEqual([], covering, "no deny rule may cover the handoff")
+        self.assertIn("Edit(automation/handoffs/earlier.json)", permissions["deny"])
+        for entry in policy["supervisor_owned_paths"]:
+            if entry != "automation/handoffs/":
+                self.assertIn(f"Edit({entry})", permissions["deny"])
+
+    def test_a_dot_slash_owned_entry_also_leaves_the_handoff_writable(self) -> None:
+        handoff = "automation/handoffs/h.json"
+        policy = {"supervisor_owned_paths": ["./automation/handoffs/"]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "automation/handoffs").mkdir(parents=True)
+            (root / "automation/handoffs/old.json").write_text("{}", encoding="utf-8")
+            deny = rp.slice_settings(SLICE, policy, choose("bounded"), handoff, root)["permissions"]["deny"]
+        self.assertNotIn("Edit(./automation/handoffs/)", deny)
+        self.assertIn("Edit(automation/handoffs/old.json)", deny)
+
+    def test_a_whole_repository_owned_entry_skips_git(self) -> None:
+        handoff = "automation/handoffs/h.json"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            (root / ".git/HEAD").write_text("ref", encoding="utf-8")
+            (root / "AGENTS.md").write_text("x", encoding="utf-8")
+            deny = rp.slice_settings(SLICE, {"supervisor_owned_paths": ["."]}, choose("bounded"), handoff, root)["permissions"][
+                "deny"
+            ]
+        self.assertIn("Edit(AGENTS.md)", deny)
+        self.assertNotIn("Edit(.git/HEAD)", deny)
+        self.assertIn("Edit(.git/**)", deny)
+
+    def test_an_owned_handoff_directory_stays_denied_whole_without_the_repository_root(self) -> None:
+        # The files can't be listed, so fail closed rather than drop the deny.
+        policy = {"supervisor_owned_paths": ["./automation/handoffs/"]}
+        deny = rp.slice_settings(SLICE, policy, choose("bounded"), "automation/handoffs/h.json")["permissions"]["deny"]
+        self.assertIn("Edit(./automation/handoffs/)", deny)
+
+    def test_a_dot_slash_owned_entry_still_lets_the_runner_write_its_handoff(self) -> None:
+        policy = {"supervisor_owned_paths": ["./automation/handoffs/"]}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "automation/handoffs").mkdir(parents=True)
+            deny = rp.slice_settings(SLICE, policy, choose("bounded"), "automation/handoffs/h.json", root)["permissions"]["deny"]
+        self.assertNotIn("Edit(./automation/handoffs/)", deny)
+
+    def test_without_a_handoff_an_owned_directory_stays_denied_whole(self) -> None:
+        policy = {"supervisor_owned_paths": ["automation/handoffs/"]}
+        self.assertIn("Edit(automation/handoffs/)", rp.slice_settings(SLICE, policy, choose("bounded"))["permissions"]["deny"])
 
     def test_a_bounded_runner_can_commit_and_check_its_upstream(self) -> None:
         # The RA-SET-009 canary: the sandbox turned the .git deny rule into a write block, so

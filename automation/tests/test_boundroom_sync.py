@@ -1419,5 +1419,39 @@ class PreRenameNamesTests(unittest.TestCase):
             self.assertIn(path, destinations)
 
 
+class SyncedDocLinkTests(unittest.TestCase):
+    """A synced document's relative links must resolve in a consumer, which gets only the manifest's
+    files. A core document may link only to core files, since a consumer can leave a component out."""
+
+    def test_every_relative_link_in_a_synced_document_resolves_to_a_synced_file(self) -> None:
+        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+        core: set[str] = set()
+        shipped: set[str] = set()
+        documents: dict[Path, tuple[str, bool]] = {}
+        for entry in manifest["entries"]:
+            source, destination = REPO_ROOT / entry["source"], entry.get("destination", entry["source"])
+            is_core = "component" not in entry
+            files = [path for path in source.rglob("*") if path.is_file()] if source.is_dir() else [source]
+            for path in files:
+                shipped_path = destination if not source.is_dir() else f"{destination}/{path.relative_to(source).as_posix()}"
+                shipped.add(shipped_path)
+                if is_core:
+                    core.add(shipped_path)
+                if path.suffix == ".md":
+                    documents[path] = (shipped_path, is_core)
+        broken = []
+        for path, (shipped_path, is_core) in sorted(documents.items()):
+            reachable = core if is_core else shipped
+            for target in re.findall(r"\]\(([^)\s]+)\)", path.read_text(encoding="utf-8")):
+                if re.match(r"[a-z][a-z0-9+.-]*:|#", target):
+                    continue
+                resolved = os.path.normpath(os.path.join(os.path.dirname(shipped_path), target.split("#")[0])).replace(
+                    os.sep, "/"
+                )
+                if resolved not in reachable and not any(name.startswith(f"{resolved}/") for name in reachable):
+                    broken.append(f"{path.relative_to(REPO_ROOT)} -> {target}")
+        self.assertEqual([], broken, "link to the file on GitHub instead, as the consumer may not get it")
+
+
 if __name__ == "__main__":
     unittest.main()

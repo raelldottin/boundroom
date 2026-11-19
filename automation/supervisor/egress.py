@@ -10,7 +10,8 @@ runner talking to its model provider, ``git``, ``hermes`` or the sync tool's qua
 does its own networking and isn't covered.
 
 Every network path in ``automation/`` calls ``guard_egress`` first.
-``automation/tests/test_egress.py`` fails on a module that opens a connection without it.
+Boundroom's ``automation/tests/test_egress.py`` fails on a module that opens a connection without
+it. The sync doesn't ship that test, so a consumer's own modules aren't checked.
 """
 
 from __future__ import annotations
