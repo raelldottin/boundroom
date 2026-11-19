@@ -2,7 +2,7 @@
 
 **Status:** Proposed architecture and research backlog (2026-11-16). This document is **not** approval to implement a scheduler, start a service, enable a model/provider, spend funds, create a production board, merge code, or deploy to a consumer. Acceptance requires a reviewed architecture decision and the independent human authorizations in [AGENTS.md](../../AGENTS.md).
 
-**Scope:** Compare [OpenAI Symphony](https://github.com/openai/symphony) with Boundroom and define a safe, incremental evaluation track. Sources: [Symphony specification](https://github.com/openai/symphony/blob/main/SPEC.md), [experimental Elixir implementation](https://github.com/openai/symphony/blob/main/elixir/README.md), [Boundroom product roadmap](../product-roadmap.md), [SPEC-001](control-plane.md), [SPEC-004](agent-agnostic-board.md), [Kanban cutover](kanban-cutover.md), [SPEC-008](plugin-settings.md) and [SPEC-009](enterprise-readiness.md).
+**Scope:** Compare [OpenAI Symphony](https://github.com/openai/symphony) with Boundroom and define a safe, incremental evaluation track. Sources: [Symphony specification](https://github.com/openai/symphony/blob/main/SPEC.md), [experimental Elixir implementation](https://github.com/openai/symphony/blob/main/elixir/README.md), [Boundroom product roadmap](../product-roadmap.md), [SPEC-001](control-plane.md), [SPEC-004](agent-agnostic-board.md), [Kanban cutover](kanban-cutover.md), [SPEC-008](plugin-settings.md), [SPEC-009](enterprise-readiness.md) and [SPEC-010](installed-supervisor.md).
 
 ## 1. Decision proposed
 
@@ -20,13 +20,23 @@ The *proposed* boundary is:
 
 **Current baseline:** The slice supervisor, queue, portable plugin, validation replay and release governance are shipped. The local board interface and Claude Code canary have bounded evidence; the Codex live canary, combined Hindsight/Swarm Wiki acceptance and full control-plane cutover remain incomplete. This is a proposed architecture, not a claim that Symphony-inspired supervision exists.
 
+**Refreshed 2026-11-19, against v0.5.0 and the v0.5.1 fixes on `main`:** Since the proposal was written:
+
+- v0.5.0 shipped, and the v0.5.1 fixes are on `main`.
+- The default Claude runner is now the SPEC-008 `bounded` profile: the slice's own allowlist, a sandbox and a budget cap.
+- Telemetry has metrics, and operator status reports them (#240).
+- A claimed slice whose handoff can't be read fails, so it isn't left claimed (#258).
+- A run that writes any file beside its handoff in a supervisor-owned directory fails (#271).
+
+[SPEC-010](installed-supervisor.md) proposes an installed, version-pinned supervisor with `--repo-root`. The per-user run lock it records bears on the workspace and concurrency items below. None of this changes the proposal's boundary.
+
 ## 2. Fit and gap assessment
 
 | Symphony pattern | Boundroom baseline | Proposed improvement | Constraints |
 | --- | --- | --- | --- |
 | Repeated tracker polling and active-run reconciliation | Invocation-oriented `run_next.py`, JSON queue default; local/Hermes board available | Optional supervisor-owned watch/dispatch loop; reconcile before admission | No second scheduler; owner must explicitly approve a runtime cutover/schedule |
-| Per-issue isolated workspace | Runner currently launches at the consumer repository root | Per-slice Git worktree or temporary checkout with explicit containment, cleanup and recovery | No dirty main worktree, out-of-scope writes, cross-repo secrets, or untracked artifact loss |
-| Explicit claim, stall, retry and backoff states | Bounded stop rules, claim checks and classification already exist | Persistent run attempt identity; classify/reconcile transient infrastructure failures | Never auto-retry policy, approval or scope refusals; no duplicate or stale claim |
+| Per-issue isolated workspace | Runner currently launches at the consumer repository root (`run_next.py` runs the agent command with `cwd=repo_root`); the bounded profile's sandbox limits its writes, and the supervisor fails a run that changes files outside its paths or beside its handoff (v0.5.1) | Per-slice Git worktree or temporary checkout with explicit containment, cleanup and recovery | No dirty main worktree, out-of-scope writes, cross-repo secrets, or untracked artifact loss |
+| Explicit claim, stall, retry and backoff states | Bounded stop rules, claim checks and classification already exist; one supervised run per user at a time (`runner_profile.run_lock`) | Persistent run attempt identity; classify/reconcile transient infrastructure failures | Never auto-retry policy, approval or scope refusals; no duplicate or stale claim |
 | Codex App Server protocol | Codex/Claude/Hermes CLI runner selection; fake-runner tests | Opt-in Codex session adapter with structured events, usage and blocking signals | Do not replace other runners; refuse incompatible versions or unapproved capabilities |
 | Versioned `WORKFLOW.md` plus reload | `AGENTS.md`, queue/overlay, prompt fragments and typed settings | Evaluate a schema-validated compatibility view, not a second source of truth | Config reload cannot widen permissions or silently approve additional work |
 | Runtime dashboard and counters | Operator status, handoff summary, opt-in telemetry/metrics | Read-only running/blocked/retrying/review, durations and usage view | Local/offline by default; redact content; dashboard does not mutate authority |
