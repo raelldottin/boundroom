@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, ContextManager, Generator, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
-from automation.supervisor import egress, telemetry_metrics
+from automation.supervisor import egress, sync_pin, telemetry_metrics
 from automation.supervisor.telemetry_settings import TelemetrySettings
 
 SERVICE_NAME = "boundroom"
@@ -239,7 +239,7 @@ def configure(
                 metrics=logfire.MetricsOptions(additional_readers=[reader], views=_metric_views(logfire)),
                 inspect_arguments=False,
                 service_name=SERVICE_NAME,
-                service_version=service_version or None,
+                service_version=service_version or UNKNOWN_VERSION,
                 environment=settings.environment,
                 resource_attributes=dict(settings.resource_attributes),
                 data_dir=data_dir,
@@ -540,16 +540,23 @@ def new_run_id() -> str:
     return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
 
 
+# Boundroom's own release version. The sync doesn't deliver it, so a consumer's copy has none; the
+# consumer's pyproject and git commit are the consumer's, never Boundroom's.
+VERSION_FILE = "plugins/boundroom/plugin.json"
+# Given to the SDK when nothing names Boundroom's version: without a value it would label the
+# spans with the git commit of the repository it runs in, which in a consumer is the consumer's.
+UNKNOWN_VERSION = "unknown"
+
+
 def version(repo_root: Path) -> str:
-    """The Boundroom version from the repository's pyproject, when it has one; consumers may not."""
+    """Boundroom's version: its plugin manifest's, else the commit a consumer's lock pins, else unknown."""
     try:
-        text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    for line in text.splitlines():
-        if line.startswith("version = "):
-            return line.split("=", 1)[1].strip().strip('"')
-    return ""
+        value = json.loads((repo_root / VERSION_FILE).read_text(encoding="utf-8"))["version"]
+    except (OSError, ValueError, KeyError, TypeError):
+        value = None
+    if isinstance(value, str) and value:
+        return value
+    return sync_pin.pinned_commit(repo_root) or UNKNOWN_VERSION
 
 
 def trace_id(span: Any) -> Optional[str]:
