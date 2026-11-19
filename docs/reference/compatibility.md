@@ -4,7 +4,7 @@ This is SPEC-009's RA-ENT-007. It says what each kind of release may change in t
 
 ## Release numbers
 
-A release is a `vMAJOR.MINOR.PATCH` tag on `main`. A person creates the tag, or approves a named tag on a named commit (AGENTS.md, Releases), so a person also decides whether a release is a patch or a minor. The agent proposes the number and checks it against this page.
+A release is a `vMAJOR.MINOR.PATCH` tag on `main`. A person creates the tag (AGENTS.md, Releases), so a person also decides whether a release is a patch or a minor. The agent proposes the number and checks it against this page.
 
 Boundroom is before `1.0`. Until then:
 

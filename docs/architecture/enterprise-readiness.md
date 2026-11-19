@@ -25,7 +25,7 @@ Boundroom is ahead of headroom in some places. These stay as they are.
 
 | Area | Boundroom today |
 | --- | --- |
-| Change control | Every change reaches `main` through a pull request with five required checks. A person other than the author approves every merge, release tag, spend, cutover and license change ([control map](../compliance/controls.md)). The agent acts as its own GitHub App identity. |
+| Change control | Every change reaches `main` through a pull request with five required checks. A person other than the author approves every merge, spend, cutover and license change, and a person creates every release tag ([control map](../compliance/controls.md)). The agent acts as its own GitHub App identity. |
 | Release source | A release is a tag on `main`, built by `release.yml`, which reruns the gate and publishes the archive and its `.sha256`. Only the owner's role can create tags. |
 | Telemetry consent | Telemetry is off by default and can't be turned on by a repository. There is no vendor beacon and nothing is ever sent to Logfire's service ([SPEC-006](agent-telemetry.md)). Headroom, by contrast, sends an anonymous usage beacon by default. |
 | Runner safety | A supervised Claude runner starts in the `bounded` profile: `dontAsk`, the slice's own allowlist, and a sandbox that fails closed ([SPEC-008](plugin-settings.md)). |

@@ -18,7 +18,7 @@
 | Code-owner review (`.github/CODEOWNERS`) | Enforced since 2026-11-10: `main` ruleset | Review records |
 | Stale approvals dismissed on push; the last push approved | Enforced since 2026-11-10: `main` ruleset | Ruleset configuration |
 | Releases only from a tag on `main`, built by `release.yml`, which reruns the gate and publishes the archive and `.sha256` | Enforced: release-tag ruleset and workflow | Release assets and workflow runs |
-| A person creates or approves each release tag | Process | Tag creator, release record, ruleset bypass log |
+| A person creates each release tag | Process | Tag creator, release record, ruleset bypass log |
 | Release tags (`v*`) can't be created, updated or deleted except by the admin role | Enforced: release-tag ruleset, whose only bypass actor is the admin role. Each use of the bypass is logged. | Ruleset configuration and rule insights |
 
 ## Identity, access and segregation of duties: SOC 2 CC6.1, CC6.3; CIS 1.3, contribution access
