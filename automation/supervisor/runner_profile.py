@@ -24,7 +24,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Generator, Mapping, Optional
 
 PROFILES = ("parent", "bounded", "edits", "unbounded", "custom")
@@ -264,10 +264,11 @@ def _resolve_parent(parent_mode: Optional[str], reasons: list[str]) -> str:
 
 def _owned_prefix(entry: str) -> str:
     """A supervisor-owned entry as the path prefix the policy matches (``a/``, ``a/**`` and ``a`` alike)."""
-    prefix = entry.strip()
+    prefix = PurePosixPath(entry.strip()).as_posix()  # drops "./" and doubled slashes, as policy.py does
     while prefix.endswith("/**") or prefix.endswith("/"):
         prefix = prefix[:-3] if prefix.endswith("/**") else prefix[:-1]
-    return prefix or "."
+    # As policy.normalize_repo_path reads it, so "./automation/handoffs/" covers the handoff too.
+    return PurePosixPath(prefix).as_posix() if prefix else "."
 
 
 def _covers(prefix: str, path: str) -> bool:
@@ -279,23 +280,24 @@ def _owned_denies(owned: list[str], handoff: Optional[str], repo_root: Optional[
 
     Deny beats allow in Claude Code, so denying a directory that holds the handoff, such as the
     example queue's ``automation/handoffs/``, would deny the handoff too. Such an entry is denied
-    file by file instead: every file already under it except the handoff.
+    file by file instead: every file already under it except the handoff. Without the repository
+    root the files can't be listed, so the entry stays denied whole: closed, not open.
     """
     deny: list[str] = []
     for entry in owned:
         prefix = _owned_prefix(entry)
-        if not handoff or not _covers(prefix, handoff):
+        if not handoff or not _covers(prefix, handoff) or repo_root is None:
             deny.append(f"Edit({entry})")
-            continue
-        if repo_root is None:
             continue
         base = repo_root if prefix == "." else repo_root / prefix
         if base.is_file():
             continue  # the entry is the handoff itself
-        for file in sorted(base.rglob("*")) if base.is_dir() else []:
-            relative = file.relative_to(repo_root).as_posix()
-            if file.is_file() and relative != handoff and not relative.startswith(".git/"):
-                deny.append(f"Edit({relative})")
+        for directory, subdirectories, files in os.walk(base) if base.is_dir() else []:
+            subdirectories[:] = sorted(name for name in subdirectories if name != ".git")  # .git is denied whole
+            for name in sorted(files):
+                relative = (Path(directory) / name).relative_to(repo_root).as_posix()
+                if relative != handoff:
+                    deny.append(f"Edit({relative})")
     return deny
 
 
