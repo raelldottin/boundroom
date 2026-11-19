@@ -12,7 +12,7 @@ Symphony contributes useful operating patterns: polling and reconciliation, isol
 
 The *proposed* boundary is:
 
-1. **Canonical work state:** One selected Boundroom board backend (local SQLite by default, Hermes optional) **or** the existing JSON queue. No new canonical tracker, mirrored issue queue or dual writer. External trackers (including GitHub Issues) may later have *read-only* discovery adapters, but none may authorize execution by themselves.
+1. **Canonical work state:** The existing JSON queue (the default) **or** one selected Boundroom board backend, Hermes Kanban or the local SQLite board (`--board-backend` defaults to `hermes`). No new canonical tracker, mirrored issue queue or dual writer. External trackers (including GitHub Issues) may later have *read-only* discovery adapters, but none may authorize execution by themselves.
 2. **One execution authority:** The existing deterministic supervisor admits slices, owns claim and continuation decisions, and calls an optional worker/session lifecycle module. Any long-running loop is an invocation mode of this authority, not an independent scheduler or daemon with its own authorization logic.
 3. **Execution:** A worker runs an explicitly approved slice in an isolated workspace, under the approved runner profile and scoped credentials. Workers cannot approve successors or request broader privileges.
 4. **Verification and promotion:** Independent checks, bounded diffs, immutable handoffs, versioned pins, CI and a person's separately recorded approvals continue to gate board completion, merges, releases, spending, schedules and deployments.
