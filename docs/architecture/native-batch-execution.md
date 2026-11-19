@@ -1,6 +1,6 @@
 # SPEC-011: Native batch execution under Boundroom supervision
 
-Status: **proposed; documentation only; not an implementation or approval to execute**  
+Status: **proposed; initial read-only cross-runner candidate gate on a separate stacked branch; no execution adapter or authorization implemented**  
 Date: 2026-11-19  
 Priority: **design decision / discovery; no change to the SPEC-001 P0 acceptance order**  
 Related: [SPEC-001](control-plane.md), [SPEC-008](plugin-settings.md), [product roadmap](../product-roadmap.md), [effectiveness benchmark](../workflows/effectiveness-benchmark.md), [portable three-runner batch experience](portable-batch-experience.md), and [repository approval policy](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md).
@@ -102,6 +102,6 @@ Gate any adoption on **non-inferior safety and evidence completeness** plus a de
 
 RA-STRAT-001/004 research may proceed in parallel with P0 by separate authorization; implementation, live task execution and consumer cutover remain behind existing safety and human-review gates. A positive benchmark never permits bypassing SPEC-001's Kanban/Hindsight/Wiki acceptance work.
 
-## Out of scope for this PR
+## Out of scope for the design PR and its cross-runner follow-up
 
-No changes to `run_next.py`, `run_agent.sh`, settings, plugin skills, queue semantics, branch protection or default runner; no Claude `/batch` invocation, batch scheduler, external credentials, benchmarks, releases or consumer repository changes. This PR establishes a reviewable proposal and backlog only.
+PR #273 is a documentation-only design proposal. Its separate stacked follow-up proposes a **read-only candidate-plan validator and offline contract tests**. Neither change modifies `run_next.py`, `run_agent.sh`, runner settings, plugin skills, live queue semantics, branch protection or the default runner. Neither authorizes or invokes Claude `/batch`, Codex subagents, Hermes swarm, a batch scheduler, external credentials, benchmarks, releases or consumer repository changes. The approved executor adapter, human authorization mechanism and actual batch-runner implementation remain future reviewed work.
