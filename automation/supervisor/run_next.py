@@ -526,6 +526,7 @@ def _supervise(
                     "boundroom.validation.replay", command=replay.command, base_sha=base_commit_sha, success=replay.success
                 )
                 tracer.metric("boundroom.validation.replays", entry="run_next", success=replay.success)
+            handoff_relative = repo_relative(handoff_path, repo_root)
             decision = policy.evaluate_completion(
                 queue_data=queue_data,
                 slice_record=next_slice,
@@ -537,10 +538,8 @@ def _supervise(
                 validation_replays=validation_replays,
                 post_run_commit_sha=post_run_commit_sha,
                 committed_paths=committed_paths,
-                handoff_path=repo_relative(handoff_path, repo_root),
-                handoff_commit_parent=policy.git_handoff_commit_parent(
-                    repo_root, base_commit_sha, repo_relative(handoff_path, repo_root)
-                ),
+                handoff_path=handoff_relative,
+                handoff_commit_parent=policy.git_handoff_commit_parent(repo_root, base_commit_sha, handoff_relative),
             )
             completed_runs += 1
 

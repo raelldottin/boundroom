@@ -469,9 +469,16 @@ def path_matches_prefix(path: str, prefix: str) -> bool:
     return normalized_path == normalized_prefix or normalized_path.startswith(f"{normalized_prefix}/")
 
 
-def out_of_scope_paths(dirty_paths: list[str], allowed_paths: list[str], supervisor_owned_paths: list[str]) -> list[str]:
+def out_of_scope_paths(
+    dirty_paths: list[str], allowed_paths: list[str], supervisor_owned_paths: list[str], handoff: Optional[str] = None
+) -> list[str]:
+    """Paths outside the slice's allowed paths and the supervisor's own. The run's *handoff* is never
+    out of scope, wherever its directory is."""
+    own_handoff = normalize_repo_path(handoff) if handoff else None
     unexpected: list[str] = []
     for path in dirty_paths:
+        if normalize_repo_path(path) == own_handoff:
+            continue
         if any(path_matches_prefix(path, prefix) for prefix in supervisor_owned_paths):
             continue
         if any(path_matches_prefix(path, prefix) for prefix in allowed_paths):
@@ -914,15 +921,13 @@ def evaluate_completion(
             + validation_replay_failures(validation_replays)
         )
     )
-    # The run's own handoff is never out of scope, wherever its directory is.
-    own_handoff = [normalize_repo_path(handoff_path)] if handoff_path else []
     unexpected_dirty_paths = sorted(
-        set(out_of_scope_paths(introduced_dirty_paths, slice_record["allowed_paths"] + own_handoff, supervisor_owned_paths))
+        set(out_of_scope_paths(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path))
         | set(stray_owned_paths(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path))
     )
     files_touched = normalize_paths(handoff["files_touched"])
     files_touched_outside_scope = out_of_scope_paths(
-        files_touched, slice_record["allowed_paths"] + own_handoff, supervisor_owned_paths
+        files_touched, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path
     )
     reported_out_of_scope = sorted(set(handoff["dirty_paths_outside_scope"]))
     changed_file_count = max(
