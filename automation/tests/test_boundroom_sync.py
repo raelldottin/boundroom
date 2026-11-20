@@ -1417,9 +1417,12 @@ class PreRenameNamesTests(unittest.TestCase):
 
 
 # What Tools/boundroom-sync.sh never copies out of a directory entry, read from the script itself.
-SYNC_SKIP_NAMES = ast.literal_eval(
-    re.search(r"^SKIP_NAMES = (\{.*\})$", (REPO_ROOT / "Tools/boundroom-sync.sh").read_text(encoding="utf-8"), re.M)[1]
+_SKIP_NAMES_LINE = re.search(
+    r"^SKIP_NAMES = (\{.*\})$", (REPO_ROOT / "Tools/boundroom-sync.sh").read_text(encoding="utf-8"), re.M
 )
+if _SKIP_NAMES_LINE is None:
+    raise RuntimeError("Tools/boundroom-sync.sh no longer defines SKIP_NAMES on one line")
+SYNC_SKIP_NAMES: set[str] = ast.literal_eval(_SKIP_NAMES_LINE[1])
 
 
 def manifest_files(manifest: Optional[dict[str, Any]] = None) -> Iterator[tuple[dict[str, Any], Path, str]]:
