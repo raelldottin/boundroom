@@ -26,6 +26,9 @@ These stop the run before it claims its next slice. That slice is unchanged, so 
 | `git executable not found on PATH` | 2 | Git isn't installed, or isn't on this process's `PATH`. | Install Git, or fix `PATH`. |
 | `stop: the board <dir> is inside the repository` | 2 | A Kanban board must live outside the repository it schedules. | Move the board. |
 | `stop: --report-file must be outside the repository` | 2 | The report would become part of the slice's changes. | Write it elsewhere. |
+| `stop: runner_rules_...` | 2 | `automation/runner-rules.md` is a symbolic link, not a file, unreadable, over 32 KiB or not UTF-8. | Make it a readable regular UTF-8 file under 32 KiB. |
+| `stop: prompt_fragment_unreadable` | 2 | `automation/prompts/base.md` or `slice.md` is missing, can't be read, or isn't UTF-8. | Restore the file. The sync ships both. |
+| `stop: unknown_prompt_placeholder` | 2 | A customized prompt fragment uses a placeholder the supervisor doesn't fill, often one a release renamed. `--dry-run` reports it too. | See [customizing prompt fragments](../workflows/boundroom.md#customizing-prompt-fragments). |
 | `stop: no eligible queued slice found.` | 0 | Nothing is `queued` with its dependencies `done`. | Run with `--dry-run --include-blocked` to see what is waiting and why. |
 | `stop: run_next refused inside a supervised slice (BOUNDROOM_SUPERVISOR_SLICE_ID is set)` | 78 | It was run from inside an agent session, or the variable leaked into your shell. | Run it from a shell outside any session. In a plain shell, `unset BOUNDROOM_SUPERVISOR_SLICE_ID`. |
 | `stop: another supervised run holds <path>` | 78 | A run is already going for this user on this machine. | Wait for it. The lock is released when that process exits, however it exits. |
@@ -51,8 +54,6 @@ These happen after the slice is claimed. The supervisor marks the slice `failed`
 | `agent_exit_nonzero`, any other code | the runner's | The runner itself failed. | Read the runner's output above the failure report. |
 | `agent_timeout` | 124 | The agent command timed itself out. | Split the slice, or give the command more time. |
 | `supervisor_error`, with a timeout | 2 | The session ran past `policy.handoff_timeout_seconds`. | Split the slice, or raise the timeout in a reviewed change. |
-| `supervisor_error`, with `runner_rules_...` | 2 | `automation/runner-rules.md` is a symbolic link, not a file, over 32 KiB or not UTF-8. | Make it a regular UTF-8 file under 32 KiB. |
-| `supervisor_error`, with `unknown_prompt_placeholder` | 2 | A customized prompt fragment uses a placeholder the supervisor doesn't fill. | See [customizing prompt fragments](../workflows/boundroom.md#customizing-prompt-fragments). |
 | `handoff_missing` | 2 | The session ended without writing its handoff, for example because it reached its budget or turn limit. | Read the runner's output. Check that the prompt names the handoff path. |
 | `handoff_invalid` | 2 | The handoff can't be read, for example because a directory is at its path, isn't valid JSON, or doesn't match the schema. | Check it against `automation/schemas/handoff.schema.json`. Later runs skip it when they look for the previous handoff. |
 | `handoff_slice_mismatch` | 2 | The handoff names another slice. | Check the runner's prompt and the handoff. |
