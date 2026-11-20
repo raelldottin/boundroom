@@ -17,7 +17,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1419,26 +1419,34 @@ class PreRenameNamesTests(unittest.TestCase):
             self.assertIn(path, destinations)
 
 
+def manifest_files() -> Iterator[tuple[dict[str, Any], Path, str]]:
+    """Every file the sync manifest ships: its entry, its source path and where a consumer gets it."""
+    manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+    for entry in manifest["entries"]:
+        source, destination = REPO_ROOT / entry["source"], entry.get("destination", entry["source"])
+        if not source.is_dir():
+            yield entry, source, destination
+            continue
+        for path in sorted(source.rglob("*")):
+            if path.is_file():
+                yield entry, path, f"{destination}/{path.relative_to(source).as_posix()}"
+
+
 class SyncedDocLinkTests(unittest.TestCase):
     """A synced document's relative links must resolve in a consumer, which gets only the manifest's
     files. A core document may link only to core files, since a consumer can leave a component out."""
 
     def test_every_relative_link_in_a_synced_document_resolves_to_a_synced_file(self) -> None:
-        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
         core: set[str] = set()
         shipped: set[str] = set()
         documents: dict[Path, tuple[str, bool]] = {}
-        for entry in manifest["entries"]:
-            source, destination = REPO_ROOT / entry["source"], entry.get("destination", entry["source"])
+        for entry, path, shipped_path in manifest_files():
             is_core = "component" not in entry
-            files = [path for path in source.rglob("*") if path.is_file()] if source.is_dir() else [source]
-            for path in files:
-                shipped_path = destination if not source.is_dir() else f"{destination}/{path.relative_to(source).as_posix()}"
-                shipped.add(shipped_path)
-                if is_core:
-                    core.add(shipped_path)
-                if path.suffix == ".md":
-                    documents[path] = (shipped_path, is_core)
+            shipped.add(shipped_path)
+            if is_core:
+                core.add(shipped_path)
+            if path.suffix == ".md":
+                documents[path] = (shipped_path, is_core)
         broken = []
         for path, (shipped_path, is_core) in sorted(documents.items()):
             reachable = core if is_core else shipped
@@ -1461,19 +1469,16 @@ class OptionalImportTests(unittest.TestCase):
     OPTIONAL = ("logfire", "opentelemetry")
 
     def test_every_synced_import_of_an_optional_package_is_marked(self) -> None:
-        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
         unmarked = []
-        for entry in manifest["entries"]:
-            source = REPO_ROOT / entry["source"]
-            files = sorted(source.rglob("*.py")) if source.is_dir() else [source] if source.suffix == ".py" else []
-            for path in files:
-                if "/tests/" in path.as_posix():
-                    continue  # the sync ships only some tests; those import optional packages behind skips
-                for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                    match = re.match(r"\s*(?:from|import)\s+([\w.]+)", line)
-                    if match and match.group(1).split(".")[0] in self.OPTIONAL:
-                        if "pyright: ignore[reportMissingImports]" not in line:
-                            unmarked.append(f"{path.relative_to(REPO_ROOT)}:{number}")
+        for _, path, _ in manifest_files():
+            # The sync ships only some tests, and those import optional packages behind skips.
+            if path.suffix != ".py" or "/tests/" in path.as_posix():
+                continue
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                match = re.match(r"\s*(?:from|import)\s+([\w.]+)", line)
+                optional = match is not None and match.group(1).split(".")[0] in self.OPTIONAL
+                if optional and "pyright: ignore[reportMissingImports]" not in line:
+                    unmarked.append(f"{path.relative_to(REPO_ROOT)}:{number}")
         self.assertEqual([], unmarked, "add  # pyright: ignore[reportMissingImports]")
 
 
