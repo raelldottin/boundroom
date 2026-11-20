@@ -538,6 +538,9 @@ def _supervise(
                 post_run_commit_sha=post_run_commit_sha,
                 committed_paths=committed_paths,
                 handoff_path=repo_relative(handoff_path, repo_root),
+                handoff_commit_parent=policy.git_handoff_commit_parent(
+                    repo_root, base_commit_sha, repo_relative(handoff_path, repo_root)
+                ),
             )
             completed_runs += 1
 

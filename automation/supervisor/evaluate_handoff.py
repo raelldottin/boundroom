@@ -295,11 +295,13 @@ def evaluate(
     # --- Scope enforcement ---------------------------------------------------
 
     supervisor_owned = queue_data["policy"]["supervisor_owned_paths"]
-    out_of_scope = policy.out_of_scope_paths(changed, slice_record["allowed_paths"], supervisor_owned)
     try:
         handoff_relative: Optional[str] = handoff_path.resolve().relative_to(repo_root.resolve()).as_posix()
     except ValueError:  # a handoff outside the repository
         handoff_relative = None
+    # The run's own handoff is never out of scope, wherever its directory is.
+    own_handoff = [handoff_relative] if handoff_relative else []
+    out_of_scope = policy.out_of_scope_paths(changed, slice_record["allowed_paths"] + own_handoff, supervisor_owned)
     out_of_scope = sorted(
         set(out_of_scope)
         | set(policy.stray_owned_paths(changed, slice_record["allowed_paths"], supervisor_owned, handoff_relative))
@@ -391,7 +393,9 @@ def evaluate(
 
     # --- Proof level / manual proof checks -----------------------------------
 
-    missing_proofs, missing_level = policy.verify_manual_proofs(slice_record, handoff, head_sha)
+    missing_proofs, missing_level = policy.verify_manual_proofs(
+        slice_record, handoff, head_sha, policy.git_handoff_commit_parent(repo_root, base_sha, handoff_relative, head_sha)
+    )
 
     if missing_proofs or missing_level:
         return _fail(
