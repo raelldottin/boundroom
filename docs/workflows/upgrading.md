@@ -74,11 +74,11 @@ The SBOM is also attested against the archive, as a CycloneDX predicate (`--pred
 
 ### From 0.5.1 to 0.5.2 (fixes only)
 
-Sync as usual; there is nothing to change in the consumer. What a run does differently:
+Sync as usual. One fix can change what lands in a runner's commits; see the second item. What a run does differently:
 
 - A consumer that type-checks the synced code without the `telemetry` extra no longer gets pyright errors in `telemetry.py`.
-- A bounded runner may `git add` its own handoff. A consumer that tracks handoffs can now take the handoff directory out of every slice's `allowed_paths`, which is what makes v0.5.1's check for stray files beside the handoff apply. A consumer that doesn't want handoffs committed should gitignore its handoff directory.
-- The run's own handoff is never out of scope, and a manual proof still passes after the runner commits its handoff.
+- A bounded runner may `git add` its own handoff when it lies in the repository, wherever its directory is. **What to do:** if you don't want handoffs committed, gitignore the handoff directory; otherwise the runner may now commit each handoff with its work. A consumer that tracks handoffs can take the handoff directory out of every slice's `allowed_paths`. Then any other file a run writes there fails the slice: by v0.5.1's stray-file check when the queue owns the directory, and by the scope check otherwise.
+- The run's own handoff is never out of scope. A slice with a manual proof no longer fails when the runner commits its handoff after the proof: the supervisor accepts a proof for HEAD's parent when HEAD is a commit that changed only the handoff.
 - A handoff written outside the repository can be written under the bounded profile.
 
 ### From 0.5.0 to 0.5.1 (fixes only)

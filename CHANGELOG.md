@@ -11,7 +11,7 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 ### Fixed
 
 - `telemetry.py`'s imports of the optional telemetry packages (`logfire`, `opentelemetry`) are marked for pyright, so a consumer that type-checks the synced code without the `telemetry` extra no longer gets 10 `reportMissingImports` errors. A test keeps every such import marked (#277).
-- A bounded runner may `git add` its own handoff, not only edit it, so a consumer that tracks handoffs can leave the handoff directory out of a slice's `allowed_paths`. Leaving it out is what makes v0.5.1's check for stray files beside the handoff apply (#277).
+- A bounded runner may `git add` its own handoff, not only edit it, so a consumer that tracks handoffs can leave the handoff directory out of a slice's `allowed_paths`. Left out, any other file a run writes there fails the slice: by v0.5.1's stray-file check when the queue owns the directory, and by the scope check otherwise (#277).
 - A run's own handoff is never out of scope, so a consumer can leave the handoff directory out of `allowed_paths` without owning it (#278).
 - A slice with a manual proof passes when the runner commits its handoff after the proof. The supervisor accepts a proof for the parent of a last commit that changed only the handoff, in `run_next` and `evaluate_handoff` alike (#278).
 - A handoff written outside the repository (`--handoff-dir` elsewhere) can be written under the bounded profile. Its rule was `Edit(/abs/path)`, which Claude Code reads as relative to the settings file; it is now `Edit(//abs/path)`, and such a handoff gets no `git add` rule (#279).
