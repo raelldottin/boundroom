@@ -1453,5 +1453,29 @@ class SyncedDocLinkTests(unittest.TestCase):
         self.assertEqual([], broken, "link to the file on GitHub instead, as the consumer may not get it")
 
 
+class OptionalImportTests(unittest.TestCase):
+    """A synced module's imports of optional packages are marked for the consumer's type checker."""
+
+    # The telemetry extra (SPEC-006). A consumer that doesn't install it still type-checks the
+    # synced code, and Owlory's pyright treats a missing import as an error.
+    OPTIONAL = ("logfire", "opentelemetry")
+
+    def test_every_synced_import_of_an_optional_package_is_marked(self) -> None:
+        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+        unmarked = []
+        for entry in manifest["entries"]:
+            source = REPO_ROOT / entry["source"]
+            files = sorted(source.rglob("*.py")) if source.is_dir() else [source] if source.suffix == ".py" else []
+            for path in files:
+                if "/tests/" in path.as_posix():
+                    continue  # the sync ships only some tests; those import optional packages behind skips
+                for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                    match = re.match(r"\s*(?:from|import)\s+([\w.]+)", line)
+                    if match and match.group(1).split(".")[0] in self.OPTIONAL:
+                        if "pyright: ignore[reportMissingImports]" not in line:
+                            unmarked.append(f"{path.relative_to(REPO_ROOT)}:{number}")
+        self.assertEqual([], unmarked, "add  # pyright: ignore[reportMissingImports]")
+
+
 if __name__ == "__main__":
     unittest.main()

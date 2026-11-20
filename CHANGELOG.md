@@ -6,6 +6,10 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+### Fixed
+
+- `telemetry.py`'s imports of the optional telemetry packages (`logfire`, `opentelemetry`) are marked for pyright, so a consumer that type-checks the synced code without the `telemetry` extra no longer gets 10 `reportMissingImports` errors. A test keeps every such import marked.
+
 ## 0.5.1 (2026-11-19)
 
 ### Fixed

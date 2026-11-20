@@ -182,7 +182,7 @@ class Telemetry:
             if remaining <= 0:
                 print("telemetry: no time was left to send metrics; they were dropped", file=sys.stderr)
                 return False
-            from opentelemetry.sdk.metrics.export import MetricExportResult  # noqa: PLC0415
+            from opentelemetry.sdk.metrics.export import MetricExportResult  # pyright: ignore[reportMissingImports]  # noqa: PLC0415
 
             sent = exporter.export(data, timeout_millis=remaining * 1000) == MetricExportResult.SUCCESS
             if not sent:
@@ -270,7 +270,7 @@ class _Unavailable(Exception):
 
 def _import_logfire() -> Any:
     try:
-        import logfire  # noqa: PLC0415 - imported only when telemetry is on (UD-1)
+        import logfire  # pyright: ignore[reportMissingImports]  # noqa: PLC0415 - imported only when telemetry is on (UD-1)
     except ImportError as error:
         raise _Unavailable("telemetry: the logfire package isn't installed (pip install 'boundroom[telemetry]')") from error
     return logfire
@@ -296,7 +296,7 @@ def _inside(path: Path, root: Path) -> bool:
 def _exporter(settings: TelemetrySettings, roots: Sequence[Path], run_id: str) -> tuple[Any, str]:
     """The span processor for the user's destination, and a Logfire data_dir outside the repository."""
     try:
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor  # noqa: PLC0415
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor  # pyright: ignore[reportMissingImports]  # noqa: PLC0415
     except ImportError as error:
         raise _Unavailable("telemetry: the opentelemetry SDK isn't installed (pip install 'boundroom[telemetry]')") from error
     if settings.mode == "file":
@@ -309,7 +309,7 @@ def _exporter(settings: TelemetrySettings, roots: Sequence[Path], run_id: str) -
         resource_keys = (*STANDARD_RESOURCE_KEYS, *sorted(settings.resource_attributes))
         exporter = json_lines_exporter(file_dir / f"{run_id}.spans.jsonl", resource_keys=resource_keys)
         return BatchSpanProcessor(exporter), str(file_dir / ".logfire")
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # noqa: PLC0415
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # pyright: ignore[reportMissingImports]  # noqa: PLC0415
 
     endpoint = egress.guard_egress("telemetry", traces_url(str(settings.endpoint)))
     exporter = OTLPSpanExporter(endpoint=endpoint, headers=dict(settings.headers))
@@ -340,7 +340,7 @@ def metrics_url(endpoint: str) -> Optional[str]:
 
 def _metric_reader() -> Any:
     try:
-        from opentelemetry.sdk.metrics.export import InMemoryMetricReader  # noqa: PLC0415
+        from opentelemetry.sdk.metrics.export import InMemoryMetricReader  # pyright: ignore[reportMissingImports]  # noqa: PLC0415
     except ImportError as error:
         raise _Unavailable("telemetry: the opentelemetry SDK isn't installed (pip install 'boundroom[telemetry]')") from error
     return InMemoryMetricReader()
@@ -353,8 +353,8 @@ def _metric_views(logfire: Any) -> list[Any]:
     noisy instrument, is kept. The duration buckets apply only to the catalogue's instruments,
     which are all in seconds; any other histogram gets the SDK's default buckets.
     """
-    from opentelemetry.sdk.metrics import Histogram  # noqa: PLC0415
-    from opentelemetry.sdk.metrics.view import (  # noqa: PLC0415
+    from opentelemetry.sdk.metrics import Histogram  # pyright: ignore[reportMissingImports]  # noqa: PLC0415
+    from opentelemetry.sdk.metrics.view import (  # pyright: ignore[reportMissingImports]  # noqa: PLC0415
         ExplicitBucketHistogramAggregation,
         ExponentialBucketHistogramAggregation,
         View,
@@ -374,7 +374,7 @@ def _otlp_metric_exporter(settings: TelemetrySettings) -> tuple[Any, str]:
     url = metrics_url(str(settings.endpoint))
     if url is None:
         return None, "telemetry: the endpoint names a traces path, so metrics aren't sent; give a bare endpoint for both"
-    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter  # noqa: PLC0415
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter  # pyright: ignore[reportMissingImports]  # noqa: PLC0415
 
     endpoint = egress.guard_egress("telemetry", url)
     return OTLPMetricExporter(endpoint=endpoint, headers=dict(settings.headers), timeout=FLUSH_TIMEOUT_SECONDS), ""
@@ -444,7 +444,7 @@ def json_lines_exporter(path: Path, resource_keys: Sequence[str] = STANDARD_RESO
     The class is built here rather than at module level, so importing this module loads no
     OpenTelemetry code while telemetry is off (UD-1).
     """
-    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult  # noqa: PLC0415
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult  # pyright: ignore[reportMissingImports]  # noqa: PLC0415
 
     class JsonLinesExporter(SpanExporter):
         def export(self, spans: Sequence[Any]) -> SpanExportResult:
@@ -494,7 +494,7 @@ def reason_code(code: str) -> str:
 
 def set_error(span: Any, code: str) -> None:
     """The ERROR status with a reason code as its description (SPEC-006 span status)."""
-    from opentelemetry.trace import Status, StatusCode  # noqa: PLC0415 - only reached when telemetry is on
+    from opentelemetry.trace import Status, StatusCode  # pyright: ignore[reportMissingImports]  # noqa: PLC0415 - only reached when telemetry is on
 
     span.set_status(Status(StatusCode.ERROR, reason_code(code)))
 
