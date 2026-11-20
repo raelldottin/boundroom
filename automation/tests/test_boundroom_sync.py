@@ -16,9 +16,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1098,8 +1099,8 @@ class BoundroomImportGuardTests(unittest.TestCase):
         # Core code may name neither the benchmark's package nor any file the component ships.
         names = [re.escape(Path(entry["destination"]).name) for entry in component if entry["kind"] == "file"]
         reference = re.compile(r"\bautomation[./]benchmark\b|" + "|".join(names))
-        for entry, path, _ in manifest_files():
-            if entry.get("component") is None and path.suffix in {".py", ".sh"} and "__pycache__" not in path.parts:
+        for entry, path, _ in manifest_files(manifest):
+            if entry.get("component") is None and path.suffix in {".py", ".sh"}:
                 with self.subTest(core=str(path.relative_to(REPO_ROOT))):
                     self.assertIsNone(reference.search(path.read_text(encoding="utf-8")))
 
@@ -1415,17 +1416,28 @@ class PreRenameNamesTests(unittest.TestCase):
             self.assertIn(path, destinations)
 
 
-def manifest_files() -> Iterator[tuple[dict[str, Any], Path, str]]:
+# What Tools/boundroom-sync.sh never copies out of a directory entry, read from the script itself.
+_SKIP_NAMES_LINE = re.search(
+    r"^SKIP_NAMES = (\{.*\})$", (REPO_ROOT / "Tools/boundroom-sync.sh").read_text(encoding="utf-8"), re.M
+)
+if _SKIP_NAMES_LINE is None:
+    raise RuntimeError("Tools/boundroom-sync.sh no longer defines SKIP_NAMES on one line")
+SYNC_SKIP_NAMES: set[str] = ast.literal_eval(_SKIP_NAMES_LINE[1])
+
+
+def manifest_files(manifest: Optional[dict[str, Any]] = None) -> Iterator[tuple[dict[str, Any], Path, str]]:
     """Every file the sync manifest ships: its entry, its source path and where a consumer gets it."""
-    manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+    if manifest is None:
+        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
     for entry in manifest["entries"]:
         source, destination = REPO_ROOT / entry["source"], entry.get("destination", entry["source"])
         if not source.is_dir():
             yield entry, source, destination
             continue
         for path in sorted(source.rglob("*")):
-            if path.is_file():
-                yield entry, path, f"{destination}/{path.relative_to(source).as_posix()}"
+            relative = path.relative_to(source)
+            if path.is_file() and not SYNC_SKIP_NAMES.intersection(relative.parts):
+                yield entry, path, f"{destination}/{relative.as_posix()}"
 
 
 class SyncedDocLinkTests(unittest.TestCase):
@@ -1465,6 +1477,16 @@ class OptionalImportTests(unittest.TestCase):
     OPTIONAL = ("logfire", "opentelemetry")
     MARKER = re.compile(r"#\s*pyright:\s*ignore\[[^\]]*\breportMissingImports\b")
 
+    def test_every_optional_dependency_is_listed(self) -> None:
+        # OPTIONAL must cover every package in pyproject's extras, or a new one passes unchecked.
+        project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+        for extra, requirements in project.get("optional-dependencies", {}).items():
+            for requirement in requirements:
+                match = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement)
+                assert match is not None, requirement
+                with self.subTest(extra=extra, requirement=requirement):
+                    self.assertIn(re.split(r"[-_.]", match.group(0).lower())[0], self.OPTIONAL)
+
     def test_every_synced_import_of_an_optional_package_is_marked(self) -> None:
         # Synced tests included: the consumer's pyright checks them too, and a skip doesn't help it.
         unmarked = []
@@ -1474,15 +1496,17 @@ class OptionalImportTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             lines = text.splitlines()
             for node in ast.walk(ast.parse(text)):
+                # Pyright reports a missing import at the module name: each alias's own line for
+                # ``import``, which a continued ``import os, \`` can move past the statement's first.
                 if isinstance(node, ast.Import):
-                    modules = [alias.name for alias in node.names]
+                    modules = [(alias.name, alias.lineno) for alias in node.names]
                 elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
-                    modules = [node.module]
+                    modules = [(node.module, node.lineno)]
                 else:
                     continue
-                optional = any(module.split(".")[0] in self.OPTIONAL for module in modules)
-                if optional and not self.MARKER.search(lines[node.lineno - 1]):
-                    unmarked.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+                for module, lineno in modules:
+                    if module.split(".")[0] in self.OPTIONAL and not self.MARKER.search(lines[lineno - 1]):
+                        unmarked.append(f"{path.relative_to(REPO_ROOT)}:{lineno}")
         self.assertEqual([], unmarked, "add  # pyright: ignore[reportMissingImports]")
 
 
