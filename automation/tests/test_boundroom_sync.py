@@ -1416,8 +1416,10 @@ class PreRenameNamesTests(unittest.TestCase):
             self.assertIn(path, destinations)
 
 
-# What Tools/boundroom-sync.sh never copies out of a directory entry (its SKIP_NAMES).
-SYNC_SKIP_NAMES = {"__pycache__", ".DS_Store"}
+# What Tools/boundroom-sync.sh never copies out of a directory entry, read from the script itself.
+SYNC_SKIP_NAMES = ast.literal_eval(
+    re.search(r"^SKIP_NAMES = (\{.*\})$", (REPO_ROOT / "Tools/boundroom-sync.sh").read_text(encoding="utf-8"), re.M)[1]
+)
 
 
 def manifest_files(manifest: Optional[dict[str, Any]] = None) -> Iterator[tuple[dict[str, Any], Path, str]]:

@@ -320,7 +320,7 @@ def slice_settings(
     allowed = list(slice_record["allowed_paths"])
     allow = [f"Edit({path})" for path in allowed]
     # A handoff outside the repository (a --handoff-dir elsewhere) arrives as an absolute path.
-    outside = bool(handoff) and os.path.isabs(str(handoff))
+    outside = os.path.isabs(handoff or "")
     if handoff:
         # The handoff is the one file every slice must write, wherever its allowed paths are. In an
         # Edit rule Claude Code reads "/path" as relative to the settings file; "//path" is absolute.
