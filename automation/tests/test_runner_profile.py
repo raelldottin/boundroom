@@ -301,6 +301,19 @@ class SliceSettingsTests(TempCase):
             deny = rp.slice_settings(SLICE, policy, choose("bounded"), "automation/handoffs/h.json", root)["permissions"]["deny"]
         self.assertNotIn("Edit(./automation/handoffs/)", deny)
 
+    def test_the_runner_may_commit_its_handoff_outside_its_paths(self) -> None:
+        # v0.5.2: a consumer that tracks handoffs, with the handoff directory out of allowed_paths so
+        # the stray-file check applies, still needs the run to end with a clean status.
+        handoff = "automation/handoffs/20261120T000000Z-S-1.json"
+        allow = rp.slice_settings(SLICE, POLICY, choose("bounded"), handoff)["permissions"]["allow"]
+        self.assertIn(f"Bash(git add {handoff})", allow)
+        self.assertNotIn("Bash(git add automation/handoffs/)", allow)
+        self.assertNotIn(f"Bash(git add {handoff})", rp.slice_settings(SLICE, POLICY, choose("bounded"))["permissions"]["allow"])
+        outside = "/tmp/handoffs/20261120T000000Z-S-1.json"  # a --handoff-dir outside the repository
+        self.assertNotIn(
+            f"Bash(git add {outside})", rp.slice_settings(SLICE, POLICY, choose("bounded"), outside)["permissions"]["allow"]
+        )
+
     def test_without_a_handoff_an_owned_directory_stays_denied_whole(self) -> None:
         policy = {"supervisor_owned_paths": ["automation/handoffs/"]}
         self.assertIn("Edit(automation/handoffs/)", rp.slice_settings(SLICE, policy, choose("bounded"))["permissions"]["deny"])

@@ -8,6 +8,7 @@ their own equivalents against their vendored checkout.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -17,7 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1097,15 +1098,10 @@ class BoundroomImportGuardTests(unittest.TestCase):
         # Core code may name neither the benchmark's package nor any file the component ships.
         names = [re.escape(Path(entry["destination"]).name) for entry in component if entry["kind"] == "file"]
         reference = re.compile(r"\bautomation[./]benchmark\b|" + "|".join(names))
-        for entry in manifest["entries"]:
-            if entry.get("component") is not None:
-                continue
-            source = REPO_ROOT / entry["source"]
-            files = [source] if source.is_file() else sorted(source.rglob("*"))
-            for path in files:
-                if path.suffix in {".py", ".sh"} and "__pycache__" not in path.parts:
-                    with self.subTest(core=str(path.relative_to(REPO_ROOT))):
-                        self.assertIsNone(reference.search(path.read_text(encoding="utf-8")))
+        for entry, path, _ in manifest_files():
+            if entry.get("component") is None and path.suffix in {".py", ".sh"} and "__pycache__" not in path.parts:
+                with self.subTest(core=str(path.relative_to(REPO_ROOT))):
+                    self.assertIsNone(reference.search(path.read_text(encoding="utf-8")))
 
 
 class PinStatusTests(unittest.TestCase):
@@ -1419,26 +1415,34 @@ class PreRenameNamesTests(unittest.TestCase):
             self.assertIn(path, destinations)
 
 
+def manifest_files() -> Iterator[tuple[dict[str, Any], Path, str]]:
+    """Every file the sync manifest ships: its entry, its source path and where a consumer gets it."""
+    manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
+    for entry in manifest["entries"]:
+        source, destination = REPO_ROOT / entry["source"], entry.get("destination", entry["source"])
+        if not source.is_dir():
+            yield entry, source, destination
+            continue
+        for path in sorted(source.rglob("*")):
+            if path.is_file():
+                yield entry, path, f"{destination}/{path.relative_to(source).as_posix()}"
+
+
 class SyncedDocLinkTests(unittest.TestCase):
     """A synced document's relative links must resolve in a consumer, which gets only the manifest's
     files. A core document may link only to core files, since a consumer can leave a component out."""
 
     def test_every_relative_link_in_a_synced_document_resolves_to_a_synced_file(self) -> None:
-        manifest = json.loads((REPO_ROOT / "automation/reusable-manifest.json").read_text(encoding="utf-8"))
         core: set[str] = set()
         shipped: set[str] = set()
         documents: dict[Path, tuple[str, bool]] = {}
-        for entry in manifest["entries"]:
-            source, destination = REPO_ROOT / entry["source"], entry.get("destination", entry["source"])
+        for entry, path, shipped_path in manifest_files():
             is_core = "component" not in entry
-            files = [path for path in source.rglob("*") if path.is_file()] if source.is_dir() else [source]
-            for path in files:
-                shipped_path = destination if not source.is_dir() else f"{destination}/{path.relative_to(source).as_posix()}"
-                shipped.add(shipped_path)
-                if is_core:
-                    core.add(shipped_path)
-                if path.suffix == ".md":
-                    documents[path] = (shipped_path, is_core)
+            shipped.add(shipped_path)
+            if is_core:
+                core.add(shipped_path)
+            if path.suffix == ".md":
+                documents[path] = (shipped_path, is_core)
         broken = []
         for path, (shipped_path, is_core) in sorted(documents.items()):
             reachable = core if is_core else shipped
@@ -1451,6 +1455,35 @@ class SyncedDocLinkTests(unittest.TestCase):
                 if resolved not in reachable and not any(name.startswith(f"{resolved}/") for name in reachable):
                     broken.append(f"{path.relative_to(REPO_ROOT)} -> {target}")
         self.assertEqual([], broken, "link to the file on GitHub instead, as the consumer may not get it")
+
+
+class OptionalImportTests(unittest.TestCase):
+    """A synced module's imports of optional packages are marked for the consumer's type checker."""
+
+    # The telemetry extra (SPEC-006). A consumer that doesn't install it still type-checks the
+    # synced code, and Owlory's pyright treats a missing import as an error.
+    OPTIONAL = ("logfire", "opentelemetry")
+    MARKER = re.compile(r"#\s*pyright:\s*ignore\[[^\]]*\breportMissingImports\b")
+
+    def test_every_synced_import_of_an_optional_package_is_marked(self) -> None:
+        # Synced tests included: the consumer's pyright checks them too, and a skip doesn't help it.
+        unmarked = []
+        for _, path, _ in manifest_files():
+            if path.suffix != ".py":
+                continue
+            text = path.read_text(encoding="utf-8")
+            lines = text.splitlines()
+            for node in ast.walk(ast.parse(text)):
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                    modules = [node.module]
+                else:
+                    continue
+                optional = any(module.split(".")[0] in self.OPTIONAL for module in modules)
+                if optional and not self.MARKER.search(lines[node.lineno - 1]):
+                    unmarked.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+        self.assertEqual([], unmarked, "add  # pyright: ignore[reportMissingImports]")
 
 
 if __name__ == "__main__":

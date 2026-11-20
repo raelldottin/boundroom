@@ -233,7 +233,7 @@ The supervisor writes a per-slice settings file **outside the repository** (in t
 - **Allow:**
   - `Edit` for each of the slice's `allowed_paths`, and for the slice's handoff file. Claude Code applies only `Edit` rules to its file tools, and `Edit` covers every one of them, so there are no `Write` rules;
   - `Bash` for each of the slice's `required_validations`, exactly as written;
-  - `git status`, `git diff`, `git rev-list`, `git add` for the allowed paths, `git commit`, and `git push` to the current branch's upstream. The runner prompt requires committing and pushing before a clean stop.
+  - `git status`, `git diff`, `git rev-list`, `git add` for the allowed paths and for exactly this run's handoff (when it is inside the repository), `git commit`, and `git push` to the current branch's upstream. The runner prompt requires committing and pushing before a clean stop.
 - **Deny, which wins over allow:**
   - `Edit` for the policy's `supervisor_owned_paths`, `.git/**` and `.claude/**`;
   - `Read` for `~/.ssh/**`, `~/.aws/**` and `~/.config/**`;
@@ -243,7 +243,7 @@ The supervisor writes a per-slice settings file **outside the repository** (in t
   - Writes are limited to the repository and the per-user temp directory.
   - The network allowlist is empty.
   - `git push` is listed in `excludedCommands`: Claude Code's sandbox proxy doesn't carry plain SSH, and the push still needs its allow rule.
-  - `git add *` and `git commit *` are listed in `excludedCommands` too. The sandbox turns the `.git/**` deny rule into a write block, so inside it a commit can't create `.git/index.lock`. An entry without a wildcard matches only the bare command, hence the ` *`. Outside the sandbox, the allow rules still limit these commands to the slice's paths, and the file tools still can't touch `.git`. An excluded command is not a sandbox boundary: `git commit` runs the consumer's own hooks unsandboxed, which the runner can't edit because `.git/**` is denied to it.
+  - `git add *` and `git commit *` are listed in `excludedCommands` too. The sandbox turns the `.git/**` deny rule into a write block, so inside it a commit can't create `.git/index.lock`. An entry without a wildcard matches only the bare command, hence the ` *`. Outside the sandbox, the allow rules still limit these commands to the slice's paths and its handoff, and the file tools still can't touch `.git`. An excluded command is not a sandbox boundary: `git commit` runs the consumer's own hooks unsandboxed, which the runner can't edit because `.git/**` is denied to it.
 - **The runner prompt** ends with a "What you may run" section generated from the same file, so the agent doesn't spend turns on calls that will be denied. It also says to run `git add`, `git commit` and `git push` as separate commands with a plain `-m "..."` message: a command joined with `&&`, or one using `$(...)`, a heredoc or a redirect, is matched as a whole, so it stays in the sandbox and can't commit. The RA-TEL-007 canary found this.
 
 A denied call isn't a supervisor error. If the agent can't finish within its allowlist, its handoff reports the blocker, and the slice fails or blocks through the existing gates. That's the safe outcome.

@@ -325,6 +325,11 @@ def slice_settings(
     allow += [f"Bash({command})" for command in slice_record.get("required_validations", [])]
     allow += ["Bash(git status)", "Bash(git diff:*)", "Bash(git rev-list:*)", "Bash(git commit:*)", "Bash(git push)"]
     allow += [f"Bash(git add {path})" for path in allowed]
+    if handoff and not PurePosixPath(handoff).is_absolute():
+        # A consumer that tracks its handoffs commits this one too, whether or not its directory
+        # is in the slice's allowed paths, so the run can end with a clean status. A handoff outside
+        # the repository (an absolute path) can't be added, so it gets no rule.
+        allow.append(f"Bash(git add {handoff})")
     owned = list(policy.get("supervisor_owned_paths", []))
     deny = _owned_denies(owned, handoff, repo_root) + ["Edit(.git/**)", "Edit(.claude/**)"]
     deny += ["Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/**)", "WebFetch", "WebSearch"]
@@ -338,7 +343,7 @@ def slice_settings(
             "failIfUnavailable": True,
             "allowUnsandboxedCommands": False,
             # The sandbox turns the .git deny rule into a write block, so git add and commit run
-            # outside it; the allowlist above still limits them to the slice's paths (RA-SET-009).
+            # outside it; the allowlist above still limits them to the slice's paths and its handoff (RA-SET-009).
             # An entry without a wildcard matches only the bare command, so these carry " *".
             "excludedCommands": ["git add *", "git commit *", "git push"],
             "network": {"allowedDomains": []},

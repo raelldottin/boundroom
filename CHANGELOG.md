@@ -6,6 +6,11 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+### Fixed
+
+- `telemetry.py`'s imports of the optional telemetry packages (`logfire`, `opentelemetry`) are marked for pyright, so a consumer that type-checks the synced code without the `telemetry` extra no longer gets 10 `reportMissingImports` errors. A test keeps every such import marked.
+- A bounded runner may `git add` its own handoff, not only edit it, so a consumer that tracks handoffs, and lists the handoff directory in `supervisor_owned_paths`, can leave it out of a slice's `allowed_paths`. A handoff directory in neither stays outside the slice's scope, and the slice fails. Leaving it out is what makes v0.5.1's check for stray files beside the handoff apply.
+
 ## 0.5.1 (2026-11-19)
 
 ### Fixed
