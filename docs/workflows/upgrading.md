@@ -72,6 +72,15 @@ The SBOM is also attested against the archive, as a CycloneDX predicate (`--pred
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.
 5. **Update the plugin** to the same tag, if you use it: change the marketplace source to the new tag, then update the plugin. Only a rename, as in 0.3.0, needs an uninstall and reinstall.
 
+### From 0.5.1 to 0.5.2 (fixes only)
+
+Sync as usual; there is nothing to change in the consumer. What a run does differently:
+
+- A consumer that type-checks the synced code without the `telemetry` extra no longer gets pyright errors in `telemetry.py`.
+- A bounded runner may `git add` its own handoff. A consumer that tracks handoffs can now take the handoff directory out of every slice's `allowed_paths`, which is what makes v0.5.1's check for stray files beside the handoff apply. A consumer that doesn't want handoffs committed should gitignore its handoff directory.
+- The run's own handoff is never out of scope, and a manual proof still passes after the runner commits its handoff.
+- A handoff written outside the repository can be written under the bounded profile.
+
 ### From 0.5.0 to 0.5.1 (fixes only)
 
 Sync as usual. Two fixes change what a run does:
