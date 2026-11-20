@@ -8,6 +8,7 @@ their own equivalents against their vendored checkout.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -1097,15 +1098,10 @@ class BoundroomImportGuardTests(unittest.TestCase):
         # Core code may name neither the benchmark's package nor any file the component ships.
         names = [re.escape(Path(entry["destination"]).name) for entry in component if entry["kind"] == "file"]
         reference = re.compile(r"\bautomation[./]benchmark\b|" + "|".join(names))
-        for entry in manifest["entries"]:
-            if entry.get("component") is not None:
-                continue
-            source = REPO_ROOT / entry["source"]
-            files = [source] if source.is_file() else sorted(source.rglob("*"))
-            for path in files:
-                if path.suffix in {".py", ".sh"} and "__pycache__" not in path.parts:
-                    with self.subTest(core=str(path.relative_to(REPO_ROOT))):
-                        self.assertIsNone(reference.search(path.read_text(encoding="utf-8")))
+        for entry, path, _ in manifest_files():
+            if entry.get("component") is None and path.suffix in {".py", ".sh"} and "__pycache__" not in path.parts:
+                with self.subTest(core=str(path.relative_to(REPO_ROOT))):
+                    self.assertIsNone(reference.search(path.read_text(encoding="utf-8")))
 
 
 class PinStatusTests(unittest.TestCase):
@@ -1467,18 +1463,26 @@ class OptionalImportTests(unittest.TestCase):
     # The telemetry extra (SPEC-006). A consumer that doesn't install it still type-checks the
     # synced code, and Owlory's pyright treats a missing import as an error.
     OPTIONAL = ("logfire", "opentelemetry")
+    MARKER = re.compile(r"#\s*pyright:\s*ignore\[[^\]]*\breportMissingImports\b")
 
     def test_every_synced_import_of_an_optional_package_is_marked(self) -> None:
+        # Synced tests included: the consumer's pyright checks them too, and a skip doesn't help it.
         unmarked = []
         for _, path, _ in manifest_files():
-            # The sync ships only some tests, and those import optional packages behind skips.
-            if path.suffix != ".py" or "/tests/" in path.as_posix():
+            if path.suffix != ".py":
                 continue
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                match = re.match(r"\s*(?:from|import)\s+([\w.]+)", line)
-                optional = match is not None and match.group(1).split(".")[0] in self.OPTIONAL
-                if optional and "pyright: ignore[reportMissingImports]" not in line:
-                    unmarked.append(f"{path.relative_to(REPO_ROOT)}:{number}")
+            text = path.read_text(encoding="utf-8")
+            lines = text.splitlines()
+            for node in ast.walk(ast.parse(text)):
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                    modules = [node.module]
+                else:
+                    continue
+                optional = any(module.split(".")[0] in self.OPTIONAL for module in modules)
+                if optional and not self.MARKER.search(lines[node.lineno - 1]):
+                    unmarked.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
         self.assertEqual([], unmarked, "add  # pyright: ignore[reportMissingImports]")
 
 

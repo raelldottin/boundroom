@@ -309,6 +309,10 @@ class SliceSettingsTests(TempCase):
         self.assertIn(f"Bash(git add {handoff})", allow)
         self.assertNotIn("Bash(git add automation/handoffs/)", allow)
         self.assertNotIn(f"Bash(git add {handoff})", rp.slice_settings(SLICE, POLICY, choose("bounded"))["permissions"]["allow"])
+        outside = "/tmp/handoffs/20261120T000000Z-S-1.json"  # a --handoff-dir outside the repository
+        self.assertNotIn(
+            f"Bash(git add {outside})", rp.slice_settings(SLICE, POLICY, choose("bounded"), outside)["permissions"]["allow"]
+        )
 
     def test_without_a_handoff_an_owned_directory_stays_denied_whole(self) -> None:
         policy = {"supervisor_owned_paths": ["automation/handoffs/"]}
