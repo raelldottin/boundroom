@@ -54,30 +54,17 @@ def missing_fragment(repo: Path) -> str:
 BREAKAGES = [stale_placeholder, symlinked_rules, missing_fragment]
 
 
+@pytest.mark.parametrize("flag", ["--single-slice", "--dry-run"])
 @pytest.mark.parametrize("break_prompt", BREAKAGES, ids=[breakage.__name__ for breakage in BREAKAGES])
-def test_a_prompt_that_cannot_be_rendered_stops_before_the_claim(queue, consumer, monkeypatch, capsys, break_prompt):
+def test_a_prompt_that_cannot_be_rendered_stops_before_the_claim(queue, consumer, monkeypatch, capsys, break_prompt, flag):
     path, log = queue
     message = break_prompt(consumer)
     commit(consumer)
 
-    assert supervise(monkeypatch, "--single-slice") == 2
+    assert supervise(monkeypatch, flag) == 2
 
     assert statuses(path) == {FIRST: "queued", SECOND: "queued"}
     assert runs(log) == []
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert message in captured.err
-
-
-@pytest.mark.parametrize("break_prompt", BREAKAGES, ids=[breakage.__name__ for breakage in BREAKAGES])
-def test_a_dry_run_reports_a_prompt_that_cannot_be_rendered(queue, consumer, monkeypatch, capsys, break_prompt):
-    path, _ = queue
-    message = break_prompt(consumer)
-    commit(consumer)
-
-    assert supervise(monkeypatch, "--dry-run") == 2
-
-    assert statuses(path) == {FIRST: "queued", SECOND: "queued"}
     captured = capsys.readouterr()
     assert captured.out == ""
     assert message in captured.err
