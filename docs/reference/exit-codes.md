@@ -67,6 +67,7 @@ These stop `run_next` with exit 2 before it claims a slice, so the slice stays q
 | --- | --- |
 | `runner_rules_symlink` | `automation/runner-rules.md` is a symbolic link. |
 | `runner_rules_not_file` | `automation/runner-rules.md` exists but isn't a regular file. |
+| `runner_rules_unreadable` | `automation/runner-rules.md` exists but can't be read, for example for lack of permission. |
 | `runner_rules_too_large` | `automation/runner-rules.md` is larger than 32 KiB. |
 | `runner_rules_not_utf8` | `automation/runner-rules.md` isn't UTF-8. |
 | `unknown_prompt_placeholder` | A prompt fragment uses a `__PLACEHOLDER__` the supervisor doesn't fill. |

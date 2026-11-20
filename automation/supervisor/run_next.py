@@ -689,7 +689,10 @@ def repository_rules(repo_root: Path) -> str:
         return ""
     if not path.is_file():
         raise policy.ConfigError(f"runner_rules_not_file: {RUNNER_RULES_PATH} must be a regular file")
-    data = path.read_bytes()
+    try:
+        data = path.read_bytes()
+    except OSError as exc:  # a ConfigError, so the run stops with exit 2 before the claim, not a traceback
+        raise policy.ConfigError(f"runner_rules_unreadable: {RUNNER_RULES_PATH}: {exc.strerror or exc}") from exc
     if len(data) > RUNNER_RULES_MAX_BYTES:
         raise policy.ConfigError(
             f"runner_rules_too_large: {RUNNER_RULES_PATH} is {len(data)} bytes; the limit is {RUNNER_RULES_MAX_BYTES}"
@@ -706,7 +709,8 @@ def prompt_fragment(repo_root: Path, relative: str) -> str:
     try:
         return (repo_root / relative).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise policy.ConfigError(f"prompt_fragment_unreadable: {relative}: {exc}") from exc
+        # strerror, not the OSError itself, which repeats the path, absolute; a decode error has none.
+        raise policy.ConfigError(f"prompt_fragment_unreadable: {relative}: {getattr(exc, 'strerror', None) or exc}") from exc
 
 
 def render_prompt(repo_root: Path, slice_record: dict, context_bundle: dict, handoff_path: Path) -> str:

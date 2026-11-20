@@ -30,7 +30,7 @@ If `automation/supervisor/operator_status.py` does not exist, the synced copy pr
 python3 automation/supervisor/run_next.py --dry-run --include-blocked
 ```
 
-`--dry-run` selects and packages the next slice without launching an agent or changing the queue. Report the slice it selected, or that none is eligible. If none is eligible, also report the blocked or deferred slices and their recommended unblockers.
+`--dry-run` selects and packages the next slice without launching an agent or changing the queue. Report the slice it selected, or that none is eligible. If none is eligible, also report the blocked or deferred slices and their recommended unblockers. If it exits 2 with a `stop:` line instead, such as `unknown_prompt_placeholder` for a prompt it can't render, report that line: a live run would refuse the same way, before claiming anything.
 
 ## Settings warnings
 

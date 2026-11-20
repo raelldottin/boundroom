@@ -70,7 +70,7 @@ def test_a_prompt_that_cannot_be_rendered_stops_before_the_claim(queue, consumer
     assert message in captured.err
 
 
-def test_the_agent_gets_the_prompt_rendered_before_the_claim(queue, consumer, monkeypatch):
+def test_the_agent_gets_the_rendered_prompt(queue, consumer, monkeypatch):
     """The prompt file handed to the agent command is the rendered prompt."""
     path, _ = queue
     seen = consumer.parent / "prompt-seen.md"
