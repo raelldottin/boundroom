@@ -319,13 +319,16 @@ def slice_settings(
     """
     allowed = list(slice_record["allowed_paths"])
     allow = [f"Edit({path})" for path in allowed]
+    # A handoff outside the repository (a --handoff-dir elsewhere) arrives as an absolute path.
+    outside = bool(handoff) and os.path.isabs(str(handoff))
     if handoff:
-        # The handoff is the one file every slice must write, wherever its allowed paths are.
-        allow.append(f"Edit({handoff})")
+        # The handoff is the one file every slice must write, wherever its allowed paths are. In an
+        # Edit rule Claude Code reads "/path" as relative to the settings file; "//path" is absolute.
+        allow.append(f"Edit(/{handoff})" if outside else f"Edit({handoff})")
     allow += [f"Bash({command})" for command in slice_record.get("required_validations", [])]
     allow += ["Bash(git status)", "Bash(git diff:*)", "Bash(git rev-list:*)", "Bash(git commit:*)", "Bash(git push)"]
     allow += [f"Bash(git add {path})" for path in allowed]
-    if handoff and not PurePosixPath(handoff).is_absolute():
+    if handoff and not outside:
         # A consumer that tracks its handoffs commits this one too, whether or not its directory
         # is in the slice's allowed paths, so the run can end with a clean status. A handoff outside
         # the repository (an absolute path) can't be added, so it gets no rule.
