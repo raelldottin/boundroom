@@ -81,8 +81,18 @@ def meets_proof_level(achieved: str, required: str) -> bool:
 
 
 def verify_manual_proofs(
-    slice_record: dict[str, Any], handoff: dict[str, Any], post_run_commit_sha: str
+    slice_record: dict[str, Any],
+    handoff: dict[str, Any],
+    post_run_commit_sha: str,
+    handoff_commit_parent: Optional[str] = None,
 ) -> tuple[list[str], bool]:
+    """Missing proofs, and whether the proof level falls short.
+
+    A proof names the commit it verified. A runner that commits its own handoff afterwards moves
+    HEAD one commit past it, and a handoff can't name the commit that contains it, so the parent
+    of a commit that changed only the handoff (``handoff_commit_parent``) is accepted too.
+    """
+    proof_commits = {post_run_commit_sha} | ({handoff_commit_parent} if handoff_commit_parent else set())
     required_proofs = slice_record.get("manual_proof", [])
     required_level = slice_record.get("required_proof_level", "")
 
@@ -94,14 +104,14 @@ def verify_manual_proofs(
     if required_proofs:
         if not verified_sha:
             missing_proofs.append("Missing verified_commit_sha (required when the slice requires manual proof)")
-        elif verified_sha != post_run_commit_sha:
+        elif verified_sha not in proof_commits:
             missing_proofs.append("Invalid verified_commit_sha (does not match supervisor-observed HEAD)")
 
     provided_by_type = {}
     for p in provided_proofs:
         if p.get("slice_id") != slice_record.get("slice_id"):
             continue
-        if p.get("commit_sha") != post_run_commit_sha:
+        if p.get("commit_sha") not in proof_commits:
             continue
         provided_by_type[p.get("proof_type")] = p
 
@@ -398,6 +408,29 @@ def git_head(repo_root: Path) -> str:
     return result.stdout.strip()
 
 
+def git_handoff_commit_parent(repo_root: Path, base_sha: str, handoff: Optional[str], head: str = "HEAD") -> Optional[str]:
+    """*head*'s parent, when *head* is a commit after *base_sha* that changed only *handoff*; else None."""
+    if not handoff:
+        return None
+    parent = subprocess.run(["git", "rev-parse", "--verify", "-q", f"{head}^"], cwd=repo_root, capture_output=True, text=True)
+    if parent.returncode != 0:
+        return None
+    parent_sha = parent.stdout.strip()
+    descends = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base_sha, parent_sha], cwd=repo_root, capture_output=True, text=True
+    )
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", "--relative", "--no-renames", parent_sha, head],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if descends.returncode != 0 or changed.returncode != 0:
+        return None
+    paths = {normalize_repo_path(line) for line in changed.stdout.splitlines() if line.strip()}
+    return parent_sha if paths == {normalize_repo_path(handoff)} else None
+
+
 def git_committed_paths(repo_root: Path, base_sha: str) -> list[str]:
     """Paths the commits made since *base_sha* changed: what a slice committed, not only what it left dirty.
 
@@ -436,9 +469,16 @@ def path_matches_prefix(path: str, prefix: str) -> bool:
     return normalized_path == normalized_prefix or normalized_path.startswith(f"{normalized_prefix}/")
 
 
-def out_of_scope_paths(dirty_paths: list[str], allowed_paths: list[str], supervisor_owned_paths: list[str]) -> list[str]:
+def out_of_scope_paths(
+    dirty_paths: list[str], allowed_paths: list[str], supervisor_owned_paths: list[str], handoff: Optional[str] = None
+) -> list[str]:
+    """Paths outside the slice's allowed paths and the supervisor's own. The run's *handoff* is never
+    out of scope, wherever its directory is."""
+    own_handoff = normalize_repo_path(handoff) if handoff else None
     unexpected: list[str] = []
     for path in dirty_paths:
+        if normalize_repo_path(path) == own_handoff:
+            continue
         if any(path_matches_prefix(path, prefix) for prefix in supervisor_owned_paths):
             continue
         if any(path_matches_prefix(path, prefix) for prefix in allowed_paths):
@@ -864,6 +904,7 @@ def evaluate_completion(
     post_run_commit_sha: str = "",
     committed_paths: Optional[list[str]] = None,
     handoff_path: Optional[str] = None,
+    handoff_commit_parent: Optional[str] = None,
 ) -> CompletionDecision:
     validation_replays = validation_replays or []
     supervisor_owned_paths = queue_data["policy"]["supervisor_owned_paths"]
@@ -881,11 +922,13 @@ def evaluate_completion(
         )
     )
     unexpected_dirty_paths = sorted(
-        set(out_of_scope_paths(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths))
+        set(out_of_scope_paths(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path))
         | set(stray_owned_paths(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path))
     )
     files_touched = normalize_paths(handoff["files_touched"])
-    files_touched_outside_scope = out_of_scope_paths(files_touched, slice_record["allowed_paths"], supervisor_owned_paths)
+    files_touched_outside_scope = out_of_scope_paths(
+        files_touched, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path
+    )
     reported_out_of_scope = sorted(set(handoff["dirty_paths_outside_scope"]))
     changed_file_count = max(
         count_paths_within_scope(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths),
@@ -978,7 +1021,7 @@ def evaluate_completion(
         )
 
     if handoff["status"] == "done":
-        missing_proofs, missing_level = verify_manual_proofs(slice_record, handoff, post_run_commit_sha)
+        missing_proofs, missing_level = verify_manual_proofs(slice_record, handoff, post_run_commit_sha, handoff_commit_parent)
         if missing_proofs or missing_level:
             return CompletionDecision(
                 queue_status="failed",

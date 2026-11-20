@@ -185,6 +185,17 @@ class ManualProofTrustBoundaryTest(unittest.TestCase):
             missing_proofs, missing_level = policy.verify_manual_proofs(slice_record, handoff, HEAD_SHA)
         self.assertEqual(([], False), (missing_proofs, missing_level))
 
+    def test_a_proof_for_the_commit_before_the_handoff_commit_is_accepted(self) -> None:
+        # A runner that commits its handoff moves HEAD one commit past what the proof names, and a
+        # handoff can't name the commit that contains it. The supervisor passes that parent only
+        # when the last commit changed nothing but the handoff (git_handoff_commit_parent).
+        handoff_commit = "f" * 40
+        with workspace() as (_, slice_record, handoff):
+            accepted = policy.verify_manual_proofs(slice_record, handoff, handoff_commit, HEAD_SHA)
+            refused = policy.verify_manual_proofs(slice_record, handoff, handoff_commit)
+        self.assertEqual(([], False), accepted)
+        self.assertTrue(any("Invalid verified_commit_sha" in entry for entry in refused[0]))
+
     def completion_decision(self, slice_record: dict, handoff: dict) -> policy.CompletionDecision:
         """Run the same proof through the supervisor completion boundary."""
         queue_data = {

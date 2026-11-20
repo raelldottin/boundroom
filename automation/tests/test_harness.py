@@ -1262,6 +1262,59 @@ exit 7
         )
         self.assertEqual([], policy.stray_owned_paths(changed, ["src/"], owned, None))
 
+    def test_completion_decision_accepts_the_run_s_own_handoff_outside_its_paths_and_owned_paths(self) -> None:
+        # v0.5.2: the run's handoff is never out of scope, even when its directory is neither in
+        # allowed_paths nor supervisor-owned.
+        first_slice_id = self.example_slice_id_at(0)
+        queue_data = self.example_queue_with_slice_status(first_slice_id, "in_progress")
+        queue_data["policy"]["supervisor_owned_paths"] = ["automation/queue/slices.json"]
+        slice_record = self.require_slice_record(queue_data, first_slice_id)
+        handoff = policy.load_json(self.example_handoff_path)
+        handoff["recommended_next_slice"] = ""
+        handoff["recommended_next_reason"] = ""
+        own = "records/20261120T000000Z-own.json"
+        decide = lambda handoff_path: policy.evaluate_completion(  # noqa: E731
+            queue_data=queue_data,
+            slice_record=slice_record,
+            handoff=handoff,
+            dirty_paths_before_run=[],
+            dirty_paths_after_run=[*handoff["files_touched"], own],
+            completed_autonomous_runs=1,
+            run_limit=2,
+            handoff_path=handoff_path,
+        )
+        self.assertEqual([], decide(own).dirty_paths_outside_scope)
+        self.assertEqual([own], decide(None).dirty_paths_outside_scope)
+
+    def test_git_handoff_commit_parent_names_the_parent_only_of_a_handoff_only_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args: str) -> str:
+                return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+
+            git("init", "-q")
+            git("config", "user.email", "t@example.com")
+            git("config", "user.name", "t")
+            (root / "a.txt").write_text("a", encoding="utf-8")
+            git("add", "a.txt")
+            git("commit", "-q", "-m", "base")
+            base = git("rev-parse", "HEAD")
+            (root / "a.txt").write_text("b", encoding="utf-8")
+            git("commit", "-qam", "work")
+            work = git("rev-parse", "HEAD")
+            self.assertIsNone(policy.git_handoff_commit_parent(root, base, "h/h.json"))
+            (root / "h").mkdir()
+            (root / "h/h.json").write_text("{}", encoding="utf-8")
+            git("add", "h/h.json")
+            git("commit", "-q", "-m", "handoff")
+            self.assertEqual(work, policy.git_handoff_commit_parent(root, base, "h/h.json"))
+            self.assertIsNone(policy.git_handoff_commit_parent(root, base, "h/other.json"))
+            self.assertIsNone(policy.git_handoff_commit_parent(root, base, None))
+            handoff_commit = git("rev-parse", "HEAD")
+            # A parent from before the run started is never accepted.
+            self.assertIsNone(policy.git_handoff_commit_parent(root, handoff_commit, "h/h.json"))
+
     def test_completion_decision_rejects_unknown_recommended_next_slice(self) -> None:
         first_slice_id = self.example_slice_id_at(0)
         queue_data = self.example_queue_with_slice_status(first_slice_id, "in_progress")
