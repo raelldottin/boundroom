@@ -325,6 +325,10 @@ def slice_settings(
     allow += [f"Bash({command})" for command in slice_record.get("required_validations", [])]
     allow += ["Bash(git status)", "Bash(git diff:*)", "Bash(git rev-list:*)", "Bash(git commit:*)", "Bash(git push)"]
     allow += [f"Bash(git add {path})" for path in allowed]
+    if handoff:
+        # A consumer that tracks its handoffs commits this one too, whether or not its directory
+        # is in the slice's allowed paths, so the run can end with a clean status.
+        allow.append(f"Bash(git add {handoff})")
     owned = list(policy.get("supervisor_owned_paths", []))
     deny = _owned_denies(owned, handoff, repo_root) + ["Edit(.git/**)", "Edit(.claude/**)"]
     deny += ["Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.config/**)", "WebFetch", "WebSearch"]
