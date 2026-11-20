@@ -6,6 +6,10 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+### Fixed
+
+- `run_next` renders the runner's prompt before it claims a slice, and `--dry-run` renders it too. A prompt it can't render, such as a consumer's customized `slice.md` with a placeholder a release renamed, unreadable `automation/runner-rules.md`, or a missing prompt fragment (`prompt_fragment_unreadable`), now stops the run with exit 2 and the slice still queued. Before, the run claimed the slice, then recorded it as `failed`, one slice per run, and a dry run passed.
+
 ## 0.5.2 (2026-11-20)
 
 ### Fixed

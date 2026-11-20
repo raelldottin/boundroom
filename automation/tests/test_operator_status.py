@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -61,6 +62,8 @@ def repo(tmp_path, monkeypatch) -> Path:
     path = tmp_path / "consumer"
     path.mkdir()
     git(path, "init", "-q")
+    # As the consumer sync ships them: run_next --dry-run renders the prompt.
+    shutil.copytree(REPO_ROOT / "automation/prompts", path / "automation/prompts")
     write_queue(path, EXAMPLE_QUEUE)
     commit(path)
     monkeypatch.setattr(operator_status, "REPO_ROOT", path)

@@ -51,8 +51,9 @@ These happen after the slice is claimed. The supervisor marks the slice `failed`
 | `agent_exit_nonzero`, any other code | the runner's | The runner itself failed. | Read the runner's output above the failure report. |
 | `agent_timeout` | 124 | The agent command timed itself out. | Split the slice, or give the command more time. |
 | `supervisor_error`, with a timeout | 2 | The session ran past `policy.handoff_timeout_seconds`. | Split the slice, or raise the timeout in a reviewed change. |
-| `supervisor_error`, with `runner_rules_...` | 2 | `automation/runner-rules.md` is a symbolic link, not a file, over 32 KiB or not UTF-8. | Make it a regular UTF-8 file under 32 KiB. |
-| `supervisor_error`, with `unknown_prompt_placeholder` | 2 | A customized prompt fragment uses a placeholder the supervisor doesn't fill. | See [customizing prompt fragments](../workflows/boundroom.md#customizing-prompt-fragments). |
+| `stop: runner_rules_...`, before the claim | 2 | `automation/runner-rules.md` is a symbolic link, not a file, over 32 KiB or not UTF-8. The slice stays queued. | Make it a regular UTF-8 file under 32 KiB. |
+| `stop: prompt_fragment_unreadable`, before the claim | 2 | `automation/prompts/base.md` or `slice.md` is missing, can't be read, or isn't UTF-8. The slice stays queued. | Restore the file. The sync ships both. |
+| `stop: unknown_prompt_placeholder`, before the claim | 2 | A customized prompt fragment uses a placeholder the supervisor doesn't fill, often one a release renamed. The slice stays queued, and `--dry-run` reports it too. | See [customizing prompt fragments](../workflows/boundroom.md#customizing-prompt-fragments). |
 | `handoff_missing` | 2 | The session ended without writing its handoff, for example because it reached its budget or turn limit. | Read the runner's output. Check that the prompt names the handoff path. |
 | `handoff_invalid` | 2 | The handoff can't be read, for example because a directory is at its path, isn't valid JSON, or doesn't match the schema. | Check it against `automation/schemas/handoff.schema.json`. Later runs skip it when they look for the previous handoff. |
 | `handoff_slice_mismatch` | 2 | The handoff names another slice. | Check the runner's prompt and the handoff. |

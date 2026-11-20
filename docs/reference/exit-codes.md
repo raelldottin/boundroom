@@ -22,7 +22,7 @@ Selects, claims, runs and judges slices.
 | Code | Meaning | What to do |
 | --- | --- | --- |
 | 0 | The run ended at a stop. It printed a decision report for each slice it judged, whatever the verdict. Also: nothing was eligible, or `--dry-run`. | Read the last decision report's `decision` and `reason`. |
-| 2 | Refused before claiming the next slice: a slice already `in_progress`, a dirty path outside the next slice's scope, no agent command, a missing or invalid queue, not a Git repository, a context bundle its configuration refuses, such as a memory recall the grant doesn't allow, a board inside the repository, a `--report-file` inside the repository, or flags that go together given alone. **Or** a claimed slice failed under the supervisor, and the queue now shows it `failed` with a failure report: see [failure reasons](#failure-reasons). That covers any error from the claim until the verdict is recorded: Git failing while the supervisor measures the slice (`git_error`), and anything else, including a failed write of the verdict to the queue or board (`supervisor_error`). If the queue or board refuses the failure too, the report's `queue_status` is `in_progress`. | Without a failure report, read the `stop:` line and its `hint:`, if any. With one, read its `reason`. See [troubleshooting](troubleshooting.md), and for a report whose `queue_status` is `in_progress`, [a slice stuck in progress](troubleshooting.md#a-slice-stuck-in-progress). |
+| 2 | Refused before claiming the next slice: a slice already `in_progress`, a dirty path outside the next slice's scope, no agent command, a missing or invalid queue, not a Git repository, a context bundle its configuration refuses, such as a memory recall the grant doesn't allow, a board inside the repository, a `--report-file` inside the repository, a prompt it can't render (see [prompt errors](#prompt-and-rules-errors)), or flags that go together given alone. **Or** a claimed slice failed under the supervisor, and the queue now shows it `failed` with a failure report: see [failure reasons](#failure-reasons). That covers any error from the claim until the verdict is recorded: Git failing while the supervisor measures the slice (`git_error`), and anything else, including a failed write of the verdict to the queue or board (`supervisor_error`). If the queue or board refuses the failure too, the report's `queue_status` is `in_progress`. | Without a failure report, read the `stop:` line and its `hint:`, if any. With one, read its `reason`. See [troubleshooting](troubleshooting.md), and for a report whose `queue_status` is `in_progress`, [a slice stuck in progress](troubleshooting.md#a-slice-stuck-in-progress). |
 | 64 | `--single-slice` was given with `--autonomous-limit`, and nothing was claimed. **Or** the agent command exited 64: see the last row. | Pass one or the other. For the agent's 64, see [`run_agent.sh`](#automationsupervisorrun_agentsh). |
 | 78 | Refused before claiming anything, by configuration: a run inside a supervised slice, another run holding the run lock, a runner profile the environment doesn't allow, or telemetry that is required but can't be turned on. Nothing in the queue changed. **Or** the agent command exited 78: see the last row. | Read the `stop:` line. For the agent's 78, see [`run_agent.sh`](#automationsupervisorrun_agentsh). |
 | Any other | The agent command exited with this code. The slice is marked `failed` with reason `agent_exit_nonzero`, or `agent_timeout` for 124. With the shipped wrapper, the code is one of [`run_agent.sh`'s](#automationsupervisorrun_agentsh). | Read the agent's output above the failure report. |
@@ -41,7 +41,7 @@ When a claimed slice fails under the supervisor, the failure report's `reason` s
 | --- | --- |
 | `agent_exit_nonzero` | The agent command exited with a code other than 0 or 124. |
 | `agent_timeout` | The agent command exited 124. |
-| `supervisor_error` | The supervisor failed while running or judging the slice: the handoff timeout passed, the prompt could not be rendered (see [prompt errors](#prompt-and-rules-errors)), the command could not start, or any other error before the verdict was recorded, such as one in the validation replay, in the judgement of the handoff, or in writing the verdict to the queue or board. |
+| `supervisor_error` | The supervisor failed while running or judging the slice: the handoff timeout passed, the command could not start, or any other error before the verdict was recorded, such as one in the validation replay, in the judgement of the handoff, or in writing the verdict to the queue or board. |
 | `handoff_missing` | The agent exited 0 but wrote no handoff at the expected path. |
 | `handoff_invalid` | The handoff can't be read, isn't valid JSON, or doesn't match the handoff schema. |
 | `handoff_slice_mismatch` | The handoff names a different slice from the one in progress. |
@@ -61,7 +61,7 @@ Every judged slice gets one decision in its decision report. Only `continue` let
 
 ### Prompt and rules errors
 
-These stop a slice with reason `supervisor_error`. The message starts with the code.
+These stop `run_next` with exit 2 before it claims a slice, so the slice stays queued and no agent starts. `--dry-run` stops the same way. The message is `stop: ` and then the code.
 
 | Code | Meaning |
 | --- | --- |
@@ -70,6 +70,7 @@ These stop a slice with reason `supervisor_error`. The message starts with the c
 | `runner_rules_too_large` | `automation/runner-rules.md` is larger than 32 KiB. |
 | `runner_rules_not_utf8` | `automation/runner-rules.md` isn't UTF-8. |
 | `unknown_prompt_placeholder` | A prompt fragment uses a `__PLACEHOLDER__` the supervisor doesn't fill. |
+| `prompt_fragment_unreadable` | `automation/prompts/base.md` or `automation/prompts/slice.md` is missing, can't be read, or isn't UTF-8. |
 
 ## `automation/supervisor/run_agent.sh`
 
