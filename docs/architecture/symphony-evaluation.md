@@ -4,6 +4,8 @@
 
 **Scope:** Compare [OpenAI Symphony](https://github.com/openai/symphony) with Boundroom and define a safe, incremental evaluation track. Sources: [Symphony specification](https://github.com/openai/symphony/blob/main/SPEC.md), [experimental Elixir implementation](https://github.com/openai/symphony/blob/main/elixir/README.md), [Boundroom product roadmap](../product-roadmap.md), [SPEC-001](control-plane.md), [SPEC-004](agent-agnostic-board.md), [Kanban cutover](kanban-cutover.md), [SPEC-008](plugin-settings.md), [SPEC-009](enterprise-readiness.md) and [SPEC-010](installed-supervisor.md).
 
+The RA-SYM-001 decision is proposed in [SPEC-011](symphony-decision.md).
+
 ## 1. Decision proposed
 
 **Study Symphony as a reference for an *optional* execution lifecycle, not a replacement for Boundroom and not a second dispatcher.** Boundroom remains responsible for authorization, scoped slice selection, dependency eligibility, claims, validation replay, review, handoff provenance, and the decision to stop. Runner integrations remain agent-agnostic (Claude Code, Codex and Hermes), with capability-specific adapters.
