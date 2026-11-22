@@ -1,6 +1,6 @@
 # Symphony evaluation: supervised, isolated, recoverable agent execution
 
-**Status:** Proposed architecture and research backlog (2026-11-16). This document is **not** approval to implement a scheduler, start a service, enable a model/provider, spend funds, create a production board, merge code, or deploy to a consumer. Acceptance requires a reviewed architecture decision and the independent human authorizations in [AGENTS.md](../../AGENTS.md).
+**Status:** Proposed architecture and research backlog (2026-11-16). This document is **not** approval to implement a scheduler, start a service, enable a model/provider, spend funds, create a production board, merge code, or deploy to a consumer. Acceptance requires a reviewed architecture decision and the independent human authorizations in [AGENTS.md](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md).
 
 **Scope:** Compare [OpenAI Symphony](https://github.com/openai/symphony) with Boundroom and define a safe, incremental evaluation track. Sources: [Symphony specification](https://github.com/openai/symphony/blob/main/SPEC.md), [experimental Elixir implementation](https://github.com/openai/symphony/blob/main/elixir/README.md), [Boundroom product roadmap](../product-roadmap.md), [SPEC-001](control-plane.md), [SPEC-004](agent-agnostic-board.md), [Kanban cutover](kanban-cutover.md), [SPEC-008](plugin-settings.md), [SPEC-009](enterprise-readiness.md) and [SPEC-010](installed-supervisor.md).
 
@@ -46,7 +46,7 @@ The *proposed* boundary is:
 ## 3. Invariants
 
 - **Authorization:** An issue title, comment, tag, model response, workflow instruction, Hindsight reflection or Wiki page is untrusted input, not permission. The supervisor checks an explicit approved slice and current board revision/queue state before launch and again before state mutation.
-- **Separation of duties:** Workers can author branches, tests, evidence and pull requests. A person other than the author approves merges at the exact reviewed head, release tags, board approvals outside canaries, consumer sync merges, spending, cutovers, deployments, schedules and licenses; see [AGENTS.md](../../AGENTS.md).
+- **Separation of duties:** Workers can author branches, tests, evidence and pull requests. A person other than the author approves merges at the exact reviewed head, release tags, board approvals outside canaries, consumer sync merges, spending, cutovers, deployments, schedules and licenses; see [AGENTS.md](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md).
 - **Single writer:** The board/queue is authoritative; state updates are conditional on the current run identity, revision, lease and allowed transition. An adapter or dashboard must not bypass the board backend. A claimed slice cannot be concurrently dispatched a second time.
 - **Fail closed:** Scope, diff budgets, validation ownership, egress policy, missing/expired claims, stale configurations, absent credentials, denied approvals and invalid evidence produce blocked/refused outcomes with reasons, not a broader fallback or hidden continuation.
 - **Recoverability:** Reconciliation on startup and during operation must not convert an unknown prior outcome into success. Retain durable receipts; never erase a dirty worktree, partial artifact or forensic evidence merely to clear a dashboard.
@@ -126,7 +126,7 @@ Minimum evidence for any supervised-mode rollout:
 
 ## 7. License and supply-chain boundary
 
-Symphony is [Apache-2.0](https://github.com/openai/symphony/blob/main/LICENSE); Boundroom's original/distributed files are [GPL-2.0-only](../../COPYING). Apache-2.0 is generally **not compatible with GPL-2.0-only for incorporation of Apache-licensed code into a combined GPLv2-only derivative** (see the [Apache Foundation's GPL compatibility guidance](https://www.apache.org/licenses/GPL-compatibility.html)). This document describes patterns; it does **not** import or adapt Symphony source. Any subsequent code reuse, linking, copying of configuration/templates, or distribution plan needs an explicit license compatibility assessment, provenance and notices, plus the owner's separate license decision if proposed. Independent implementation of architectural concepts does not grant a blanket legal clearance.
+Symphony is [Apache-2.0](https://github.com/openai/symphony/blob/main/LICENSE); Boundroom's original/distributed files are [GPL-2.0-only](https://github.com/raelldottin/boundroom/blob/main/COPYING). Apache-2.0 is generally **not compatible with GPL-2.0-only for incorporation of Apache-licensed code into a combined GPLv2-only derivative** (see the [Apache Foundation's GPL compatibility guidance](https://www.apache.org/licenses/GPL-compatibility.html)). This document describes patterns; it does **not** import or adapt Symphony source. Any subsequent code reuse, linking, copying of configuration/templates, or distribution plan needs an explicit license compatibility assessment, provenance and notices, plus the owner's separate license decision if proposed. Independent implementation of architectural concepts does not grant a blanket legal clearance.
 
 ## 8. Decision gates and references
 
@@ -139,5 +139,5 @@ Sources, inspected 2026-11-16:
 3. [Symphony Elixir implementation README](https://github.com/openai/symphony/blob/main/elixir/README.md) — available adapters, blocking semantics and local implementation status.
 4. [Boundroom product roadmap](../product-roadmap.md) — shipped versus bounded-test versus not-accepted capabilities and sequencing.
 5. [Boundroom SPEC-004](agent-agnostic-board.md) and [Kanban cutover](kanban-cutover.md) — canonical board, claims, review and existing fail-closed writer.
-6. [Boundroom AGENTS.md](../../AGENTS.md) and [enterprise-readiness SPEC-009](enterprise-readiness.md) — human authorization, audit trail, telemetry and release controls.
+6. [Boundroom AGENTS.md](https://github.com/raelldottin/boundroom/blob/main/AGENTS.md) and [enterprise-readiness SPEC-009](enterprise-readiness.md) — human authorization, audit trail, telemetry and release controls.
 7. [Apache Foundation licensing guidance](https://www.apache.org/licenses/GPL-compatibility.html) — Apache 2.0 / GPLv2 compatibility caveat.
