@@ -4,7 +4,7 @@ How Boundroom's parts fit together today, for an operator deciding whether to ad
 
 ## In one paragraph
 
-A repository keeps a queue of small, pre-approved slices. `run_next.py` picks the next eligible one, checks the working tree, builds a bounded context bundle, marks the slice `in_progress`, renders a prompt, and launches one agent session through `run_agent.sh`. The session does the work, commits it and writes a JSON handoff. The supervisor then checks the handoff against what it can see for itself, records a verdict in the queue, prints a decision report, and either continues into the next eligible slice or stops. Consumers get the supervisor by syncing a released copy into their own repository through a reviewed pull request.
+A repository keeps a queue of small, pre-approved slices. `run_next.py` picks the next eligible one, checks the working tree, builds a bounded context bundle, renders a prompt, marks the slice `in_progress`, and launches one agent session through `run_agent.sh`. The session does the work, commits it and writes a JSON handoff. The supervisor then checks the handoff against what it can see for itself, records a verdict in the queue, prints a decision report, and either continues into the next eligible slice or stops. Consumers get the supervisor by syncing a released copy into their own repository through a reviewed pull request.
 
 ## One slice
 
@@ -19,12 +19,12 @@ A repository keeps a queue of small, pre-approved slices. `run_next.py` picks th
   build_context.py ──► context bundle (slice, nearby docs, optional memory recall)
     │
     ▼
-  record base commit ─► claim (in_progress)
-    │
-    ▼
   render prompt = automation/prompts/base.md
                 + automation/runner-rules.md (the repository's own, optional)
                 + automation/prompts/slice.md
+    │            (one it can't render stops the run here, the slice still queued)
+    ▼
+  record base commit ─► claim (in_progress)
     │
     ▼
   run_agent.sh ──► Claude Code, Codex or Hermes (one session, its own permissions)
