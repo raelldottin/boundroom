@@ -598,7 +598,7 @@ def run_agent(
     profile: Optional[runner_profile.RunnerProfile] = None,
     extra_env: Optional[dict[str, str]] = None,
 ) -> int:
-    """Run the agent command on ``prompt_text``, which ``_supervise`` rendered before the claim."""
+    """Run the agent command on the rendered ``prompt_text``."""
     timeout_seconds = queue_data["policy"]["handoff_timeout_seconds"]
     handoff = repo_relative(handoff_path, repo_root)
     if profile is not None and profile.effective != "custom":
@@ -691,7 +691,7 @@ def repository_rules(repo_root: Path) -> str:
         raise policy.ConfigError(f"runner_rules_not_file: {RUNNER_RULES_PATH} must be a regular file")
     try:
         data = path.read_bytes()
-    except OSError as exc:  # a ConfigError, so the run stops with exit 2 before the claim, not a traceback
+    except OSError as exc:
         raise policy.ConfigError(f"runner_rules_unreadable: {RUNNER_RULES_PATH}: {exc.strerror or exc}") from exc
     if len(data) > RUNNER_RULES_MAX_BYTES:
         raise policy.ConfigError(
@@ -705,7 +705,7 @@ def repository_rules(repo_root: Path) -> str:
 
 
 def prompt_fragment(repo_root: Path, relative: str) -> str:
-    """A prompt fragment's text; a missing or unreadable one is a ConfigError, so the run stops before the claim."""
+    """A prompt fragment's text; a missing or unreadable one is a ConfigError."""
     try:
         return (repo_root / relative).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
