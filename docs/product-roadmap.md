@@ -222,7 +222,7 @@ These are *proposed work packages*, not created issues or an authorization to ru
 | RA-PROD-010 | P1 | Release operations / SBOM / recovery | Exact pins, notices, vulnerability disposition, backup and rollback drill | H4 |
 | RA-PROD-011 | P1 | Stable-interface policy and 1.0 go/no-go report | Accepted support, SLO, upgrade and security contracts | H5 |
 | RA-EXP-001 | Parallel | Controlled ProgramBench experiments | Scored official artifacts, provider failure classification and budget receipt | R |
-| RA-SYM-001 | P0 research (not admitted) | Symphony architecture, licensing and authority decision | Accepted [evaluation](architecture/symphony-evaluation.md), one-writer boundary and explicit owner go/no-go | H2 research |
+| RA-SYM-001 | P0 research (proposed in [SPEC-011](architecture/symphony-decision.md)) | Symphony architecture, licensing and authority decision | Accepted [evaluation](architecture/symphony-evaluation.md), one-writer boundary and explicit owner go/no-go | H2 research |
 | RA-SYM-002–003 | P0 candidate | Isolated per-slice workspace and recoverable run-attempt prototype | Disposable approved canary; no duplicate claims, forbidden paths, lost evidence or unauthorized retries | H1–H2 safety |
 | RA-SYM-004–006 | P1 candidate | Codex App Server adapter, workflow compatibility and read-only runtime visibility | Pinned protocol, unchanged multi-harness policy, denied reload escalation, opt-in telemetry | After RA-SYM-001–003 |
 | RA-SYM-007 | P2 research | Remote worker and bounded concurrency feasibility | Accepted H2/H3; separate owner-approved deployment, identity, budget and isolation proofs | After H3 |

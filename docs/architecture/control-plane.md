@@ -123,6 +123,7 @@ Existing CI/cleanroom benchmark experiments remain isolated: do not connect them
 
 ## Source references
 
+- [SPEC-011: what Boundroom takes from Symphony](symphony-decision.md): a watch mode, workspaces and a runtime view, all under this supervisor's single authority
 - [hermes-swarm-protocol README](https://github.com/raelldottin/hermes-swarm-protocol/blob/main/README.md)
 - [Swarm Wiki design and ownership, including the current ByteRover coupling (migration source)](https://github.com/raelldottin/hermes-swarm-protocol/blob/main/docs/swarm-wiki-design.md)
 - [Swarm Wiki operations](https://github.com/raelldottin/hermes-swarm-protocol/blob/main/docs/swarm-wiki-usage.md)
