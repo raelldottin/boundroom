@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from automation.context.build_context import build_context_bundle
 from automation.supervisor import policy
@@ -141,6 +142,14 @@ class RepositoryRulesTests(unittest.TestCase):
         with self.assertRaises(policy.ConfigError) as raised:
             repository_rules(self.root)
         self.assertTrue(str(raised.exception).startswith("runner_rules_not_utf8: "))
+
+    def test_a_rules_file_that_cannot_be_read_is_refused(self) -> None:
+        """A ConfigError, which run_next reports as a stop with exit 2, not a PermissionError traceback."""
+        self.rules.write_text("rules\n", encoding="utf-8")
+        with mock.patch.object(Path, "read_bytes", side_effect=PermissionError(13, "Permission denied")):
+            with self.assertRaises(policy.ConfigError) as raised:
+                repository_rules(self.root)
+        self.assertEqual(f"runner_rules_unreadable: {RUNNER_RULES_PATH}: Permission denied", str(raised.exception))
 
 
 if __name__ == "__main__":

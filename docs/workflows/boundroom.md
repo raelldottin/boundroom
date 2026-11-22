@@ -518,8 +518,9 @@ markers into both files and verifies they appear in the rendered prompt.
 Because those fragments are first-time-only template entries, a placeholder rename in
 this repository does **not** reach a consumer that already customized the file. The
 supervisor now substitutes `__EXECUTION_CONSTRAINTS__` (previously
-`__ACCEPTANCE_CHECKS__`); a consumer holding an older `slice.md` renders the old token
-literally and loses that section until it renames the placeholder in its own copy.
+`__ACCEPTANCE_CHECKS__`). A consumer holding an older `slice.md` is refused until it renames
+the placeholder in its own copy: `run_next` stops with `unknown_prompt_placeholder` before
+it claims a slice, so the slice stays queued, and `--dry-run` reports the same error.
 
 The consumer-side flow:
 

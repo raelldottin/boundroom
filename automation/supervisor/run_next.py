@@ -361,6 +361,12 @@ def _supervise(
             bundle_sha256=hashlib.sha256(bundle_text.encode("utf-8")).hexdigest(),
             **({"bundle_text": bundle_text} if content else {}),
         )
+        # Rendered before the claim, and by a dry run too. A template the supervisor can't fill, such
+        # as a consumer's customized slice.md with a placeholder a release renamed, or runner rules it
+        # can't read, then stops the run with the slice still queued instead of failing it.
+        prompt_text = render_prompt(
+            repo_root=repo_root, slice_record=next_slice, context_bundle=context_bundle, handoff_path=handoff_path
+        )
 
         if args.dry_run:
             report = {
@@ -455,6 +461,7 @@ def _supervise(
                         repo_root=repo_root,
                         queue_data=queue_data,
                         slice_record=next_slice,
+                        prompt_text=prompt_text,
                         context_bundle=context_bundle,
                         handoff_path=handoff_path,
                         command_template=agent_command_template,
@@ -584,16 +591,15 @@ def run_agent(
     repo_root: Path,
     queue_data: dict,
     slice_record: dict,
+    prompt_text: str,
     context_bundle: dict,
     handoff_path: Path,
     command_template: str,
     profile: Optional[runner_profile.RunnerProfile] = None,
     extra_env: Optional[dict[str, str]] = None,
 ) -> int:
+    """Run the agent command on the rendered ``prompt_text``."""
     timeout_seconds = queue_data["policy"]["handoff_timeout_seconds"]
-    prompt_text = render_prompt(
-        repo_root=repo_root, slice_record=slice_record, context_bundle=context_bundle, handoff_path=handoff_path
-    )
     handoff = repo_relative(handoff_path, repo_root)
     if profile is not None and profile.effective != "custom":
         # The same rules the settings file gives the runner, so it doesn't spend turns on denied calls (SPEC-008).
@@ -683,7 +689,10 @@ def repository_rules(repo_root: Path) -> str:
         return ""
     if not path.is_file():
         raise policy.ConfigError(f"runner_rules_not_file: {RUNNER_RULES_PATH} must be a regular file")
-    data = path.read_bytes()
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise policy.ConfigError(f"runner_rules_unreadable: {RUNNER_RULES_PATH}: {exc.strerror or exc}") from exc
     if len(data) > RUNNER_RULES_MAX_BYTES:
         raise policy.ConfigError(
             f"runner_rules_too_large: {RUNNER_RULES_PATH} is {len(data)} bytes; the limit is {RUNNER_RULES_MAX_BYTES}"
@@ -695,10 +704,19 @@ def repository_rules(repo_root: Path) -> str:
     return RUNNER_RULES_HEADING + text if text else ""
 
 
+def prompt_fragment(repo_root: Path, relative: str) -> str:
+    """A prompt fragment's text; a missing or unreadable one is a ConfigError."""
+    try:
+        return (repo_root / relative).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        # strerror, not the OSError itself, which repeats the path, absolute; a decode error has none.
+        raise policy.ConfigError(f"prompt_fragment_unreadable: {relative}: {getattr(exc, 'strerror', None) or exc}") from exc
+
+
 def render_prompt(repo_root: Path, slice_record: dict, context_bundle: dict, handoff_path: Path) -> str:
-    base_prompt = (repo_root / "automation/prompts/base.md").read_text(encoding="utf-8")
+    base_prompt = prompt_fragment(repo_root, "automation/prompts/base.md")
     rules = repository_rules(repo_root)
-    slice_prompt = (repo_root / "automation/prompts/slice.md").read_text(encoding="utf-8")
+    slice_prompt = prompt_fragment(repo_root, "automation/prompts/slice.md")
     replacements = {
         "__SLICE_ID__": slice_record["slice_id"],
         "__SLICE_TITLE__": slice_record["title"],
