@@ -80,6 +80,16 @@ def meets_proof_level(achieved: str, required: str) -> bool:
     return PROOF_LADDER.get(achieved, -1) >= PROOF_LADDER.get(required, 0)
 
 
+def verified_commits(head: str, handoff_commit_parent: Optional[str]) -> set[str]:
+    """The commits a handoff may name as verified.
+
+    That is *head*, and the commit before it when *head* changed only the handoff
+    (``handoff_commit_parent``): a runner that commits its own handoff moves HEAD one commit
+    past the work, and a handoff can't name the commit that contains it.
+    """
+    return {head} | ({handoff_commit_parent} if handoff_commit_parent else set())
+
+
 def verify_manual_proofs(
     slice_record: dict[str, Any],
     handoff: dict[str, Any],
@@ -88,11 +98,9 @@ def verify_manual_proofs(
 ) -> tuple[list[str], bool]:
     """Missing proofs, and whether the proof level falls short.
 
-    A proof names the commit it verified. A runner that commits its own handoff afterwards moves
-    HEAD one commit past it, and a handoff can't name the commit that contains it, so the parent
-    of a commit that changed only the handoff (``handoff_commit_parent``) is accepted too.
+    A proof names the commit it verified, one of ``verified_commits``.
     """
-    proof_commits = {post_run_commit_sha} | ({handoff_commit_parent} if handoff_commit_parent else set())
+    proof_commits = verified_commits(post_run_commit_sha, handoff_commit_parent)
     required_proofs = slice_record.get("manual_proof", [])
     required_level = slice_record.get("required_proof_level", "")
 
