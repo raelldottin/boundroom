@@ -214,20 +214,11 @@ def evaluate(
             f"Handoff slice_id '{handoff['slice_id']}' does not match --slice-id '{slice_id}'.",
         )
 
-    # The handoff must name the commit it was verified against, and it must be
-    # the commit under evaluation. An absent value used to short-circuit here,
-    # which let one handoff validate against any --head-sha.
+    # The handoff must name the commit it verified; which commits it may name is checked
+    # below, once the SHAs are known to exist.
     verified_sha = handoff.get("verified_commit_sha", "")
     if not verified_sha:
         return _fail(slice_id, base_sha, head_sha, dry_run, "Handoff does not declare verified_commit_sha.")
-    if verified_sha != head_sha:
-        return _fail(
-            slice_id,
-            base_sha,
-            head_sha,
-            dry_run,
-            f"Handoff verified_commit_sha '{verified_sha}' does not match --head-sha '{head_sha}'.",
-        )
 
     if handoff["repo_clean_status"] != "clean":
         return _fail(
@@ -254,6 +245,21 @@ def evaluate(
 
     if not sha_exists(repo_root, head_sha):
         return _fail(slice_id, base_sha, head_sha, dry_run, f"Head SHA '{head_sha}' does not exist in the repository.")
+
+    try:
+        handoff_relative: Optional[str] = handoff_path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:  # a handoff outside the repository
+        handoff_relative = None
+    handoff_commit_parent = policy.git_handoff_commit_parent(repo_root, base_sha, handoff_relative, head_sha)
+    if verified_sha not in policy.verified_commits(head_sha, handoff_commit_parent):
+        return _fail(
+            slice_id,
+            base_sha,
+            head_sha,
+            dry_run,
+            f"Handoff verified_commit_sha '{verified_sha}' does not match --head-sha '{head_sha}', "
+            "or the commit before it when --head-sha changes only the handoff.",
+        )
 
     # --- Contract freeze at base SHA -----------------------------------------
     # Enforce the contract the slice carried *before* the work, never the one
@@ -295,10 +301,6 @@ def evaluate(
     # --- Scope enforcement ---------------------------------------------------
 
     supervisor_owned = queue_data["policy"]["supervisor_owned_paths"]
-    try:
-        handoff_relative: Optional[str] = handoff_path.resolve().relative_to(repo_root.resolve()).as_posix()
-    except ValueError:  # a handoff outside the repository
-        handoff_relative = None
     out_of_scope = policy.out_of_scope_paths(changed, slice_record["allowed_paths"], supervisor_owned, handoff_relative)
     out_of_scope = sorted(
         set(out_of_scope)
@@ -393,9 +395,7 @@ def evaluate(
 
     # --- Proof level / manual proof checks -----------------------------------
 
-    missing_proofs, missing_level = policy.verify_manual_proofs(
-        slice_record, handoff, head_sha, policy.git_handoff_commit_parent(repo_root, base_sha, handoff_relative, head_sha)
-    )
+    missing_proofs, missing_level = policy.verify_manual_proofs(slice_record, handoff, head_sha, handoff_commit_parent)
 
     if missing_proofs or missing_level:
         return _fail(
