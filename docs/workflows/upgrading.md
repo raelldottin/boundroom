@@ -72,6 +72,17 @@ The SBOM is also attested against the archive, as a CycloneDX predicate (`--pred
 4. **Run the consumer's own check** (Owlory: `make repo-automation-check`) and let its required checks run on the pull request. The consumer's owner approves and merges it.
 5. **Update the plugin** to the same tag, if you use it: change the marketplace source to the new tag, then update the plugin. Only a rename, as in 0.3.0, needs an uninstall and reinstall.
 
+### From 0.5.2 to 0.5.3 (fixes, and one opt-in benchmark flag)
+
+Sync as usual. What a run does differently:
+
+- A prompt `run_next` can't render now stops the run with exit 2 before it claims the slice, under `--dry-run` too, where before the slice was claimed and marked `failed`. **What to do:**
+    1. After you commit the sync, run `python3 automation/supervisor/run_next.py --dry-run`. If it prints its report and exits 0, the prompt rendered.
+    2. If it prints `stop: no eligible queued slice found`, it checked no prompt. The sync never replaces an existing `automation/prompts/slice.md`, so compare its `__PLACEHOLDER__` names with those in the release's copy (`git show v0.5.3:automation/prompts/slice.md` in your Boundroom checkout).
+    3. If it stops with exit 2, with `unknown_prompt_placeholder`, `prompt_fragment_unreadable`, a `runner_rules_*` code, or a dirty tree (checked before the prompt), see the [troubleshooting guide](../reference/troubleshooting.md).
+- `evaluate_handoff` accepts a handoff the runner committed in its own commit, as `run_next` already did.
+- The benchmark's `lanes` command has a new `--judge` stop gate. Without the flag, a benchmark run is unchanged. A consumer that leaves out the benchmark (`--omit benchmark`) gets nothing new. See [the benchmark guide](effectiveness-benchmark.md#stopping-when-the-code-is-good-enough-judge).
+
 ### From 0.5.1 to 0.5.2 (fixes only)
 
 Sync as usual. One fix can change what lands in a runner's commits; see the second item. What a run does differently:
