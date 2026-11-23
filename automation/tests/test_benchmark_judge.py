@@ -240,34 +240,21 @@ class JudgeOutputTrustTests(unittest.TestCase):
         verdict = Judge(REPO_ROOT, runner=runner).judge(TASK, submission, InstanceScore(TASK.instance_id, 1, 1), [], record_dir)
         return verdict, record_dir
 
-    def test_a_verdict_that_is_a_symlink_is_neither_read_nor_copied(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            secret = root / "secret.json"
-            secret.write_text('{"score": 10, "good_enough": true}', encoding="utf-8")
+    def test_a_verdict_that_is_a_link_is_neither_read_nor_copied(self) -> None:
+        for kind, make_link in (("symlink", lambda target, link: link.symlink_to(target)), ("hard link", os.link)):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                secret = root / "secret.json"
+                secret.write_text('{"score": 10, "good_enough": true}', encoding="utf-8")
 
-            def linking_judge(command, workspace, env, timeout):
-                (Path(workspace) / judge_module.VERDICT_FILENAME).symlink_to(secret)
-                return 0
+                def linking_judge(command, workspace, env, timeout, make_link=make_link, secret=secret):
+                    make_link(secret, Path(workspace) / judge_module.VERDICT_FILENAME)
+                    return 0
 
-            verdict, record_dir = self._judge(linking_judge, root)
-            self.assertEqual("verdict_not_a_regular_file", verdict.error)
-            self.assertFalse(verdict.passes(0))
-            self.assertFalse((record_dir / judge_module.VERDICT_FILENAME).exists())
-
-    def test_a_verdict_that_is_a_hard_link_is_neither_read_nor_copied(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            secret = root / "secret.json"
-            secret.write_text('{"score": 10, "good_enough": true}', encoding="utf-8")
-
-            def linking_judge(command, workspace, env, timeout):
-                os.link(secret, Path(workspace) / judge_module.VERDICT_FILENAME)
-                return 0
-
-            verdict, record_dir = self._judge(linking_judge, root)
-            self.assertEqual("verdict_not_a_regular_file", verdict.error)
-            self.assertFalse((record_dir / judge_module.VERDICT_FILENAME).exists())
+                verdict, record_dir = self._judge(linking_judge, root)
+                self.assertEqual("verdict_not_a_regular_file", verdict.error)
+                self.assertFalse(verdict.passes(0))
+                self.assertFalse((record_dir / judge_module.VERDICT_FILENAME).exists())
 
     def test_session_reports_that_are_symlinks_are_left_out_of_the_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -27,10 +27,8 @@ cell already misses the tests or could not be judged.
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import shutil
-import stat
 import subprocess
 import tarfile
 import tempfile
@@ -44,8 +42,10 @@ from .adapter import (
     CommandRunner,
     _default_command_template,
     _subprocess_runner,
+    NotARegularFile,
     agent_environment,
     copy_regular_tree,
+    read_agent_file,
 )
 from .diagnosis import _load_json
 from .instances import TaskSpec, task_spec
@@ -104,42 +104,13 @@ class Verdict:
         }
 
 
-class _NotARegularFile(Exception):
-    pass
-
-
-def _read_regular_file(path: Path, limit: int) -> bytes:
-    """A file's bytes, refusing a symlink, a hard link, a FIFO or device, and more than ``limit`` bytes.
-
-    The judge session writes the file and the harness reads it outside the session's sandbox,
-    so a link must not lead the harness to read, and record, what the session could not. A hard
-    link passes every test but the link count, so a regular file with more than one name is
-    refused too.
-    """
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as error:
-        if Path(path).is_symlink():
-            raise _NotARegularFile() from error
-        raise
-    with os.fdopen(descriptor, "rb") as handle:
-        info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise _NotARegularFile()
-        data = handle.read(limit + 1)
-    if len(data) > limit:
-        raise _NotARegularFile()
-    return data
-
-
 def _read_verdict(path: Path) -> tuple[Optional[bytes], Verdict]:
     """The verdict file's bytes, if they could be read, and the verdict they make or the one that says why not."""
     try:
-        raw = _read_regular_file(Path(path), MAX_VERDICT_BYTES)
+        raw = read_agent_file(Path(path), MAX_VERDICT_BYTES)
     except FileNotFoundError:
         return None, Verdict(error="verdict_missing")
-    except _NotARegularFile:
+    except NotARegularFile:
         return None, Verdict(error="verdict_not_a_regular_file")
     except OSError:
         return None, Verdict(error="verdict_unreadable")

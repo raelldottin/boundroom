@@ -747,17 +747,28 @@ class PhaseArtifactOwnershipTests(unittest.TestCase):
                     benchmark_adapter._save_phase_artifacts(self._workspace_with_artifacts(Path(tmp)), out_dir)
             self.assertFalse((out_dir / "rpi").exists())
 
-    def test_symlinks_the_agent_left_in_its_artifacts_are_not_followed(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            secret = Path(tmp) / "id_ed25519"
-            secret.write_text("PRIVATE\n", encoding="utf-8")
-            workspace = self._workspace_with_artifacts(Path(tmp))
-            (workspace / benchmark_adapter.RPI_DIR / "stolen.md").symlink_to(secret)
-            (workspace / benchmark_adapter.RPI_DIR / "stolen-dir").symlink_to(Path(tmp), target_is_directory=True)
-            out_dir = Path(tmp) / "out"
-            out_dir.mkdir()
-            benchmark_adapter._save_phase_artifacts(workspace, out_dir)
-            self.assertEqual(["phase-1.json"], sorted(p.name for p in (out_dir / "rpi").iterdir()))
+    def _copy_out(self, workspace: Path, tmp: Path) -> Path:
+        out_dir = tmp / "out"
+        out_dir.mkdir()
+        benchmark_adapter._save_phase_artifacts(workspace, out_dir)
+        return out_dir / "rpi"
+
+    def test_links_the_agent_left_in_its_artifacts_are_not_copied(self) -> None:
+        def symlinks(secret: Path, rpi: Path) -> None:
+            (rpi / "stolen.md").symlink_to(secret)
+            (rpi / "stolen-dir").symlink_to(secret.parent, target_is_directory=True)
+
+        def hard_link(secret: Path, rpi: Path) -> None:
+            os.link(secret, rpi / "notes.md")
+
+        for kind, plant in (("symlinks", symlinks), ("hard link", hard_link)):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                secret = Path(tmp) / "id_ed25519"
+                secret.write_text("PRIVATE\n", encoding="utf-8")
+                workspace = self._workspace_with_artifacts(Path(tmp))
+                plant(secret, workspace / benchmark_adapter.RPI_DIR)
+                copied = self._copy_out(workspace, Path(tmp))
+                self.assertEqual(["phase-1.json"], sorted(p.name for p in copied.iterdir()))
 
     def test_an_rpi_directory_that_is_itself_a_symlink_is_not_followed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -767,21 +778,7 @@ class PhaseArtifactOwnershipTests(unittest.TestCase):
             workspace = Path(tmp) / "ws"
             workspace.mkdir()
             (workspace / benchmark_adapter.RPI_DIR).symlink_to(keys, target_is_directory=True)
-            out_dir = Path(tmp) / "out"
-            out_dir.mkdir()
-            benchmark_adapter._save_phase_artifacts(workspace, out_dir)
-            self.assertFalse((out_dir / "rpi").exists())
-
-    def test_hard_links_the_agent_left_in_its_artifacts_are_not_copied(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            secret = Path(tmp) / "id_ed25519"
-            secret.write_text("PRIVATE\n", encoding="utf-8")
-            workspace = self._workspace_with_artifacts(Path(tmp))
-            os.link(secret, workspace / benchmark_adapter.RPI_DIR / "notes.md")
-            out_dir = Path(tmp) / "out"
-            out_dir.mkdir()
-            benchmark_adapter._save_phase_artifacts(workspace, out_dir)
-            self.assertEqual(["phase-1.json"], sorted(p.name for p in (out_dir / "rpi").iterdir()))
+            self.assertFalse(self._copy_out(workspace, Path(tmp)).exists())
 
 
 class SubmissionOwnershipTests(unittest.TestCase):

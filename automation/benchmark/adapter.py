@@ -17,6 +17,7 @@ across lanes.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shlex
@@ -291,23 +292,61 @@ def _archive_workspace(workspace: Path, out_tar: Path) -> None:
         raise
 
 
-def _is_copyable(path: Path) -> bool:
-    """A real directory, or a regular file with one name: not a symlink, hard link, FIFO, socket or device.
+class NotARegularFile(Exception):
+    """An agent-written path the harness refuses to read: a link, a special file, or too large."""
 
-    One ``lstat``, so nothing is followed. A hard link is a regular file to every other test,
+
+def is_real_dir(path: Path) -> bool:
+    """A directory, and not a symlink to one: one ``lstat``, so nothing is followed."""
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def read_agent_file(path: Path, limit: int) -> bytes:
+    """An agent-written file's bytes, refusing a symlink, a hard link, a FIFO or device, or more than ``limit`` bytes.
+
+    An agent session writes the file and the harness reads it outside the session's sandbox, so
+    a link must not lead the harness to read, and record, what the session could not. A hard
+    link passes every test but the link count, so a regular file with more than one name is
+    refused too. Opened with ``O_NOFOLLOW`` and checked with ``fstat``, so nothing can be
+    swapped in between the check and the read. Raises ``NotARegularFile`` for a refusal and
+    ``OSError`` (``FileNotFoundError`` included) when the file can't be opened.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise NotARegularFile(str(path)) from error
+        raise
+    with os.fdopen(descriptor, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise NotARegularFile(str(path))
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise NotARegularFile(str(path))
+    return data
+
+
+def _not_copyable(directory: str, names: list[str]) -> set[str]:
+    """The entries ``copy_regular_tree`` leaves out: anything but a real directory or a regular file with one name.
+
+    One ``lstat`` each, so nothing is followed. A hard link is a regular file to every other test,
     and copying it would copy whatever host file the session linked; probe.py's evidence
     collector refuses it for the same reason.
     """
-    try:
-        info = os.lstat(path)
-    except OSError:
-        return False
-    return stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
-
-
-def _not_regular(directory: str, names: list[str]) -> set[str]:
-    """The entries ``copy_regular_tree`` leaves out: anything ``_is_copyable`` refuses."""
-    return {name for name in names if not _is_copyable(Path(directory) / name)}
+    skipped = set()
+    for name in names:
+        try:
+            info = os.lstat(Path(directory) / name)
+        except OSError:
+            skipped.add(name)
+            continue
+        if not (stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1)):
+            skipped.add(name)
+    return skipped
 
 
 def copy_regular_tree(source: Path, destination: Path) -> None:
@@ -320,20 +359,16 @@ def copy_regular_tree(source: Path, destination: Path) -> None:
     per-entry filter would only ever see that target's real files. ``symlinks=True`` keeps one
     created between the listing and the copy a link rather than its target.
     """
-    try:
-        if not stat.S_ISDIR(os.lstat(source).st_mode):
-            return
-    except FileNotFoundError:
-        return
-    shutil.copytree(source, destination, symlinks=True, ignore=_not_regular, dirs_exist_ok=True)
+    if is_real_dir(source):
+        shutil.copytree(source, destination, symlinks=True, ignore=_not_copyable, dirs_exist_ok=True)
 
 
 def _save_phase_artifacts(workspace: Path, out_dir: Path) -> None:
     """Keep phase artifacts next to the submission so a result can be reproduced."""
     source = workspace / RPI_DIR
-    # is_dir() follows links: a session that makes `.rpi` itself a link must not get the
-    # link's target copied out, nor an empty directory claimed for it.
-    if source.is_symlink() or not source.is_dir():
+    # Checked before the destination is claimed: a session that makes `.rpi` itself a link
+    # gets neither the link's target copied out nor an empty directory claimed for it.
+    if not is_real_dir(source):
         return
     destination = Path(out_dir) / "rpi"
     # mkdir, not exists()-then-copy: claiming the directory is how ownership is decided, so it
