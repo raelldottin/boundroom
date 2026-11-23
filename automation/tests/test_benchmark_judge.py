@@ -5,7 +5,9 @@ import json
 import shlex
 import tarfile
 import tempfile
+import types
 import unittest
+import unittest.mock
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -15,7 +17,7 @@ from automation.benchmark import run as run_module
 from automation.benchmark.adapter import SupervisorAgentAdapter
 from automation.benchmark.evalrunner import RecordedEvalRunner
 from automation.benchmark.instances import TaskSpec
-from automation.benchmark.judge import Judge, StopGate, blind_id, parse_verdict
+from automation.benchmark.judge import Judge, StopGate, parse_verdict
 from automation.benchmark.scoring import InstanceScore
 from automation.benchmark.strategies import build_strategy
 
@@ -155,6 +157,8 @@ class JudgeSessionTests(unittest.TestCase):
             call["env"]["BOUNDROOM_HERMES_USAGE_DIR"],
         ):
             self.assertNotIn("/C/", value)
+            # Nor leads to the run directory, where the lanes' directories name them.
+            self.assertFalse(value.startswith(str(root)))
         self.assertNotIn(TASK.instance_id, call["prompt"])
         # The throwaway workspace is gone once the verdict is read.
         self.assertFalse(call["workspace"].exists())
@@ -190,6 +194,39 @@ class JudgeSessionTests(unittest.TestCase):
         self.assertEqual("verdict_missing", verdict.error)
         self.assertEqual(124, verdict.returncode)
         self.assertFalse(verdict.passes(0))
+
+    def test_a_session_that_fails_cannot_pass_on_the_verdict_it_left(self) -> None:
+        fake = FakeJudge(returncode=124)
+        with tempfile.TemporaryDirectory() as tmp:
+            submission = _submission(Path(tmp) / "s.tar.gz", {"main.c": ""})
+            verdict = Judge(REPO_ROOT, runner=fake).judge(
+                TASK, submission, InstanceScore(TASK.instance_id, 1, 1), [], Path(tmp) / "rec"
+            )
+        self.assertEqual(8, verdict.score)
+        self.assertEqual("judge_session_failed", verdict.error)
+        self.assertFalse(verdict.passes(0))
+
+    def test_a_corrupt_archive_is_never_judged(self) -> None:
+        fake = FakeJudge()
+        with tempfile.TemporaryDirectory() as tmp:
+            whole = _submission(Path(tmp) / "whole.tar.gz", {"main.c": "x" * 4096})
+            truncated = Path(tmp) / "s.tar.gz"
+            truncated.write_bytes(whole.read_bytes()[:-20])
+            verdict = Judge(REPO_ROOT, runner=fake).judge(
+                TASK, truncated, InstanceScore(TASK.instance_id, 1, 1), [], Path(tmp) / "rec"
+            )
+        self.assertEqual("submission_unreadable", verdict.error)
+        self.assertEqual([], fake.calls)
+
+    def test_a_stale_verdict_is_not_left_in_the_record(self) -> None:
+        fake = FakeJudge(verdict={})
+        with tempfile.TemporaryDirectory() as tmp:
+            record_dir = Path(tmp) / "rec"
+            record_dir.mkdir()
+            (record_dir / "verdict.json").write_text('{"score": 10, "good_enough": true}', encoding="utf-8")
+            submission = _submission(Path(tmp) / "s.tar.gz", {"main.c": ""})
+            Judge(REPO_ROOT, runner=fake).judge(TASK, submission, InstanceScore(TASK.instance_id, 1, 1), [], record_dir)
+            self.assertFalse((record_dir / "verdict.json").exists())
 
 
 class StopGateDecisionTests(unittest.TestCase):
@@ -264,6 +301,28 @@ class StopGateDecisionTests(unittest.TestCase):
         self.assertEqual(("continue", "judge_not_passed"), (record["decision"], record["reason"]))
         self.assertEqual(["judge_passed", "judge_not_passed"], [cell["status"] for cell in record["cells"]])
 
+    def test_no_judge_is_paid_for_after_one_says_no(self) -> None:
+        fake = FakeJudge(verdict={"score": 3, "good_enough": False})
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            for lane in ("A", "B", "C"):
+                _cell(run_dir, lane, 2, "inst", PASSING_EVAL)
+            record = self._decide(run_dir, fake, lanes=("A", "B", "C"))
+        self.assertEqual(1, len(fake.calls))
+        self.assertEqual(("continue", "judge_not_passed"), (record["decision"], record["reason"]))
+        self.assertEqual(["judge_not_passed", "not_judged", "not_judged"], [cell["status"] for cell in record["cells"]])
+
+    def test_records_that_are_not_objects_block_the_stop(self) -> None:
+        fake = FakeJudge()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            _cell(run_dir, "A", 2, "inst", PASSING_EVAL)
+            (_cell(run_dir, "B", 2, "inst", None) / "inst.eval.json").write_text("[]", encoding="utf-8")
+            (_cell(run_dir, "C", 2, "inst", PASSING_EVAL) / "run.json").write_text("[]", encoding="utf-8")
+            record = self._decide(run_dir, fake, lanes=("A", "B", "C"))
+        self.assertEqual(["tests_passed", "no_eval", "no_provenance"], [cell["status"] for cell in record["cells"]])
+        self.assertEqual([], fake.calls)
+
     def test_an_unparseable_verdict_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
@@ -295,15 +354,30 @@ class StopGateDecisionTests(unittest.TestCase):
                 self.assertEqual("continue", record["decision"])
                 self.assertEqual(status, record["cells"][0]["status"])
 
-    def test_the_record_names_cells_by_blind_id(self) -> None:
+    def test_the_record_names_cells_by_a_random_id(self) -> None:
+        class ReportingJudge(FakeJudge):
+            def __call__(self, command, workspace, env, timeout):
+                sessions = Path(env["BOUNDROOM_HERMES_USAGE_DIR"])
+                sessions.mkdir(parents=True, exist_ok=True)
+                (sessions / "judge.usage.json").write_text("{}", encoding="utf-8")
+                return super().__call__(command, workspace, env, timeout)
+
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
             _cell(run_dir, "C", 2, "inst", PASSING_EVAL)
-            self._decide(run_dir, FakeJudge(), lanes=("C",))
-            judge_id = blind_id("C", 2, "inst")
-            self.assertTrue((run_dir / "judge" / "r2" / judge_id / "verdict.json").is_file())
-        self.assertEqual(12, len(judge_id))
-        self.assertNotEqual(judge_id, blind_id("D", 2, "inst"))
+            first = self._decide(run_dir, ReportingJudge(), lanes=("C",))["cells"][0]["judge_id"]
+            record_dir = run_dir / "judge" / "r2" / first
+            self.assertTrue((record_dir / "verdict.json").is_file())
+            # The session's reports reach the record, though the session wrote them elsewhere.
+            self.assertTrue((record_dir / "agent-sessions" / "judge.usage.json").is_file())
+            second = self._decide(run_dir, FakeJudge(), lanes=("C",))["cells"][0]["judge_id"]
+        self.assertEqual(12, len(first))
+        self.assertNotEqual(first, second)
+
+    def test_a_python_without_the_tar_data_filter_is_refused(self) -> None:
+        with unittest.mock.patch.object(judge_module, "tarfile", types.SimpleNamespace()):
+            with self.assertRaises(ValueError):
+                StopGate(judge=Judge(REPO_ROOT, runner=FakeJudge()))
 
     def test_settings_out_of_range_are_refused(self) -> None:
         judge = Judge(REPO_ROOT, runner=FakeJudge())
@@ -417,6 +491,11 @@ class StopGateCommandLineTests(unittest.TestCase):
             run_module.main(["lanes", "--run-dir", tmp, "--judge", "--eval", "--repeats", "2", "--min-repeats", "3"])
         self.assertEqual(2, raised.exception.code)
 
+    def test_a_judge_timeout_below_one_second_is_a_usage_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(SystemExit) as raised:
+            run_module.main(["lanes", "--run-dir", tmp, "--judge", "--eval", "--repeats", "2", "--judge-timeout", "0"])
+        self.assertEqual(2, raised.exception.code)
+
     def test_the_judge_defaults_to_the_lanes_agent_command(self) -> None:
         args = run_module.build_parser().parse_args(
             ["lanes", "--run-dir", "out", "--judge", "--eval", "--agent-cmd", "lane-agent {repo_root}"]
@@ -428,6 +507,20 @@ class StopGateCommandLineTests(unittest.TestCase):
         gate = run_module.build_stop_gate(args)
         assert gate is not None
         self.assertEqual("other-agent {repo_root}", gate.judge._template)
+
+    def test_judge_with_cleanroom_is_a_usage_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(SystemExit) as raised:
+            run_module.main(["lanes", "--run-dir", tmp, "--judge", "--eval", "--cleanroom", "--repeats", "3"])
+        self.assertEqual(2, raised.exception.code)
+
+    def test_compare_keeps_the_stop_gate_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            StopGateExperimentTests()._run(run_dir, FakeJudge(), PASSING_EVAL, repeats=3)
+            with unittest.mock.patch("builtins.print"):
+                self.assertEqual(0, run_module.main(["compare", "--run-dir", tmp, "--lanes", "A", "B", "--repeats", "2"]))
+            rebuilt = json.loads((run_dir / lanes_module.COMPARISON_FILENAME).read_text(encoding="utf-8"))
+        self.assertEqual("quality_reached", rebuilt["stop_gate"]["stopped_by"])
 
     def test_no_gate_without_the_flag(self) -> None:
         args = run_module.build_parser().parse_args(["lanes", "--run-dir", "out"])

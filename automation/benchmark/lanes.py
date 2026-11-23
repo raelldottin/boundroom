@@ -24,6 +24,8 @@ import statistics
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import groupby
+from operator import attrgetter
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
@@ -667,7 +669,7 @@ def render_comparison_markdown(comparison: dict[str, Any]) -> str:
             "## Stop gate",
             "",
             f"Ran {gate['repeats_run']} of at most {gate['ceiling']} repeats; stopped by {gate['stopped_by']}. "
-            f"A round stops the run when every cell passes {settings['pass_fraction']:.0%} of ProgramBench's tests "
+            f"A round stops the run when every cell passes {settings['pass_fraction']:.1%} of ProgramBench's tests "
             f"and the judge scores it at least {settings['min_score']}, from round {settings['min_repeats']} on.",
             "",
             "| round | decision | reason |",
@@ -677,6 +679,16 @@ def render_comparison_markdown(comparison: dict[str, Any]) -> str:
 
     lines += ["", comparison["note"], ""]
     return "\n".join(lines)
+
+
+def keep_stop_gate(comparison: dict[str, Any], run_dir: Path) -> None:
+    """Carry a gated run's ``stop_gate`` record into a comparison ``compare`` rebuilt."""
+    try:
+        previous = json.loads((Path(run_dir) / COMPARISON_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(previous, dict) and previous.get("stop_gate"):
+        comparison["stop_gate"] = previous["stop_gate"]
 
 
 def write_comparison(comparison: dict[str, Any], run_dir: Path) -> Path:
@@ -734,11 +746,11 @@ def run_experiment(
     ):
         # Built once and handed to every cell, so no lane can record different settings.
         settings = handle.settings.report(trace_id=telemetry_module.trace_id(experiment))
-        cells = interleave(instances, lanes, repeats)
         repeats_run = 0
         gate_rounds: list[dict[str, Any]] = []
-        for repeat in range(1, repeats + 1):
-            for cell in (cell for cell in cells if cell.repeat == repeat):
+        # interleave orders the schedule by repeat, so each group is one round.
+        for repeat, round_cells in groupby(interleave(instances, lanes, repeats), key=attrgetter("repeat")):
+            for cell in round_cells:
                 _attempt_cell(cell, run_dir, adapter_factory, repo_root, handle, traced, settings)
             repeats_run = repeat
             if stop_gate is None:

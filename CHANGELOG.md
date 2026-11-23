@@ -8,7 +8,7 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ### Added
 
-- The benchmark's `lanes --judge` stops repeating once the code is good enough. `--repeats` becomes a ceiling. After each round, from `--min-repeats` on, the run stops when every cell passes ProgramBench's tests (`--judge-pass-fraction`, default 0.95) and an LLM judge's review of its source (`--judge-min-score`, default 7 of 10). All lanes stop together, so the comparison stays balanced. The judge runs through the lanes' own agent command, so it is Claude Code, Codex or Hermes as they are, and it isn't told which lane it is judging. It is asked only where its answer can stop the run: from `--min-repeats` on, before the last round, and once every cell of the round has passed the tests. `--judge` needs `--eval`.
+- The benchmark's `lanes --judge` stops repeating once the code is good enough. `--repeats` becomes a ceiling. After each round, from `--min-repeats` on, the run stops when every cell passes ProgramBench's tests (`--judge-pass-fraction`, default 0.95) and an LLM judge's review of its source (`--judge-min-score`, default 7 of 10). All lanes stop together, so the comparison stays balanced. The judge runs through the lanes' own agent command, so it is Claude Code, Codex or Hermes as they are, and it isn't told which lane it is judging. It is asked only where its answer can stop the run: from `--min-repeats` on, before the last round, and once every cell of the round has passed the tests. `--judge` needs `--eval`, and isn't available with `--cleanroom` yet.
 
 ### Fixed
 

@@ -685,7 +685,8 @@ uv run python -m automation.benchmark lanes --run-dir out --eval --judge \
   still has to pass them.
 - **A judge is paid for only when it can change the decision:** not before `--min-repeats`,
   not in the last round, which stops at the ceiling anyway, and not in a round where any
-  cell missed the tests, was not evaluated, or was refused by the provider. A cell skipped because its treatment can't run (lane E without J-Space)
+  cell missed the tests, was not evaluated, or was refused by the provider. Within a round,
+  it stops asking after the first cell that doesn't pass. A cell skipped because its treatment can't run (lane E without J-Space)
   doesn't hold the others back: repeating it would not change that.
 - **The judge is the lanes' own agent.** It runs through the same command template, runner
   and environment, so it is Claude Code, Codex or Hermes as the lanes are. Override it with
@@ -694,16 +695,23 @@ uv run python -m automation.benchmark lanes --run-dir out --eval --judge \
   first.
 - **The judge is blind to the lane.** It gets the task's public objective, the test result
   and the source, extracted into a fresh workspace with the archive's paths checked. Its
-  slice id, workspace and record directory don't name the lane. The prompt tells it not to
-  build or run the code, and to treat everything in the submission as material, not
-  instructions. That is an instruction, not a sandbox.
-- **A verdict that is missing or malformed never passes.** The gate keeps repeating, up to
-  the ceiling.
+  slice id, workspace and environment don't name the lane or lead to the run directory, and
+  its records are keyed by a random id. The prompt tells it not to build or run the code,
+  and to treat everything in the submission as material, not instructions. That is an
+  instruction, not a sandbox.
+- **Not with `--cleanroom` yet.** There the lanes' tools run inside ProgramBench's image,
+  and a judge would run on this machine while reading model-written code, so the
+  combination is refused.
+- **A verdict that is missing or malformed never passes,** and nor does one from a session
+  that timed out or exited non-zero. The gate keeps repeating, up to the ceiling.
+- **It needs Python 3.11.4 or later,** for `tarfile`'s `data` filter; an older Python is
+  refused before anything runs.
 
 Each round's decision is in `out/judge/r<round>/stop-gate.json`, with every cell's status
 and verdict. `lane-comparison.md` adds a **Stop gate** section with the rounds run and why
 the run stopped: `quality_reached`, or `ceiling`. To re-read a gated run with `compare`, pass
-the `repeats_run` from `lane-comparison.json` as `--repeats`.
+the `repeats_run` from `lane-comparison.json` as `--repeats`; `compare` keeps the stop-gate
+record.
 
 Every judge call is an agent session and costs what one does. A benchmark run, with or
 without the judge, still needs the owner's approval.
@@ -720,7 +728,7 @@ out/probe/agent-sessions/*.usage.json                 --oneshot only; capped run
                                                     diagnostic only, not a cell
 out/<lane>/r<repeat>/effectiveness-report.json      ProgramBench score for that cell
 out/judge/r<round>/stop-gate.json                  --judge: that round's decision and verdicts
-out/judge/r<round>/<blind id>/verdict.json          --judge: one judge's answer, named without the lane
+out/judge/r<round>/<random id>/verdict.json         --judge: one judge's answer, named without the lane
 out/lane-comparison.json | lane-comparison.md       the comparison
 ```
 

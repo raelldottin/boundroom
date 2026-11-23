@@ -15,8 +15,9 @@ talks the judge round still has to pass the tests to stop anything.
 The judge runs through the same command template, runner and environment as the lanes
 (``run_agent.sh`` by default), so it is whichever agent the lanes used: Claude Code, Codex
 or Hermes. It is told nothing about which lane wrote the code: it sees the task's public
-objective, the test result and the source, in a fresh workspace whose path and slice id
-carry no lane.
+objective, the test result and the source, in a fresh workspace. Its slice id, paths and
+environment carry no lane and don't lead to the run directory, and its records are keyed by
+a random id.
 
 Judge calls are spending, like every agent session, and are skipped wherever they cannot
 change the decision: before ``min_repeats``, in the last round, and in any round where a
@@ -25,12 +26,13 @@ cell already misses the tests or could not be judged.
 
 from __future__ import annotations
 
-import hashlib
+import secrets
 import json
 import shutil
 import subprocess
 import tarfile
 import tempfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -125,12 +127,12 @@ def parse_verdict(path: Path) -> Verdict:
 
 def failing_tests(eval_data: Mapping[str, Any]) -> list[str]:
     """The names of failing test executions, first seen first, without repeats."""
-    names: list[str] = []
+    # A dict keeps first-seen order and makes the repeat check constant time.
+    names: dict[str, None] = {}
     for result in eval_data.get("test_results") or []:
-        name = str(result.get("name"))
-        if result.get("status") != PASSED_STATUS and name not in names:
-            names.append(name)
-    return names
+        if result.get("status") != PASSED_STATUS:
+            names.setdefault(str(result.get("name")))
+    return list(names)
 
 
 def judge_prompt(task: TaskSpec, score: InstanceScore, failing: Sequence[str]) -> str:
@@ -197,12 +199,12 @@ class Judge:
         self._timeout = timeout_seconds
         self._runner = runner or _subprocess_runner
 
-    def _environment(self, record_dir: Path) -> dict[str, str]:
+    def _environment(self, sessions_dir: Path) -> dict[str, str]:
         # Built the way a lane's is, so the judge is the agent the lanes used.
         environment = audited_inherited_environment()
         if self._env:
             environment.update(self._env)
-        environment["BOUNDROOM_HERMES_USAGE_DIR"] = str((record_dir / AGENT_SESSIONS_DIR).resolve())
+        environment["BOUNDROOM_HERMES_USAGE_DIR"] = str(sessions_dir)
         return environment
 
     def judge(self, task: TaskSpec, submission: Path, score: InstanceScore, failing: Sequence[str], record_dir: Path) -> Verdict:
@@ -214,7 +216,8 @@ class Judge:
             subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
             try:
                 _extract_submission(Path(submission), workspace / SUBMISSION_DIR)
-            except (OSError, tarfile.TarError):
+            except (OSError, EOFError, zlib.error, tarfile.TarError):
+                # A truncated or corrupt gzip stream raises EOFError or zlib.error, not TarError.
                 return Verdict(error="submission_unreadable")
             prompt_path = control / "prompt.md"
             context_path = control / "context.json"
@@ -228,20 +231,33 @@ class Judge:
                 handoff_path=control / "handoff.json",
                 slice_id=f"{task.public_id}:judge",
             )
-            returncode = self._runner(command, workspace, self._environment(record_dir), self._timeout)
+            # A verdict left by an earlier run in the same run directory must not stand in
+            # for this session's answer in the record.
+            (record_dir / VERDICT_FILENAME).unlink(missing_ok=True)
+            # The session's reports go to the throwaway control directory and are copied into
+            # the record afterwards, so no path the judge is handed leads to the run directory,
+            # where the lanes' own directories and earlier rounds' records name the lanes.
+            sessions_dir = control / AGENT_SESSIONS_DIR
+            returncode = self._runner(command, workspace, self._environment(sessions_dir), self._timeout)
+            if sessions_dir.is_dir():
+                shutil.copytree(sessions_dir, record_dir / AGENT_SESSIONS_DIR, dirs_exist_ok=True)
             verdict_path = workspace / VERDICT_FILENAME
             if verdict_path.is_file():
                 shutil.copyfile(verdict_path, record_dir / VERDICT_FILENAME)
             verdict = parse_verdict(verdict_path)
-            return Verdict(verdict.score, verdict.good_enough, verdict.reasons, verdict.error, returncode)
+            error = verdict.error
+            if error is None and returncode != 0:
+                # A session that timed out or failed may have left a half-considered verdict.
+                error = "judge_session_failed"
+            return Verdict(verdict.score, verdict.good_enough, verdict.reasons, error, returncode)
         finally:
             shutil.rmtree(workspace, ignore_errors=True)
             shutil.rmtree(control, ignore_errors=True)
 
 
-def blind_id(lane: str, repeat: int, instance_id: str) -> str:
-    """A cell's name in the judge's records: stable, and not the lane."""
-    return hashlib.sha256(f"{lane}/{repeat}/{instance_id}".encode("utf-8")).hexdigest()[:12]
+def blind_id() -> str:
+    """A cell's name in the judge's records: random, so it can't be worked back to a lane."""
+    return secrets.token_hex(6)
 
 
 @dataclass(frozen=True)
@@ -254,6 +270,10 @@ class StopGate:
     min_score: int = DEFAULT_MIN_SCORE
 
     def __post_init__(self) -> None:
+        if not hasattr(tarfile, "data_filter"):
+            # Without it the model-written archive can't be extracted safely, and an unfiltered
+            # extraction is not an acceptable fallback.
+            raise ValueError("the stop gate needs Python 3.11.4 or later, for tarfile's data filter")
         if self.min_repeats < 1:
             raise ValueError(f"min_repeats must be at least 1, got {self.min_repeats}")
         if not 0 <= self.min_score <= MAX_SCORE:
@@ -267,10 +287,12 @@ class StopGate:
 
     def _test_check(self, run_dir: Path, lane: str, repeat: int, instance_id: str) -> dict[str, Any]:
         cell_dir = Path(run_dir) / lane / f"r{repeat}" / instance_id
-        cell: dict[str, Any] = {"lane": lane, "instance_id": instance_id, "judge_id": blind_id(lane, repeat, instance_id)}
+        cell: dict[str, Any] = {"lane": lane, "instance_id": instance_id, "judge_id": blind_id()}
         try:
             provenance = json.loads((cell_dir / "run.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            return {**cell, "status": "no_provenance"}
+        if not isinstance(provenance, dict):
             return {**cell, "status": "no_provenance"}
         if provenance.get("skipped"):
             # A treatment that can't be administered won't be by repeating it either, and the
@@ -282,6 +304,8 @@ class StopGate:
         try:
             eval_data = json.loads((cell_dir / f"{instance_id}{EVAL_SUFFIX}").read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            return {**cell, "status": "no_eval"}
+        if not isinstance(eval_data, dict):
             return {**cell, "status": "no_eval"}
         score = score_eval_data(instance_id, eval_data)
         cell.update(pass_fraction=round(score.pass_fraction, 4), total_tests=score.total_tests)
@@ -316,6 +340,12 @@ class StopGate:
                 )
                 cell["verdict"] = verdict.to_dict()
                 cell["status"] = "judge_passed" if verdict.passes(self.min_score) else "judge_not_passed"
+                if cell["status"] != "judge_passed":
+                    # One cell short already means another round, so the rest aren't paid for.
+                    break
+            for cell in gated:
+                if cell["status"] == "tests_passed":
+                    cell["status"] = "not_judged"
             passed = all(cell["status"] == "judge_passed" for cell in gated)
             decision, reason = (STOP, "quality_reached") if passed else (CONTINUE, "judge_not_passed")
 

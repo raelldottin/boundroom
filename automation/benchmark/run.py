@@ -209,15 +209,18 @@ def _add_judge_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def build_stop_gate(args: argparse.Namespace) -> Optional[judge.StopGate]:
-    """The stop gate ``lanes --judge`` asked for, judged by the lanes' own agent, or None."""
+def build_stop_gate(args: argparse.Namespace, env: Optional[dict[str, str]] = None) -> Optional[judge.StopGate]:
+    """The stop gate ``lanes --judge`` asked for, judged by the lanes' own agent, or None.
+
+    ``env`` is the lanes' resolved agent environment; absent, it is resolved from ``args``.
+    """
     if not args.judge:
         return None
     return judge.StopGate(
         judge=judge.Judge(
             repo_root=Path(args.repo_root),
             command_template=args.judge_agent_cmd or args.agent_cmd,
-            env=resolve_agent_env(args.agent_env),
+            env=env if env is not None else resolve_agent_env(args.agent_env),
             timeout_seconds=args.judge_timeout,
         ),
         min_repeats=args.min_repeats,
@@ -308,13 +311,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         if args.command == "compare":
             comparison = lanes_module.build_comparison(args.run_dir, args.lanes, args.repeats)
+            lanes_module.keep_stop_gate(comparison, args.run_dir)
         else:
+            if args.judge and args.cleanroom:
+                parser.error(
+                    "--judge can't be used with --cleanroom yet: the lanes' tools run in ProgramBench's image, "
+                    "but the judge's would run on this machine while it reads model-written code"
+                )
             if args.judge and not args.eval:
                 parser.error("--judge needs --eval: the gate reads ProgramBench's tests before it pays for a judge")
             if args.judge and not 1 <= args.min_repeats <= args.repeats:
                 parser.error(f"--min-repeats must be between 1 and --repeats ({args.repeats}), got {args.min_repeats}")
+            if args.judge and args.judge_timeout < 1:
+                parser.error(f"--judge-timeout must be at least 1 second, got {args.judge_timeout}")
+            # Resolved once, so the judge and the lanes are handed the same environment.
+            agent_env = resolve_agent_env(args.agent_env)
             try:
-                stop_gate = build_stop_gate(args)
+                stop_gate = build_stop_gate(args, agent_env)
             except ValueError as error:
                 parser.error(str(error))
             tracer = experiment_telemetry(args)
@@ -328,7 +341,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         repo_root=Path(args.repo_root),
                         agent_command_template=args.agent_cmd,
                         timeout_seconds=args.timeout,
-                        env=resolve_agent_env(args.agent_env),
+                        env=agent_env,
                         cleanroom=args.cleanroom,
                         telemetry=tracer,
                     ),
