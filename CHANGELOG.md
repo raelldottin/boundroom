@@ -6,6 +6,10 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+### Added
+
+- The benchmark's `lanes --judge` stops repeating once the code is good enough. `--repeats` becomes a ceiling. After each round, from `--min-repeats` on, the run stops when every cell passes ProgramBench's tests (`--judge-pass-fraction`, default 0.95) and an LLM judge's review of its source (`--judge-min-score`, default 7 of 10). All lanes stop together, so the comparison stays balanced. The judge runs through the lanes' own agent command, so it is Claude Code, Codex or Hermes as they are, and it isn't told which lane it is judging. It is asked only where its answer can stop the run: from `--min-repeats` on, before the last round, and once every cell of the round has passed the tests. `--judge` needs `--eval`.
+
 ### Fixed
 
 - `run_next` renders the runner's prompt before it claims a slice, and `--dry-run` renders it too. A prompt it can't render, such as a consumer's customized `slice.md` with a placeholder a release renamed, unreadable `automation/runner-rules.md`, or a missing prompt fragment (`prompt_fragment_unreadable`), now stops the run with exit 2 and the slice still queued. Before, the run claimed the slice, then recorded it as `failed`, one slice per run, and a dry run passed.
