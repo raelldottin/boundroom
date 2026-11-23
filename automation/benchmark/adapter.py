@@ -290,6 +290,27 @@ def _archive_workspace(workspace: Path, out_tar: Path) -> None:
         raise
 
 
+def _not_regular(directory: str, names: list[str]) -> set[str]:
+    """The entries ``copy_regular_tree`` leaves out: anything but a real file or directory."""
+    skipped = set()
+    for name in names:
+        path = Path(directory) / name
+        if path.is_symlink() or not (path.is_file() or path.is_dir()):
+            skipped.add(name)
+    return skipped
+
+
+def copy_regular_tree(source: Path, destination: Path) -> None:
+    """Copy an agent-written tree, leaving out symlinks, FIFOs, sockets and devices.
+
+    An agent session writes these trees, and the harness copies them outside the session's
+    sandbox: following a symlink would let the session have the harness copy a file it was
+    never allowed to read, such as a key, into the run directory. ``symlinks=True`` keeps one
+    created between the listing and the copy a link rather than its target.
+    """
+    shutil.copytree(source, destination, symlinks=True, ignore=_not_regular, dirs_exist_ok=True)
+
+
 def _save_phase_artifacts(workspace: Path, out_dir: Path) -> None:
     """Keep phase artifacts next to the submission so a result can be reproduced."""
     source = workspace / RPI_DIR
@@ -306,7 +327,7 @@ def _save_phase_artifacts(workspace: Path, out_dir: Path) -> None:
     except FileExistsError as collision:
         raise FileExistsError(f"refusing to overwrite pre-existing phase artifact directory: {destination}") from collision
     try:
-        shutil.copytree(source, destination, dirs_exist_ok=True)
+        copy_regular_tree(source, destination)
     except BaseException:
         # Only ever the directory this call created, and only because it created it: a
         # half-copied artifact set reads as a complete one.

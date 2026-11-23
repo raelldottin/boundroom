@@ -27,8 +27,10 @@ cell already misses the tests or could not be judged.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -43,6 +45,7 @@ from .adapter import (
     _default_command_template,
     _subprocess_runner,
     agent_environment,
+    copy_regular_tree,
 )
 from .diagnosis import _load_json
 from .instances import TaskSpec, task_spec
@@ -68,6 +71,11 @@ MAX_SCORE = 10
 MAX_REASONS = 5
 MAX_REASON_CHARS = 300
 MAX_FAILING_TESTS_SHOWN = 20
+# A verdict is one small JSON object; anything larger is not one.
+MAX_VERDICT_BYTES = 64 * 1024
+# The unpacked size a submission may claim before it is extracted: generous for source code,
+# and a cap on what a model-written archive can make the harness write to disk.
+MAX_SUBMISSION_BYTES = 256 * 1024 * 1024
 
 STOP = "stop"
 CONTINUE = "continue"
@@ -96,16 +104,56 @@ class Verdict:
         }
 
 
+class _NotARegularFile(Exception):
+    pass
+
+
+def _read_regular_file(path: Path, limit: int) -> bytes:
+    """A file's bytes, refusing a symlink, a FIFO or device, and more than ``limit`` bytes.
+
+    The judge session writes the file and the harness reads it outside the session's sandbox,
+    so a symlink must not lead the harness to read, and record, what the session could not.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        if Path(path).is_symlink():
+            raise _NotARegularFile() from error
+        raise
+    with os.fdopen(descriptor, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise _NotARegularFile()
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise _NotARegularFile()
+    return data
+
+
+def _verdict_bytes(path: Path) -> tuple[Optional[bytes], Optional[Verdict]]:
+    """The verdict file's bytes, or the verdict that says why there are none."""
+    try:
+        return _read_regular_file(Path(path), MAX_VERDICT_BYTES), None
+    except FileNotFoundError:
+        return None, Verdict(error="verdict_missing")
+    except _NotARegularFile:
+        return None, Verdict(error="verdict_not_a_regular_file")
+    except OSError:
+        return None, Verdict(error="verdict_unreadable")
+
+
 def parse_verdict(path: Path) -> Verdict:
     """Read a judge's ``verdict.json``. Anything malformed is an error, never a pass."""
+    data, failure = _verdict_bytes(path)
+    if failure is not None:
+        return failure
+    assert data is not None
+    return _verdict_from_bytes(data)
+
+
+def _verdict_from_bytes(raw: bytes) -> Verdict:
     try:
-        text = Path(path).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return Verdict(error="verdict_missing")
-    except OSError:
-        return Verdict(error="verdict_unreadable")
-    try:
-        data = json.loads(text)
+        data = json.loads(raw.decode("utf-8"))
     except ValueError:
         return Verdict(error="verdict_not_json")
     if not isinstance(data, dict):
@@ -176,9 +224,17 @@ Give at most {MAX_REASONS} reasons. Then end the session with a one-line reply.
 """
 
 
+class _SubmissionTooLarge(Exception):
+    pass
+
+
 def _extract_submission(submission: Path, destination: Path) -> None:
     destination.mkdir(parents=True)
     with tarfile.open(submission, "r:gz") as tar:
+        # Sized from the headers before anything is written: a model-written archive could
+        # otherwise unpack far more than it weighs.
+        if sum(member.size for member in tar.getmembers() if member.isfile()) > MAX_SUBMISSION_BYTES:
+            raise _SubmissionTooLarge()
         # The data filter refuses absolute paths, `..`, links out of the tree and device files:
         # the archive is model-written, so it is read as untrusted.
         tar.extractall(destination, filter="data")
@@ -212,6 +268,8 @@ class Judge:
             subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
             try:
                 _extract_submission(Path(submission), workspace / SUBMISSION_DIR)
+            except _SubmissionTooLarge:
+                return Verdict(error="submission_too_large")
             except (OSError, EOFError, zlib.error, tarfile.TarError):
                 # A truncated or corrupt gzip stream raises EOFError or zlib.error, not TarError.
                 return Verdict(error="submission_unreadable")
@@ -238,12 +296,14 @@ class Judge:
             # The lanes' own session seam, so the command and slice id are built as theirs are.
             phase = run_phase(context, "judge", judge_prompt(task, score, failing), {"role": "judge"}, self._timeout)
             returncode = phase.returncode
-            if sessions_dir.is_dir():
-                shutil.copytree(sessions_dir, record_dir / AGENT_SESSIONS_DIR, dirs_exist_ok=True)
-            verdict_path = workspace / VERDICT_FILENAME
-            if verdict_path.is_file():
-                shutil.copyfile(verdict_path, record_dir / VERDICT_FILENAME)
-            verdict = parse_verdict(verdict_path)
+            # Copied and read without following links: the session wrote both, and the harness
+            # reads them outside its sandbox.
+            if sessions_dir.is_dir() and not sessions_dir.is_symlink():
+                copy_regular_tree(sessions_dir, record_dir / AGENT_SESSIONS_DIR)
+            raw, failure = _verdict_bytes(workspace / VERDICT_FILENAME)
+            if raw is not None:
+                (record_dir / VERDICT_FILENAME).write_bytes(raw)
+            verdict = failure if failure is not None else _verdict_from_bytes(raw or b"")
             error = verdict.error
             if error is None and returncode != 0:
                 # A session that timed out or failed may have left a half-considered verdict.

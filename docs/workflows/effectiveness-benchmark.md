@@ -704,6 +704,11 @@ uv run python -m automation.benchmark lanes --run-dir out --eval --judge \
   combination is refused.
 - **A verdict that is missing or malformed never passes,** and nor does one from a session
   that timed out or exited non-zero. The gate keeps repeating, up to the ceiling.
+- **The judge's outputs are untrusted.** Its `verdict.json` and session reports are read
+  and copied without following symlinks, so a judge can't have the harness record a file it
+  couldn't read; a symlinked or oversized verdict fails as `verdict_not_a_regular_file`.
+  A submission that unpacks past 256 MiB is refused before extraction
+  (`submission_too_large`). A lane's phase artifacts are copied the same way.
 - **It needs Python 3.11.4 or later,** for `tarfile`'s `data` filter; an older Python is
   refused before anything runs.
 

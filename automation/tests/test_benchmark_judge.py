@@ -230,6 +230,63 @@ class JudgeSessionTests(unittest.TestCase):
             self.assertFalse((record_dir / "verdict.json").exists())
 
 
+class JudgeOutputTrustTests(unittest.TestCase):
+    """The judge session writes its outputs; the harness reads them outside its sandbox."""
+
+    def _judge(self, runner, tmp: Path, files: Optional[Mapping[str, str]] = None) -> tuple[judge_module.Verdict, Path]:
+        submission = _submission(tmp / "s.tar.gz", files or {"main.c": ""})
+        record_dir = tmp / "rec"
+        verdict = Judge(REPO_ROOT, runner=runner).judge(TASK, submission, InstanceScore(TASK.instance_id, 1, 1), [], record_dir)
+        return verdict, record_dir
+
+    def test_a_verdict_that_is_a_symlink_is_neither_read_nor_copied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = root / "secret.json"
+            secret.write_text('{"score": 10, "good_enough": true}', encoding="utf-8")
+
+            def linking_judge(command, workspace, env, timeout):
+                (Path(workspace) / judge_module.VERDICT_FILENAME).symlink_to(secret)
+                return 0
+
+            verdict, record_dir = self._judge(linking_judge, root)
+            self.assertEqual("verdict_not_a_regular_file", verdict.error)
+            self.assertFalse(verdict.passes(0))
+            self.assertFalse((record_dir / judge_module.VERDICT_FILENAME).exists())
+
+    def test_session_reports_that_are_symlinks_are_left_out_of_the_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = root / "id_ed25519"
+            secret.write_text("PRIVATE", encoding="utf-8")
+
+            def linking_judge(command, workspace, env, timeout):
+                sessions = Path(env["BOUNDROOM_HERMES_USAGE_DIR"])
+                sessions.mkdir(parents=True, exist_ok=True)
+                (sessions / "judge.usage.json").write_text("{}", encoding="utf-8")
+                (sessions / "stolen.json").symlink_to(secret)
+                (sessions / "stolen-dir").symlink_to(root, target_is_directory=True)
+                return FakeJudge()(command, workspace, env, timeout)
+
+            verdict, record_dir = self._judge(linking_judge, root)
+            copied = sorted(p.name for p in (record_dir / "agent-sessions").iterdir())
+        self.assertTrue(verdict.passes(7))
+        self.assertEqual(["judge.usage.json"], copied)
+
+    def test_an_oversized_verdict_is_refused(self) -> None:
+        fake = FakeJudge(raw=" " * (judge_module.MAX_VERDICT_BYTES + 1))
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict, _ = self._judge(fake, Path(tmp))
+        self.assertEqual("verdict_not_a_regular_file", verdict.error)
+
+    def test_an_archive_that_unpacks_past_the_cap_is_never_extracted(self) -> None:
+        fake = FakeJudge()
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(judge_module, "MAX_SUBMISSION_BYTES", 10):
+            verdict, _ = self._judge(fake, Path(tmp), {"main.c": "x" * 11})
+        self.assertEqual("submission_too_large", verdict.error)
+        self.assertEqual([], fake.calls)
+
+
 class StopGateDecisionTests(unittest.TestCase):
     def _decide(self, run_dir: Path, fake: FakeJudge, repeat: int = 2, lanes=("A", "B"), **gate) -> dict:
         stop_gate = StopGate(judge=Judge(REPO_ROOT, runner=fake), **gate)
