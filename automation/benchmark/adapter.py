@@ -22,6 +22,7 @@ import os
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -290,31 +291,49 @@ def _archive_workspace(workspace: Path, out_tar: Path) -> None:
         raise
 
 
+def _is_copyable(path: Path) -> bool:
+    """A real directory, or a regular file with one name: not a symlink, hard link, FIFO, socket or device.
+
+    One ``lstat``, so nothing is followed. A hard link is a regular file to every other test,
+    and copying it would copy whatever host file the session linked; probe.py's evidence
+    collector refuses it for the same reason.
+    """
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1)
+
+
 def _not_regular(directory: str, names: list[str]) -> set[str]:
-    """The entries ``copy_regular_tree`` leaves out: anything but a real file or directory."""
-    skipped = set()
-    for name in names:
-        path = Path(directory) / name
-        if path.is_symlink() or not (path.is_file() or path.is_dir()):
-            skipped.add(name)
-    return skipped
+    """The entries ``copy_regular_tree`` leaves out: anything ``_is_copyable`` refuses."""
+    return {name for name in names if not _is_copyable(Path(directory) / name)}
 
 
 def copy_regular_tree(source: Path, destination: Path) -> None:
-    """Copy an agent-written tree, leaving out symlinks, FIFOs, sockets and devices.
+    """Copy an agent-written tree, leaving out symlinks, hard links, FIFOs, sockets and devices.
 
     An agent session writes these trees, and the harness copies them outside the session's
-    sandbox: following a symlink would let the session have the harness copy a file it was
-    never allowed to read, such as a key, into the run directory. ``symlinks=True`` keeps one
+    sandbox: following a link would let the session have the harness copy a file it was
+    never allowed to read, such as a key, into the run directory. A root that is itself a
+    symlink copies nothing, because ``copytree`` would list the link's target and the
+    per-entry filter would only ever see that target's real files. ``symlinks=True`` keeps one
     created between the listing and the copy a link rather than its target.
     """
+    try:
+        if not stat.S_ISDIR(os.lstat(source).st_mode):
+            return
+    except FileNotFoundError:
+        return
     shutil.copytree(source, destination, symlinks=True, ignore=_not_regular, dirs_exist_ok=True)
 
 
 def _save_phase_artifacts(workspace: Path, out_dir: Path) -> None:
     """Keep phase artifacts next to the submission so a result can be reproduced."""
     source = workspace / RPI_DIR
-    if not source.is_dir():
+    # is_dir() follows links: a session that makes `.rpi` itself a link must not get the
+    # link's target copied out, nor an empty directory claimed for it.
+    if source.is_symlink() or not source.is_dir():
         return
     destination = Path(out_dir) / "rpi"
     # mkdir, not exists()-then-copy: claiming the directory is how ownership is decided, so it

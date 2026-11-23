@@ -109,10 +109,12 @@ class _NotARegularFile(Exception):
 
 
 def _read_regular_file(path: Path, limit: int) -> bytes:
-    """A file's bytes, refusing a symlink, a FIFO or device, and more than ``limit`` bytes.
+    """A file's bytes, refusing a symlink, a hard link, a FIFO or device, and more than ``limit`` bytes.
 
     The judge session writes the file and the harness reads it outside the session's sandbox,
-    so a symlink must not lead the harness to read, and record, what the session could not.
+    so a link must not lead the harness to read, and record, what the session could not. A hard
+    link passes every test but the link count, so a regular file with more than one name is
+    refused too.
     """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
@@ -122,7 +124,8 @@ def _read_regular_file(path: Path, limit: int) -> bytes:
             raise _NotARegularFile() from error
         raise
     with os.fdopen(descriptor, "rb") as handle:
-        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise _NotARegularFile()
         data = handle.read(limit + 1)
     if len(data) > limit:
@@ -130,25 +133,22 @@ def _read_regular_file(path: Path, limit: int) -> bytes:
     return data
 
 
-def _verdict_bytes(path: Path) -> tuple[Optional[bytes], Optional[Verdict]]:
-    """The verdict file's bytes, or the verdict that says why there are none."""
+def _read_verdict(path: Path) -> tuple[Optional[bytes], Verdict]:
+    """The verdict file's bytes, if they could be read, and the verdict they make or the one that says why not."""
     try:
-        return _read_regular_file(Path(path), MAX_VERDICT_BYTES), None
+        raw = _read_regular_file(Path(path), MAX_VERDICT_BYTES)
     except FileNotFoundError:
         return None, Verdict(error="verdict_missing")
     except _NotARegularFile:
         return None, Verdict(error="verdict_not_a_regular_file")
     except OSError:
         return None, Verdict(error="verdict_unreadable")
+    return raw, _verdict_from_bytes(raw)
 
 
 def parse_verdict(path: Path) -> Verdict:
     """Read a judge's ``verdict.json``. Anything malformed is an error, never a pass."""
-    data, failure = _verdict_bytes(path)
-    if failure is not None:
-        return failure
-    assert data is not None
-    return _verdict_from_bytes(data)
+    return _read_verdict(path)[1]
 
 
 def _verdict_from_bytes(raw: bytes) -> Verdict:
@@ -298,12 +298,10 @@ class Judge:
             returncode = phase.returncode
             # Copied and read without following links: the session wrote both, and the harness
             # reads them outside its sandbox.
-            if sessions_dir.is_dir() and not sessions_dir.is_symlink():
-                copy_regular_tree(sessions_dir, record_dir / AGENT_SESSIONS_DIR)
-            raw, failure = _verdict_bytes(workspace / VERDICT_FILENAME)
+            copy_regular_tree(sessions_dir, record_dir / AGENT_SESSIONS_DIR)
+            raw, verdict = _read_verdict(workspace / VERDICT_FILENAME)
             if raw is not None:
                 (record_dir / VERDICT_FILENAME).write_bytes(raw)
-            verdict = failure if failure is not None else _verdict_from_bytes(raw or b"")
             error = verdict.error
             if error is None and returncode != 0:
                 # A session that timed out or failed may have left a half-considered verdict.

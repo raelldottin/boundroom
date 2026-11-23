@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shlex
 import tarfile
 import tempfile
@@ -252,6 +253,20 @@ class JudgeOutputTrustTests(unittest.TestCase):
             verdict, record_dir = self._judge(linking_judge, root)
             self.assertEqual("verdict_not_a_regular_file", verdict.error)
             self.assertFalse(verdict.passes(0))
+            self.assertFalse((record_dir / judge_module.VERDICT_FILENAME).exists())
+
+    def test_a_verdict_that_is_a_hard_link_is_neither_read_nor_copied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret = root / "secret.json"
+            secret.write_text('{"score": 10, "good_enough": true}', encoding="utf-8")
+
+            def linking_judge(command, workspace, env, timeout):
+                os.link(secret, Path(workspace) / judge_module.VERDICT_FILENAME)
+                return 0
+
+            verdict, record_dir = self._judge(linking_judge, root)
+            self.assertEqual("verdict_not_a_regular_file", verdict.error)
             self.assertFalse((record_dir / judge_module.VERDICT_FILENAME).exists())
 
     def test_session_reports_that_are_symlinks_are_left_out_of_the_record(self) -> None:
