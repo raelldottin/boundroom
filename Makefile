@@ -6,7 +6,7 @@
 
 UV ?= uv
 
-.PHONY: reusable-check
+.PHONY: reusable-check demo-reject
 
 reusable-check:
 	$(UV) run ruff check .
@@ -15,3 +15,8 @@ reusable-check:
 	$(UV) run python -m automation.schemas.generate --check
 	$(UV) run python automation/supervisor/settings_view.py --docs --check
 	$(UV) run python -m pytest automation/tests -q
+
+# A self-contained demo, no agent or API key: the supervisor rejects a handoff whose claims the
+# git diff contradicts. It works in a temporary repository and leaves this checkout untouched.
+demo-reject:
+	$(UV) run python automation/examples/demo_reject.py
