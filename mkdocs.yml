@@ -54,6 +54,8 @@ nav:
   - Installed Supervisor (proposed): architecture/installed-supervisor.md
   - Symphony Evaluation (proposed): architecture/symphony-evaluation.md
   - Symphony Decision (proposed): architecture/symphony-decision.md
+  - Effectiveness Proof (proposed): architecture/effectiveness-proof.md
+  - Adoption and Evals (proposed): architecture/adoption-and-evals.md
   - Agentic SDLC and GitOps Standard (draft): architecture/agentic-gitops-sdlc-standard.md
   - Product Roadmap: product-roadmap.md
   - CIS and SOC 2 Control Map: compliance/controls.md
