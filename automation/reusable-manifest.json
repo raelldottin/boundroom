@@ -124,6 +124,15 @@
       "component": "benchmark"
     },
     {
+      "source": "automation/tests/test_benchmark_judge.py",
+      "destination": "automation/tests/test_benchmark_judge.py",
+      "kind": "file",
+      "preserve_executable": false,
+      "delete_stale": false,
+      "template": false,
+      "component": "benchmark"
+    },
+    {
       "source": "automation/tests/test_benchmark_jspace.py",
       "destination": "automation/tests/test_benchmark_jspace.py",
       "kind": "file",

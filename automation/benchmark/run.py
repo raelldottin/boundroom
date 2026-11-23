@@ -27,6 +27,7 @@ from typing import Optional, Sequence
 
 from automation.supervisor import telemetry, telemetry_settings
 
+from . import judge
 from .adapter import AgentAdapter, SupervisorAgentAdapter
 from .evalrunner import MAX_DOCKER_CPUS, EvalRunner, ProgramBenchEvalRunner
 from .instances import resolve_instances, task_spec
@@ -171,6 +172,63 @@ def _add_lane_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repeats", type=int, default=1, help="Attempts per lane/instance. Use >=2; one run is noisy.")
 
 
+def _add_judge_args(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group("stop gate", "Stop repeating once every lane's code is good enough.")
+    group.add_argument(
+        "--judge",
+        action="store_true",
+        help=(
+            "Make --repeats a ceiling: after each round, stop when every cell passes ProgramBench's tests "
+            "and an LLM judge, run through the lanes' own agent command. Needs --eval."
+        ),
+    )
+    group.add_argument(
+        "--min-repeats",
+        type=int,
+        default=judge.DEFAULT_MIN_REPEATS,
+        help=f"Rounds to run before the gate may stop (default: {judge.DEFAULT_MIN_REPEATS}).",
+    )
+    group.add_argument(
+        "--judge-pass-fraction",
+        type=float,
+        default=judge.DEFAULT_PASS_FRACTION,
+        help=f"Test pass fraction a cell needs before it is judged (default: {judge.DEFAULT_PASS_FRACTION}).",
+    )
+    group.add_argument(
+        "--judge-min-score",
+        type=int,
+        default=judge.DEFAULT_MIN_SCORE,
+        help=f"Judge score, 0-10, a cell needs (default: {judge.DEFAULT_MIN_SCORE}).",
+    )
+    group.add_argument("--judge-agent-cmd", help="Judge command template (default: the lanes' --agent-cmd).")
+    group.add_argument(
+        "--judge-timeout",
+        type=int,
+        default=judge.DEFAULT_JUDGE_TIMEOUT_SECONDS,
+        help=f"Seconds per judge session (default: {judge.DEFAULT_JUDGE_TIMEOUT_SECONDS}).",
+    )
+
+
+def build_stop_gate(args: argparse.Namespace, env: dict[str, str]) -> Optional[judge.StopGate]:
+    """The stop gate ``lanes --judge`` asked for, judged by the lanes' own agent, or None.
+
+    ``env`` is the lanes' resolved agent environment, so the judge is handed the same one.
+    """
+    if not args.judge:
+        return None
+    return judge.StopGate(
+        judge=judge.Judge(
+            repo_root=Path(args.repo_root),
+            command_template=args.judge_agent_cmd or args.agent_cmd,
+            env=env,
+            timeout_seconds=args.judge_timeout,
+        ),
+        min_repeats=args.min_repeats,
+        pass_fraction=args.judge_pass_fraction,
+        min_score=args.judge_min_score,
+    )
+
+
 def experiment_telemetry(args: argparse.Namespace) -> Optional[telemetry.Telemetry]:
     """The experiment's one telemetry handle, or None after saying why it can't start."""
     settings = benchmark_settings(vars(args), os.environ)
@@ -218,6 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lane_args(lanes_parser)
     _add_eval_args(lanes_parser)
     lanes_parser.add_argument("--eval", action="store_true", help="Also run ProgramBench eval (Docker) per cell.")
+    _add_judge_args(lanes_parser)
     # The flags run_next takes, read from this command line only: a benchmark is traced only
     # when this run asks for it, never because a live run's settings are in the environment.
     telemetry_settings.add_flags(lanes_parser)
@@ -230,7 +289,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     if args.command == "run":
         produce_submissions(args.run_dir, _instances_from_args(args), _build_adapter(args))
@@ -252,6 +312,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "compare":
             comparison = lanes_module.build_comparison(args.run_dir, args.lanes, args.repeats)
         else:
+            if args.judge and args.cleanroom:
+                parser.error(
+                    "--judge can't be used with --cleanroom yet: the lanes' tools run in ProgramBench's image, "
+                    "but the judge's would run on this machine while it reads model-written code"
+                )
+            if args.judge and not args.eval:
+                parser.error("--judge needs --eval: the gate reads ProgramBench's tests before it pays for a judge")
+            if args.judge and not 1 <= args.min_repeats <= args.repeats:
+                parser.error(f"--min-repeats must be between 1 and --repeats ({args.repeats}), got {args.min_repeats}")
+            # Resolved once, so the judge and the lanes are handed the same environment.
+            agent_env = resolve_agent_env(args.agent_env)
+            try:
+                stop_gate = build_stop_gate(args, agent_env)
+            except ValueError as error:
+                parser.error(str(error))
             tracer = experiment_telemetry(args)
             if tracer is None:
                 return EX_CONFIG
@@ -263,7 +338,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         repo_root=Path(args.repo_root),
                         agent_command_template=args.agent_cmd,
                         timeout_seconds=args.timeout,
-                        env=resolve_agent_env(args.agent_env),
+                        env=agent_env,
                         cleanroom=args.cleanroom,
                         telemetry=tracer,
                     ),
@@ -276,6 +351,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         else None
                     ),
                     telemetry=tracer,
+                    stop_gate=stop_gate,
                 )
             finally:
                 # Bounded, and an exporter failure never changes what the experiment recorded.

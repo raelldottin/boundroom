@@ -24,6 +24,8 @@ import statistics
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import groupby
+from operator import attrgetter
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
@@ -36,6 +38,7 @@ from .diagnosis import diagnose_sessions
 from .evalrunner import EvalRunner
 from .instances import task_spec
 from .jspace import JSpaceUnavailable
+from .judge import STOP, StopGate, summarize_rounds
 from .run import REPORT_FILENAME, score_and_write
 from .scoring import EffectivenessReport
 from .strategies import (
@@ -315,11 +318,11 @@ def run_cell(
     return provenance
 
 
-def cell_dirs(run_dir: Path, lanes: Sequence[str], repeats: int) -> list[Path]:
-    """Every ``<lane>/r<repeat>`` directory that exists under ``run_dir``."""
+def cell_dirs(run_dir: Path, lanes: Sequence[str], repeats: int, first: int = 1) -> list[Path]:
+    """Every ``<lane>/r<repeat>`` directory, from ``first`` to ``repeats``, that exists under ``run_dir``."""
     dirs = []
     for lane in lanes:
-        for repeat in range(1, repeats + 1):
+        for repeat in range(first, repeats + 1):
             candidate = Path(run_dir) / lane / f"r{repeat}"
             if candidate.is_dir():
                 dirs.append(candidate)
@@ -501,8 +504,17 @@ LANE_TREATMENTS = {
 }
 
 
-def build_comparison(run_dir: Path, lanes: Sequence[str], repeats: int, telemetry: Optional[Telemetry] = None) -> dict[str, Any]:
-    """Score every cell that has eval output and reduce it to one comparison."""
+def build_comparison(
+    run_dir: Path,
+    lanes: Sequence[str],
+    repeats: int,
+    telemetry: Optional[Telemetry] = None,
+    include_stop_gate: bool = True,
+) -> dict[str, Any]:
+    """Score every cell that has eval output and reduce it to one comparison.
+
+    With ``include_stop_gate``, a gated run's round records under ``judge/`` are summarized too.
+    """
     run_dir = Path(run_dir)
     summaries = []
     for lane in lanes:
@@ -532,11 +544,15 @@ def build_comparison(run_dir: Path, lanes: Sequence[str], repeats: int, telemetr
             reports.append(report)
         if reports or (run_dir / lane).is_dir():
             summaries.append(summarize_lane(run_dir, lane, repeats, reports))
-    return {
+    comparison: dict[str, Any] = {
         "lanes": summaries,
         "deltas": lane_deltas(summaries),
         "note": ("Primary metric is ProgramBench correctness. A lane that saves context but loses resolve rate is worse."),
     }
+    gate = summarize_rounds(run_dir, repeats) if include_stop_gate else None
+    if gate is not None:
+        comparison["stop_gate"] = gate
+    return comparison
 
 
 def render_comparison_markdown(comparison: dict[str, Any]) -> str:
@@ -658,6 +674,22 @@ def render_comparison_markdown(comparison: dict[str, Any]) -> str:
             for lane, record in administered
         ]
 
+    gate = comparison.get("stop_gate")
+    if gate:
+        settings = gate["settings"]
+        lines += [
+            "",
+            "## Stop gate",
+            "",
+            f"Ran {gate['repeats_run']} of at most {gate['ceiling']} repeats; stopped by {gate['stopped_by']}. "
+            f"A round stops the run when every cell passes {settings['pass_fraction']:.1%} of ProgramBench's tests "
+            f"and the judge scores it at least {settings['min_score']}, from round {settings['min_repeats']} on.",
+            "",
+            "| round | decision | reason |",
+            "|---:|---|---|",
+        ]
+        lines += [f"| {entry['round']} | {entry['decision']} | {entry['reason']} |" for entry in gate["rounds"]]
+
     lines += ["", comparison["note"], ""]
     return "\n".join(lines)
 
@@ -681,13 +713,22 @@ def run_experiment(
     eval_runner: Optional[EvalRunner] = None,
     score: bool = True,
     telemetry: Optional[Telemetry] = None,
+    stop_gate: Optional[StopGate] = None,
 ) -> Optional[dict[str, Any]]:
     """Run the full matrix, optionally evaluate and score it.
+
+    With ``stop_gate``, ``repeats`` is a ceiling: each round is evaluated as soon as it
+    finishes, and the experiment stops after the first round the gate passes. It needs
+    ``eval_runner``, because the gate reads ProgramBench's tests before any judge.
 
     ``telemetry`` traces the experiment; pass the same handle to the adapter factory, so the
     sessions nest under their cells. Absent, the run is untraced and each run.json says so.
     The caller flushes it.
     """
+    if stop_gate is not None and eval_runner is None:
+        raise ValueError("the stop gate needs eval: it reads ProgramBench's tests before the judge")
+    if stop_gate is not None and stop_gate.min_repeats > repeats:
+        raise ValueError(f"min_repeats ({stop_gate.min_repeats}) is above the repeats ceiling ({repeats})")
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     handle = telemetry or tracing.untraced()
@@ -708,37 +749,63 @@ def run_experiment(
     ):
         # Built once and handed to every cell, so no lane can record different settings.
         settings = handle.settings.report(trace_id=telemetry_module.trace_id(experiment))
-        for cell in interleave(instances, lanes, repeats):
-            with tracing.span(
-                handle, "boundroom.benchmark.cell", lane=cell.lane, repeat=cell.repeat, instance=cell.instance_id
-            ) as cell_span:
-                try:
-                    adapter = adapter_factory(cell.lane)
-                except JSpaceUnavailable as error:
-                    provenance = skip_cell(cell, run_dir, repo_root, str(error), telemetry=settings)
-                else:
-                    provenance = run_cell(cell, run_dir, adapter, repo_root, telemetry=settings)
-                if traced:
-                    instance_dir = cell.directory(run_dir)
-                    tracing.annotate(
-                        handle,
-                        cell_span,
-                        skipped=bool(provenance.get("skipped")),
-                        provider_validity=provenance.get("provider_validity"),
-                        returncode=provenance.get("returncode"),
-                        run_json_sha256=tracing.file_sha256(instance_dir / PROVENANCE_FILENAME),
-                        submission_sha256=tracing.file_sha256(instance_dir / "submission.tar.gz"),
-                    )
+        repeats_run = 0
+        # interleave orders the schedule by repeat, so each group is one round.
+        for repeat, group in groupby(interleave(instances, lanes, repeats), key=attrgetter("repeat")):
+            round_cells = list(group)
+            for cell in round_cells:
+                _attempt_cell(cell, run_dir, adapter_factory, repo_root, handle, traced, settings)
+            repeats_run = repeat
+            if stop_gate is None:
+                continue
+            assert eval_runner is not None
+            for cell_dir in cell_dirs(run_dir, lanes, repeat, first=repeat):
+                eval_runner.evaluate(cell_dir)
+            if stop_gate.decide(run_dir, repeat, round_cells, ceiling=repeats)["decision"] == STOP:
+                break
 
-        if eval_runner is not None:
+        if eval_runner is not None and stop_gate is None:
             for cell_dir in cell_dirs(run_dir, lanes, repeats):
                 eval_runner.evaluate(cell_dir)
 
         if not score:
             return None
-        comparison = build_comparison(run_dir, lanes, repeats, telemetry=handle)
+        # The gate's summary is read back from the round records it just wrote, as compare does.
+        comparison = build_comparison(run_dir, lanes, repeats_run, telemetry=handle, include_stop_gate=stop_gate is not None)
         write_comparison(comparison, run_dir)
         return comparison
+
+
+def _attempt_cell(
+    cell: Cell,
+    run_dir: Path,
+    adapter_factory: AdapterFactory,
+    repo_root: Path,
+    handle: Telemetry,
+    traced: bool,
+    settings: dict[str, Any],
+) -> None:
+    """Run one cell, or record why it could not run, inside its own span."""
+    with tracing.span(
+        handle, "boundroom.benchmark.cell", lane=cell.lane, repeat=cell.repeat, instance=cell.instance_id
+    ) as cell_span:
+        try:
+            adapter = adapter_factory(cell.lane)
+        except JSpaceUnavailable as error:
+            provenance = skip_cell(cell, run_dir, repo_root, str(error), telemetry=settings)
+        else:
+            provenance = run_cell(cell, run_dir, adapter, repo_root, telemetry=settings)
+        if traced:
+            instance_dir = cell.directory(run_dir)
+            tracing.annotate(
+                handle,
+                cell_span,
+                skipped=bool(provenance.get("skipped")),
+                provider_validity=provenance.get("provider_validity"),
+                returncode=provenance.get("returncode"),
+                run_json_sha256=tracing.file_sha256(instance_dir / PROVENANCE_FILENAME),
+                submission_sha256=tracing.file_sha256(instance_dir / "submission.tar.gz"),
+            )
 
 
 __all__ = [

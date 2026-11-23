@@ -659,6 +659,65 @@ uv run python -m automation.benchmark compare --run-dir out --repeats 2
 Cost scales as `lanes × repeats × instances` agent runs, and C–E use three to five agent
 sessions each. Start with a few instances before spending money on the full matrix.
 
+### Stopping when the code is good enough (`--judge`)
+
+`--judge` makes `--repeats` a ceiling instead of a count. After each round of repeats, the
+stop gate checks every cell of that round, and stops the whole experiment once all of them
+pass:
+
+1. **ProgramBench's tests** must reach `--judge-pass-fraction` (default 0.95, the
+   near-resolved threshold). They are the objective score, so the gate needs `--eval`.
+2. **An LLM judge** then reads the submitted source and scores it from 0 to 10, with
+   `good_enough` true or false. The cell passes at `--judge-min-score` (default 7) and
+   above.
+
+```shell
+# At most 5 rounds, at least 2, stopping at the first round where every lane is good enough:
+uv run python -m automation.benchmark lanes --run-dir out --eval --judge \
+  --repeats 5 --min-repeats 2 --agent-env NVIDIA_API_KEY --agent-env NVIDIA_BASE_URL
+```
+
+- **All lanes stop together.** Every lane keeps the same number of repeats, so the
+  comparison stays balanced. Stopping a lane on its own as soon as it scored well would
+  keep its lucky runs and skew its result.
+- **The judge can stop a run but can't pass failing tests.** A judge is only asked once
+  every cell of the round has passed the tests, so a submission that talks the judge round
+  still has to pass them.
+- **A judge is paid for only when it can change the decision:** not before `--min-repeats`,
+  not in the last round, which stops at the ceiling anyway, and not in a round where any
+  cell missed the tests, was not evaluated, or was refused by the provider. Within a round,
+  it stops asking after the first cell that doesn't pass. A cell skipped because its treatment can't run (lane E without J-Space)
+  doesn't hold the others back: repeating it would not change that.
+- **The judge is the lanes' own agent.** It runs through the same command template, runner
+  and environment, so it is Claude Code, Codex or Hermes as the lanes are. Override it with
+  `--judge-agent-cmd`. `--judge-timeout` caps each session (default 600 seconds). A model
+  judging code from its own runs may favour it, which is one more reason the tests come
+  first.
+- **The judge is blind to the lane.** It gets the task's public objective, the test result
+  and the source, extracted into a fresh workspace with the archive's paths checked. Its
+  slice id, workspace and environment don't name the lane or lead to the run directory, and
+  its records are keyed by a random id. The prompt tells it not to build or run the code,
+  and to treat everything in the submission as material, not instructions. That is an
+  instruction, not a sandbox.
+- **Not with `--cleanroom` yet.** There the lanes' tools run inside ProgramBench's image,
+  and a judge would run on this machine while reading model-written code, so the
+  combination is refused.
+- **A verdict that is missing or malformed never passes,** and nor does one from a session
+  that timed out or exited non-zero. The gate keeps repeating, up to the ceiling.
+- **It needs Python 3.11.4 or later,** for `tarfile`'s `data` filter; an older Python is
+  refused before anything runs.
+
+Each round's decision is in `out/judge/r<round>/stop-gate.json`, with every cell's status
+and verdict. `lane-comparison.md` adds a **Stop gate** section with the rounds run and why
+the run stopped: `quality_reached`, or `ceiling`. Within a round, the cells are judged from
+the lowest test score up, and judging stops at the first that doesn't pass. To re-read a
+gated run with `compare`, pass the `repeats_run` from `lane-comparison.json`, or the ceiling,
+as `--repeats`: `compare` rebuilds the stop-gate section from the round records, up to the
+round that stopped the run.
+
+Every judge call is an agent session and costs what one does. A benchmark run, with or
+without the judge, still needs the owner's approval.
+
 ### Layout
 
 ```text
@@ -670,6 +729,8 @@ out/probe/probe.json | probe/cleanroom.json | probe/agent-sessions/*.stream.json
 out/probe/agent-sessions/*.usage.json                 --oneshot only; capped runs read state.db instead
                                                     diagnostic only, not a cell
 out/<lane>/r<repeat>/effectiveness-report.json      ProgramBench score for that cell
+out/judge/r<round>/stop-gate.json                  --judge: that round's decision and verdicts
+out/judge/r<round>/<random id>/verdict.json         --judge: one judge's answer, named without the lane
 out/lane-comparison.json | lane-comparison.md       the comparison
 ```
 
