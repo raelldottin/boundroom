@@ -209,10 +209,10 @@ def _add_judge_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def build_stop_gate(args: argparse.Namespace, env: Optional[dict[str, str]] = None) -> Optional[judge.StopGate]:
+def build_stop_gate(args: argparse.Namespace, env: dict[str, str]) -> Optional[judge.StopGate]:
     """The stop gate ``lanes --judge`` asked for, judged by the lanes' own agent, or None.
 
-    ``env`` is the lanes' resolved agent environment; absent, it is resolved from ``args``.
+    ``env`` is the lanes' resolved agent environment, so the judge is handed the same one.
     """
     if not args.judge:
         return None
@@ -220,7 +220,7 @@ def build_stop_gate(args: argparse.Namespace, env: Optional[dict[str, str]] = No
         judge=judge.Judge(
             repo_root=Path(args.repo_root),
             command_template=args.judge_agent_cmd or args.agent_cmd,
-            env=env if env is not None else resolve_agent_env(args.agent_env),
+            env=env,
             timeout_seconds=args.judge_timeout,
         ),
         min_repeats=args.min_repeats,
@@ -311,7 +311,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         if args.command == "compare":
             comparison = lanes_module.build_comparison(args.run_dir, args.lanes, args.repeats)
-            lanes_module.keep_stop_gate(comparison, args.run_dir)
         else:
             if args.judge and args.cleanroom:
                 parser.error(
@@ -322,8 +321,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 parser.error("--judge needs --eval: the gate reads ProgramBench's tests before it pays for a judge")
             if args.judge and not 1 <= args.min_repeats <= args.repeats:
                 parser.error(f"--min-repeats must be between 1 and --repeats ({args.repeats}), got {args.min_repeats}")
-            if args.judge and args.judge_timeout < 1:
-                parser.error(f"--judge-timeout must be at least 1 second, got {args.judge_timeout}")
             # Resolved once, so the judge and the lanes are handed the same environment.
             agent_env = resolve_agent_env(args.agent_env)
             try:

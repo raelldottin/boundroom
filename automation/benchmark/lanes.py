@@ -38,7 +38,7 @@ from .diagnosis import diagnose_sessions
 from .evalrunner import EvalRunner
 from .instances import task_spec
 from .jspace import JSpaceUnavailable
-from .judge import STOP, StopGate
+from .judge import STOP, StopGate, summarize_rounds
 from .run import REPORT_FILENAME, score_and_write
 from .scoring import EffectivenessReport
 from .strategies import (
@@ -504,8 +504,17 @@ LANE_TREATMENTS = {
 }
 
 
-def build_comparison(run_dir: Path, lanes: Sequence[str], repeats: int, telemetry: Optional[Telemetry] = None) -> dict[str, Any]:
-    """Score every cell that has eval output and reduce it to one comparison."""
+def build_comparison(
+    run_dir: Path,
+    lanes: Sequence[str],
+    repeats: int,
+    telemetry: Optional[Telemetry] = None,
+    include_stop_gate: bool = True,
+) -> dict[str, Any]:
+    """Score every cell that has eval output and reduce it to one comparison.
+
+    With ``include_stop_gate``, a gated run's round records under ``judge/`` are summarized too.
+    """
     run_dir = Path(run_dir)
     summaries = []
     for lane in lanes:
@@ -535,11 +544,15 @@ def build_comparison(run_dir: Path, lanes: Sequence[str], repeats: int, telemetr
             reports.append(report)
         if reports or (run_dir / lane).is_dir():
             summaries.append(summarize_lane(run_dir, lane, repeats, reports))
-    return {
+    comparison: dict[str, Any] = {
         "lanes": summaries,
         "deltas": lane_deltas(summaries),
         "note": ("Primary metric is ProgramBench correctness. A lane that saves context but loses resolve rate is worse."),
     }
+    gate = summarize_rounds(run_dir, repeats) if include_stop_gate else None
+    if gate is not None:
+        comparison["stop_gate"] = gate
+    return comparison
 
 
 def render_comparison_markdown(comparison: dict[str, Any]) -> str:
@@ -681,16 +694,6 @@ def render_comparison_markdown(comparison: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def keep_stop_gate(comparison: dict[str, Any], run_dir: Path) -> None:
-    """Carry a gated run's ``stop_gate`` record into a comparison ``compare`` rebuilt."""
-    try:
-        previous = json.loads((Path(run_dir) / COMPARISON_FILENAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    if isinstance(previous, dict) and previous.get("stop_gate"):
-        comparison["stop_gate"] = previous["stop_gate"]
-
-
 def write_comparison(comparison: dict[str, Any], run_dir: Path) -> Path:
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -747,9 +750,9 @@ def run_experiment(
         # Built once and handed to every cell, so no lane can record different settings.
         settings = handle.settings.report(trace_id=telemetry_module.trace_id(experiment))
         repeats_run = 0
-        gate_rounds: list[dict[str, Any]] = []
         # interleave orders the schedule by repeat, so each group is one round.
-        for repeat, round_cells in groupby(interleave(instances, lanes, repeats), key=attrgetter("repeat")):
+        for repeat, group in groupby(interleave(instances, lanes, repeats), key=attrgetter("repeat")):
+            round_cells = list(group)
             for cell in round_cells:
                 _attempt_cell(cell, run_dir, adapter_factory, repo_root, handle, traced, settings)
             repeats_run = repeat
@@ -758,8 +761,7 @@ def run_experiment(
             assert eval_runner is not None
             for cell_dir in cell_dirs(run_dir, lanes, repeat, first=repeat):
                 eval_runner.evaluate(cell_dir)
-            gate_rounds.append(stop_gate.decide(run_dir, lanes, instances, repeat, ceiling=repeats))
-            if gate_rounds[-1]["decision"] == STOP:
+            if stop_gate.decide(run_dir, repeat, round_cells, ceiling=repeats)["decision"] == STOP:
                 break
 
         if eval_runner is not None and stop_gate is None:
@@ -768,15 +770,8 @@ def run_experiment(
 
         if not score:
             return None
-        comparison = build_comparison(run_dir, lanes, repeats_run, telemetry=handle)
-        if stop_gate is not None:
-            comparison["stop_gate"] = {
-                "settings": stop_gate.settings,
-                "ceiling": repeats,
-                "repeats_run": repeats_run,
-                "stopped_by": gate_rounds[-1]["reason"] if gate_rounds else None,
-                "rounds": [{key: entry[key] for key in ("round", "decision", "reason")} for entry in gate_rounds],
-            }
+        # The gate's summary is read back from the round records it just wrote, as compare does.
+        comparison = build_comparison(run_dir, lanes, repeats_run, telemetry=handle, include_stop_gate=stop_gate is not None)
         write_comparison(comparison, run_dir)
         return comparison
 

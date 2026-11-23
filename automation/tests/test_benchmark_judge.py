@@ -20,6 +20,7 @@ from automation.benchmark.instances import TaskSpec
 from automation.benchmark.judge import Judge, StopGate, parse_verdict
 from automation.benchmark.scoring import InstanceScore
 from automation.benchmark.strategies import build_strategy
+from automation.tests.test_benchmark_lanes import FakeAgent
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TASK = TaskSpec("owner__proj.abc1234", "owner/proj", "abc1234", "c", "easy")
@@ -232,7 +233,7 @@ class JudgeSessionTests(unittest.TestCase):
 class StopGateDecisionTests(unittest.TestCase):
     def _decide(self, run_dir: Path, fake: FakeJudge, repeat: int = 2, lanes=("A", "B"), **gate) -> dict:
         stop_gate = StopGate(judge=Judge(REPO_ROOT, runner=fake), **gate)
-        return stop_gate.decide(run_dir, list(lanes), ["inst"], repeat, ceiling=5)
+        return stop_gate.decide(run_dir, repeat, [lanes_module.Cell(lane, repeat, "inst") for lane in lanes], ceiling=5)
 
     def test_every_cell_passing_tests_and_judge_stops_the_run(self) -> None:
         fake = FakeJudge()
@@ -253,7 +254,9 @@ class StopGateDecisionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
             _cell(run_dir, "A", 3, "inst", PASSING_EVAL)
-            record = StopGate(judge=Judge(REPO_ROOT, runner=fake)).decide(run_dir, ["A"], ["inst"], 3, ceiling=3)
+            record = StopGate(judge=Judge(REPO_ROOT, runner=fake)).decide(
+                run_dir, 3, [lanes_module.Cell("A", 3, "inst")], ceiling=3
+            )
         self.assertEqual(("stop", "ceiling"), (record["decision"], record["reason"]))
         self.assertEqual([], fake.calls)
 
@@ -311,6 +314,20 @@ class StopGateDecisionTests(unittest.TestCase):
         self.assertEqual(1, len(fake.calls))
         self.assertEqual(("continue", "judge_not_passed"), (record["decision"], record["reason"]))
         self.assertEqual(["judge_not_passed", "not_judged", "not_judged"], [cell["status"] for cell in record["cells"]])
+
+    def test_the_weakest_cell_by_the_tests_is_judged_first(self) -> None:
+        fake = FakeJudge(verdict={"score": 3, "good_enough": False})
+        nearly = {
+            "test_results": [{"name": f"t{n}", "status": "passed"} for n in range(19)] + [{"name": "t19", "status": "failed"}]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            _cell(run_dir, "A", 2, "inst", PASSING_EVAL)
+            _cell(run_dir, "B", 2, "inst", nearly)
+            record = self._decide(run_dir, fake)
+        self.assertEqual(1, len(fake.calls))
+        self.assertIn("`t19`", fake.calls[0]["prompt"])
+        self.assertEqual(["not_judged", "judge_not_passed"], [cell["status"] for cell in record["cells"]])
 
     def test_records_that_are_not_objects_block_the_stop(self) -> None:
         fake = FakeJudge()
@@ -374,6 +391,10 @@ class StopGateDecisionTests(unittest.TestCase):
         self.assertEqual(12, len(first))
         self.assertNotEqual(first, second)
 
+    def test_a_judge_timeout_below_one_second_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            Judge(REPO_ROOT, runner=FakeJudge(), timeout_seconds=0)
+
     def test_a_python_without_the_tar_data_filter_is_refused(self) -> None:
         with unittest.mock.patch.object(judge_module, "tarfile", types.SimpleNamespace()):
             with self.assertRaises(ValueError):
@@ -389,14 +410,8 @@ class StopGateDecisionTests(unittest.TestCase):
             StopGate(judge=judge, pass_fraction=1.5)
 
 
-def _rebuilding_agent(command: str, workspace: Path, env: Mapping[str, str], timeout: int) -> int:
-    (Path(workspace) / "compile.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    (Path(workspace) / "main.c").write_text("int main(void){return 0;}\n", encoding="utf-8")
-    return 0
-
-
 def _factory(lane: str) -> SupervisorAgentAdapter:
-    return SupervisorAgentAdapter(repo_root=REPO_ROOT, runner=_rebuilding_agent, strategy=build_strategy(lane))
+    return SupervisorAgentAdapter(repo_root=REPO_ROOT, runner=FakeAgent(), strategy=build_strategy(lane))
 
 
 class StopGateExperimentTests(unittest.TestCase):
@@ -500,11 +515,11 @@ class StopGateCommandLineTests(unittest.TestCase):
         args = run_module.build_parser().parse_args(
             ["lanes", "--run-dir", "out", "--judge", "--eval", "--agent-cmd", "lane-agent {repo_root}"]
         )
-        gate = run_module.build_stop_gate(args)
+        gate = run_module.build_stop_gate(args, {})
         assert gate is not None
         self.assertEqual("lane-agent {repo_root}", gate.judge._template)
         args.judge_agent_cmd = "other-agent {repo_root}"
-        gate = run_module.build_stop_gate(args)
+        gate = run_module.build_stop_gate(args, {})
         assert gate is not None
         self.assertEqual("other-agent {repo_root}", gate.judge._template)
 
@@ -521,10 +536,11 @@ class StopGateCommandLineTests(unittest.TestCase):
                 self.assertEqual(0, run_module.main(["compare", "--run-dir", tmp, "--lanes", "A", "B", "--repeats", "2"]))
             rebuilt = json.loads((run_dir / lanes_module.COMPARISON_FILENAME).read_text(encoding="utf-8"))
         self.assertEqual("quality_reached", rebuilt["stop_gate"]["stopped_by"])
+        self.assertEqual(3, rebuilt["stop_gate"]["ceiling"])
 
     def test_no_gate_without_the_flag(self) -> None:
         args = run_module.build_parser().parse_args(["lanes", "--run-dir", "out"])
-        self.assertIsNone(run_module.build_stop_gate(args))
+        self.assertIsNone(run_module.build_stop_gate(args, {}))
 
 
 if __name__ == "__main__":

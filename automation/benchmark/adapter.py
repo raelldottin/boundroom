@@ -106,6 +106,19 @@ def audited_inherited_environment() -> dict[str, str]:
     return {name: os.environ[name] for name in INHERITED_ENV_NAMES if name in os.environ}
 
 
+def agent_environment(env: Optional[Mapping[str, str]]) -> dict[str, str]:
+    """An agent session's environment: the audited inherited variables, then ``env`` over them.
+
+    Explicit configuration wins, and is never filtered through the inherited list: an env=
+    mapping is the caller's authorization, not an accident of the launcher. Every lane and the
+    stop gate's judge build theirs here, so the judge is the agent the lanes are.
+    """
+    environment = audited_inherited_environment()
+    if env:
+        environment.update(env)
+    return environment
+
+
 @dataclass
 class SubmissionResult:
     instance_id: str
@@ -412,12 +425,7 @@ class SupervisorAgentAdapter:
         return self._strategy.name
 
     def _run_environment(self) -> dict[str, str]:
-        environment = audited_inherited_environment()
-        if self._env:
-            # Explicit configuration wins, and is never filtered through the inherited list:
-            # an env= mapping is the caller's authorization, not an accident of the launcher.
-            environment.update(self._env)
-        return environment
+        return agent_environment(self._env)
 
     def _probe_sandbox(
         self, workspace: Path, environment: Mapping[str, str], sessions_dir: Path, receipt: CleanroomReceipt

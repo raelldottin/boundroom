@@ -709,9 +709,11 @@ uv run python -m automation.benchmark lanes --run-dir out --eval --judge \
 
 Each round's decision is in `out/judge/r<round>/stop-gate.json`, with every cell's status
 and verdict. `lane-comparison.md` adds a **Stop gate** section with the rounds run and why
-the run stopped: `quality_reached`, or `ceiling`. To re-read a gated run with `compare`, pass
-the `repeats_run` from `lane-comparison.json` as `--repeats`; `compare` keeps the stop-gate
-record.
+the run stopped: `quality_reached`, or `ceiling`. Within a round, the cells are judged from
+the lowest test score up, and judging stops at the first that doesn't pass. To re-read a
+gated run with `compare`, pass the `repeats_run` from `lane-comparison.json`, or the ceiling,
+as `--repeats`: `compare` rebuilds the stop-gate section from the round records, up to the
+round that stopped the run.
 
 Every judge call is an agent session and costs what one does. A benchmark run, with or
 without the judge, still needs the owner's approval.
