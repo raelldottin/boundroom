@@ -1,0 +1,13 @@
+{
+  "description": "Equivalent mutants excluded from the mutation score. An entry excludes a mutant only when module, line, operator, original and mutant all match exactly; an entry that matches nothing is reported as stale. Each entry needs a reason and a reviewer who is not the change's author. See docs/reference/mutation-testing.md.",
+  "schema": {
+    "module": "string: the module path relative to the repository root, such as automation/supervisor/policy.py",
+    "line": "integer: the first line of the mutated node",
+    "operator": "string: one of delete_statement, return_none, loop_control, comparison, boolean_operator, remove_not, boolean_constant, number_increment, number_zero, swap_arguments",
+    "original": "string: the mutated node's source text before the change, exactly as the report prints it",
+    "mutant": "string: the same node's text after the change, exactly as the report prints it",
+    "reason": "string: why the mutant cannot change behaviour",
+    "reviewed_by": "string: the person, other than the author, who checked the reason"
+  },
+  "entries": []
+}

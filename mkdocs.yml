@@ -48,6 +48,7 @@ nav:
   - Security model: reference/security-model.md
   - Exit codes and errors: reference/exit-codes.md
   - Troubleshooting: reference/troubleshooting.md
+  - Mutation testing: reference/mutation-testing.md
   - Traceable Agent Runs with Logfire: architecture/agent-telemetry.md
   - Plugin Settings You Can See: architecture/plugin-settings.md
   - Enterprise Readiness (proposed): architecture/enterprise-readiness.md
