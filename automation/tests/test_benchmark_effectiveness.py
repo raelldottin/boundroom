@@ -742,7 +742,7 @@ class PhaseArtifactOwnershipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "out"
             out_dir.mkdir()
-            with unittest.mock.patch.object(benchmark_adapter.shutil, "copytree", side_effect=OSError("disk full")):
+            with unittest.mock.patch.object(benchmark_adapter.shutil, "copyfileobj", side_effect=OSError("disk full")):
                 with self.assertRaises(OSError):
                     benchmark_adapter._save_phase_artifacts(self._workspace_with_artifacts(Path(tmp)), out_dir)
             self.assertFalse((out_dir / "rpi").exists())

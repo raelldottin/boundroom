@@ -203,9 +203,15 @@ def _extract_submission(submission: Path, destination: Path) -> None:
     destination.mkdir(parents=True)
     with tarfile.open(submission, "r:gz") as tar:
         # Sized from the headers before anything is written: a model-written archive could
-        # otherwise unpack far more than it weighs.
-        if sum(member.size for member in tar.getmembers() if member.isfile()) > MAX_SUBMISSION_BYTES:
-            raise _SubmissionTooLarge()
+        # otherwise unpack far more than it weighs. Stopped at the first header that passes the
+        # cap: reading the next header means decompressing the member before it, so summing
+        # every header first would inflate a gzip bomb just to learn it is too big.
+        total = 0
+        for member in tar:
+            if member.isfile():
+                total += member.size
+                if total > MAX_SUBMISSION_BYTES:
+                    raise _SubmissionTooLarge()
         # The data filter refuses absolute paths, `..`, links out of the tree and device files:
         # the archive is model-written, so it is read as untrusted.
         tar.extractall(destination, filter="data")

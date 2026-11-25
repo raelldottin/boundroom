@@ -330,37 +330,52 @@ def read_agent_file(path: Path, limit: int) -> bytes:
     return data
 
 
-def _not_copyable(directory: str, names: list[str]) -> set[str]:
-    """The entries ``copy_regular_tree`` leaves out: anything but a real directory or a regular file with one name.
-
-    One ``lstat`` each, so nothing is followed. A hard link is a regular file to every other test,
-    and copying it would copy whatever host file the session linked; probe.py's evidence
-    collector refuses it for the same reason.
-    """
-    skipped = set()
-    for name in names:
-        try:
-            info = os.lstat(Path(directory) / name)
-        except OSError:
-            skipped.add(name)
-            continue
-        if not (stat.S_ISDIR(info.st_mode) or (stat.S_ISREG(info.st_mode) and info.st_nlink == 1)):
-            skipped.add(name)
-    return skipped
-
-
 def copy_regular_tree(source: Path, destination: Path) -> None:
     """Copy an agent-written tree, leaving out symlinks, hard links, FIFOs, sockets and devices.
 
     An agent session writes these trees, and the harness copies them outside the session's
     sandbox: following a link would let the session have the harness copy a file it was
-    never allowed to read, such as a key, into the run directory. A root that is itself a
-    symlink copies nothing, because ``copytree`` would list the link's target and the
-    per-entry filter would only ever see that target's real files. ``symlinks=True`` keeps one
-    created between the listing and the copy a link rather than its target.
+    never allowed to read, such as a key, into the run directory. A hard link is a regular file
+    to every other test, so a regular file with more than one name is left out too; probe.py's
+    evidence collector refuses it for the same reason. A root that is itself a symlink copies
+    nothing.
+
+    Every entry is opened with ``O_NOFOLLOW`` relative to its parent's descriptor and checked
+    with ``fstat`` on what was opened, so a process the session left running can't swap a file
+    or directory for a link between the check and the copy. ``shutil.copytree`` can't promise
+    that: it decides from the ``lstat`` it took when listing, then opens by path.
     """
-    if is_real_dir(source):
-        shutil.copytree(source, destination, symlinks=True, ignore=_not_copyable, dirs_exist_ok=True)
+    try:
+        root = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return
+    try:
+        if stat.S_ISDIR(os.fstat(root).st_mode):
+            _copy_regular_entries(root, Path(destination))
+    finally:
+        os.close(root)
+
+
+def _copy_regular_entries(directory: int, destination: Path) -> None:
+    """Copy the real directories and single-name regular files under an open directory descriptor."""
+    destination.mkdir(parents=True, exist_ok=True)
+    with os.scandir(directory) as entries:
+        names = [entry.name for entry in entries if entry.is_dir(follow_symlinks=False) or entry.is_file(follow_symlinks=False)]
+    for name in names:
+        try:
+            descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except OSError:
+            # A link (ELOOP), or an entry that went away or changed type since the listing.
+            continue
+        try:
+            info = os.fstat(descriptor)
+            if stat.S_ISDIR(info.st_mode):
+                _copy_regular_entries(descriptor, destination / name)
+            elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                with os.fdopen(os.dup(descriptor), "rb") as source, open(destination / name, "wb") as target:
+                    shutil.copyfileobj(source, target)
+        finally:
+            os.close(descriptor)
 
 
 def _save_phase_artifacts(workspace: Path, out_dir: Path) -> None:
