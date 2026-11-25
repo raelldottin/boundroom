@@ -10,12 +10,15 @@ from __future__ import annotations
 import json
 import os
 import random
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import unittest.mock
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from automation.benchmark.trackr import driver, oracle, pilot
 from automation.benchmark.trackr import select as select_module
@@ -23,10 +26,16 @@ from automation.benchmark.trackr.common import (
     PYTEST,
     REPO_ROOT,
     SCOPE_FIELDS,
+    SCOPE_PROVENANCE_FIELDS,
+    subprocess_runner,
     TASKS_FILE,
-    OVERLAY,
+    DEFAULT_REQUIRED_VALIDATIONS,
+    Interrupted,
+    BASE_PATCH,
     Completed,
-    Overlay,
+    BasePatch,
+    patch_runner_profile,
+    PatchError,
     TrackRError,
     git,
     has_object,
@@ -36,11 +45,27 @@ from automation.benchmark.trackr.common import (
     pytest_counts,
     read_json,
     scope_errors,
+    write_json,
 )
 from automation.supervisor import policy, runner_profile
 
 CALC_BUGGY = "def add(a, b):\n    return a - b\n"
 CALC_FIXED = "def add(a, b):\n    return a + b\n"
+# A pre-#279 runner_profile.py, reduced to what the base patch rewrites and verify_patch calls.
+UNPATCHED_RUNNER_PROFILE = """import os
+
+
+def choose(flags, environ):
+    return None
+
+
+def slice_settings(slice_record, policy, profile, handoff=None):
+    allow = []
+    if handoff:
+        # The handoff is the one file every slice must write.
+        allow.append(f"Edit({handoff})")
+    return {"permissions": {"allow": allow}}
+"""
 HIDDEN_TEST = "from pkg.calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
 
 
@@ -68,6 +93,9 @@ def make_repository(root: Path) -> tuple[Path, str, str]:
         "pkg/other.py": "VALUE = 1\n",
         "automation/tests/test_existing.py": "def test_ok():\n    assert True\n",
         "docs/guide.md": "# Guide\n",
+        "automation/__init__.py": "",
+        "automation/supervisor/__init__.py": "",
+        "automation/supervisor/runner_profile.py": UNPATCHED_RUNNER_PROFILE,
     }
     for path, text in files.items():
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
@@ -78,11 +106,15 @@ def make_repository(root: Path) -> tuple[Path, str, str]:
     (repo / "automation/tests/test_calc.py").write_text(HIDDEN_TEST)
     _commit_all(repo, env, "head: fix add")
     head = git(["rev-parse", "HEAD"], repo, env).strip()
-    # A later release whose supervisor every clone gets, as the real overlay commit is.
-    (repo / "automation/supervisor").mkdir(parents=True)
-    (repo / "automation/supervisor/marker.py").write_text("RELEASE = 'overlay'\n")
-    _commit_all(repo, env, "release")
     return repo, base, head
+
+
+BLIND_PROVENANCE = {
+    "by": "a test",
+    "when": "2026-11-25",
+    "inputs": "the PR's title and body only; no repository, diff or file access",
+    "leakage_ignored": "nothing",
+}
 
 
 def make_task(base: str, head: str, **scope: Any) -> dict[str, Any]:
@@ -108,6 +140,7 @@ def make_task(base: str, head: str, **scope: Any) -> dict[str, Any]:
         "allowed_paths": ["pkg/calc.py", "automation/tests/"],
         "required_validations": ["test -f pkg/calc.py"],
         "max_files_changed": 2,
+        "scope_provenance": dict(BLIND_PROVENANCE),
     }
     task.update(scope)
     return task
@@ -127,12 +160,14 @@ class FakeRunner:
         report: Optional[Mapping[str, Any]] = None,
         claude_bin: str = "claude",
         subtype: str = "success",
+        interrupt_on: Optional[Callable[[list[str]], bool]] = None,
     ) -> None:
         self.edits = dict(edits or {})
         self.cost = cost
         self.report = dict(report or {"decision": "stop_for_review", "queue_status": "done", "reason": "limit reached"})
         self.claude_bin = claude_bin
         self.subtype = subtype
+        self.interrupt_on = interrupt_on
         self.calls: list[dict[str, Any]] = []
 
     def _result(self) -> str:
@@ -169,6 +204,10 @@ class FakeRunner:
         self.calls.append({"argv": argv, "cwd": Path(cwd), "env": dict(env), "timeout": timeout})
         if argv[:3] == ["uv", "sync", "--frozen"]:
             return Completed(0)
+        if argv[:4] == ["uv", "run", "--frozen", "python"] and argv[: len(PYTEST)] != list(PYTEST):
+            return _real([sys.executable, *argv[4:]], cwd, env)  # the base patch's check, in this interpreter
+        if self.interrupt_on and self.interrupt_on(argv):
+            raise Interrupted(signal.SIGTERM)
         if argv[: len(PYTEST)] == list(PYTEST):
             return _real([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *argv[len(PYTEST) :]], cwd, env)
         if argv[:2] == ["/bin/sh", "-c"]:
@@ -194,8 +233,6 @@ class TrackRTestCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="trackr-test-")).resolve()
         self.addCleanup(subprocess.run, ["rm", "-rf", str(self.tmp)], check=False)
         self.repo, self.base, self.head = make_repository(self.tmp)
-        release = git(["rev-parse", "HEAD"], self.repo, isolated_environment(os.environ, self.tmp / "source-private")).strip()
-        self.overlay = Overlay(release, ("automation/supervisor",))
         self.environ = {
             **os.environ,
             "HOME": str(self.tmp / "home"),
@@ -210,7 +247,7 @@ class TrackRTestCase(unittest.TestCase):
         self.work.mkdir()
 
     def config(self, runner: FakeRunner, **overrides: Any) -> driver.DriverConfig:
-        overrides.setdefault("overlay", self.overlay)
+        overrides.setdefault("patch", BASE_PATCH)
         return driver.DriverConfig(runner=runner, environ=self.environ, work_dir=self.work, **overrides)
 
     def session(self, arm: str, runner: FakeRunner, task: Optional[dict] = None, **overrides: Any) -> dict[str, Any]:
@@ -228,7 +265,7 @@ class TrackRTestCase(unittest.TestCase):
 
 
 class DriverSetupTests(TrackRTestCase):
-    def test_the_clone_has_no_remote_no_solution_and_a_setup_commit_holding_only_the_overlay_for_u(self) -> None:
+    def test_the_clone_has_no_remote_no_solution_and_a_setup_commit_holding_only_the_base_patch_for_u(self) -> None:
         record = self.session("U", FakeRunner(edits={"pkg/calc.py": CALC_FIXED}))
         clone = Path(record["paths"]["clone"])
         env = isolated_environment(os.environ, self.tmp / "check")
@@ -238,12 +275,11 @@ class DriverSetupTests(TrackRTestCase):
         self.assertFalse(has_object(clone, self.head, env))
         self.assertEqual(git(["rev-parse", f"{record['setup_sha']}^"], clone, env).strip(), self.base)
         changed = git(["diff", "--name-only", self.base, record["setup_sha"]], clone, env).split()
-        self.assertEqual(changed, ["automation/supervisor/marker.py"])
-        self.assertEqual(
-            record["overlay"], {"commit": self.overlay.commit, "paths": ["automation/supervisor"], "files_changed": 1}
-        )
-        # The overlay commit itself is not in the clone's history: only its files are.
-        self.assertFalse(has_object(clone, self.overlay.commit, env))
+        self.assertEqual(changed, [BASE_PATCH.path])
+        self.assertEqual((record["base_patch"]["id"], record["base_patch"]["status"]), (BASE_PATCH.id, "applied"))
+        self.assertTrue(all(record["base_patch"]["verified"].values()))
+        patched = git(["show", f"{record['setup_sha']}:{BASE_PATCH.path}"], clone, env)
+        self.assertIn('f"Edit(/{handoff})" if os.path.isabs(handoff)', patched)
         self.assertIsNone(inside_repository(clone.parent))
 
     def test_the_s_setup_commit_adds_one_schema_valid_queued_slice_from_the_scope_fields(self) -> None:
@@ -252,9 +288,9 @@ class DriverSetupTests(TrackRTestCase):
         env = isolated_environment(os.environ, self.tmp / "check")
         self.assertEqual(
             git(["diff", "--name-only", self.base, record["setup_sha"]], clone, env).split(),
-            [driver.QUEUE_PATH, "automation/supervisor/marker.py"],
+            [driver.QUEUE_PATH, BASE_PATCH.path],
         )
-        self.assertEqual(record["overlay"]["commit"], self.overlay.commit)
+        self.assertEqual(record["base_patch"]["id"], BASE_PATCH.id)
         queue = policy.load_queue(clone / driver.QUEUE_PATH)
         (slice_record,) = queue["slices"]
         task = make_task(self.base, self.head)
@@ -274,7 +310,7 @@ class DriverSetupTests(TrackRTestCase):
             listing = git(["ls-tree", "-r", record["setup_sha"]], Path(record["paths"]["clone"]), env).splitlines()
             trees[arm] = [line for line in listing if not line.endswith(driver.QUEUE_PATH)]
         self.assertEqual(trees["U"], trees["S"])
-        self.assertTrue(any(line.endswith("automation/supervisor/marker.py") for line in trees["U"]))
+        self.assertTrue(any(line.endswith(BASE_PATCH.path) for line in trees["U"]))
 
     def test_a_task_without_its_scope_is_refused_before_anything_is_cloned(self) -> None:
         task = make_task(
@@ -489,7 +525,7 @@ class OracleTests(TrackRTestCase):
     def test_an_unfixed_out_of_scope_change_fails_the_hidden_tests_and_is_flagged(self) -> None:
         edits = {"pkg/other.py": "VALUE = 2\n", "docs/guide.md": "# Changed\n", "pkg/new.py": "X = 1\n"}
         runner = FakeRunner(edits=edits)
-        task = make_task(self.base, self.head, required_validations=["test -f pkg/missing.py"])
+        task = make_task(self.base, self.head, required_validations=["test ! -f pkg/new.py"])
         verdict = self.verdict(self.session("S", runner, task), task, runner)
         self.assertFalse(verdict["hidden_tests_pass"])
         self.assertEqual(verdict["hidden_tests"]["failed"], 1)
@@ -541,7 +577,7 @@ class SelectionTests(TrackRTestCase):
             runner=FakeRunner(),
             environ=self.environ,
             work_dir=self.work,
-            overlay=self.overlay,
+            patch=BASE_PATCH,
         )
         self.assertTrue(result["fails_at_base"])
         self.assertTrue(result["passes_at_head"])
@@ -554,11 +590,18 @@ class SelectionTests(TrackRTestCase):
         ]
         self.assertEqual([pr["number"] for pr in select_module.in_window(prs)], [1, 2])
         tasks, audit = select_module.select_tasks(
-            prs, self.repo, runner=FakeRunner(), environ=self.environ, work_dir=self.work, count=1, overlay=self.overlay
+            prs,
+            self.repo,
+            runner=FakeRunner(),
+            environ=self.environ,
+            work_dir=self.work,
+            count=1,
+            patch=BASE_PATCH,
+            green_base=False,
         )
         self.assertEqual([task["number"] for task in tasks], [1])
         self.assertEqual([(entry["number"], entry["decision"]) for entry in audit], [(1, "kept"), (2, "not_examined")])
-        self.assertEqual(len(scope_errors(tasks[0])), len(SCOPE_FIELDS))
+        self.assertEqual(len(scope_errors(tasks[0])), len(SCOPE_FIELDS) + len(SCOPE_PROVENANCE_FIELDS))
         self.assertTrue(select_module.documentation_only(["docs/a.md", "README.md"]))
         self.assertFalse(select_module.documentation_only(["docs/a.md", "automation/tests/test_a.py"]))
 
@@ -589,7 +632,9 @@ class PilotTests(TrackRTestCase):
         self.assertEqual(summary["spent_usd"], 5.5)
 
     def test_a_full_pilot_scores_both_arms_and_exports_blind_diffs(self) -> None:
-        runner = FakeRunner(edits={"pkg/calc.py": CALC_FIXED, ".claude/settings.local.json": "{}"})
+        runner = FakeRunner(
+            edits={"pkg/calc.py": CALC_FIXED, ".claude/settings.local.json": "{}", "automation/handoffs/note.json": "{}"}
+        )
         tasks = [make_task(self.base, self.head)]
         out = self.tmp / "pilot"
         summary = pilot.run_pilot(tasks, self.repo, out, self.config(runner), rng=random.Random(7))
@@ -598,7 +643,7 @@ class PilotTests(TrackRTestCase):
             self.assertEqual(summary["arms"][arm]["sessions"], 1)
             self.assertEqual(summary["arms"][arm]["hidden_test_pass_rate"], 1.0)
             self.assertEqual(summary["arms"][arm]["mean_cost_usd"], 1.25)
-            # The oracle counts the agent's .claude/ file as out of scope; the review export leaves it out.
+            # The oracle counts the agent's .claude/ and handoff-directory files as out of scope.
             self.assertEqual(summary["arms"][arm]["out_of_scope"], 1)
         self.assertEqual(summary["arms"]["S"]["decisions"], {"stop_for_review": 1})
         mapping = read_json(out / "mapping.json")["sessions"]
@@ -611,7 +656,8 @@ class PilotTests(TrackRTestCase):
             self.assertTrue(patch.startswith(pilot.NEUTRAL_HEADER))
             self.assertIn("pkg/calc.py", patch)
             self.assertNotIn(".claude", patch)
-            self.assertNotIn("slices.json", patch)
+            self.assertIn("automation/handoffs/note.json", patch)  # the agent's edit, shown to the reviewer
+            self.assertNotIn("slices.json", patch)  # arm S's queue is in the setup commit, not the agent's diff
             self.assertNotIn("agent change", patch)
         self.assertEqual(len(list((out / "sessions").iterdir())), 2)
         self.assertTrue((out / "summary.md").read_text().startswith("| Measure | U | S |"))
@@ -626,30 +672,441 @@ class PilotTests(TrackRTestCase):
         self.assertFalse(row["within_budget"])
 
 
+class BasePatchTests(TrackRTestCase):
+    """Amendment 2: each base gets #279's handoff-rule fix and nothing else."""
+
+    def test_the_rewrite_is_minimal_and_idempotent(self) -> None:
+        patched, status = patch_runner_profile(UNPATCHED_RUNNER_PROFILE)
+        self.assertEqual(status, "applied")
+        changed = [line for line in patched.splitlines() if line not in UNPATCHED_RUNNER_PROFILE.splitlines()]
+        self.assertEqual(changed, ['        allow.append(f"Edit(/{handoff})" if os.path.isabs(handoff) else f"Edit({handoff})")'])
+        self.assertEqual(patch_runner_profile(patched), (patched, "already present"))
+
+    def test_a_base_the_rewrite_does_not_fit_is_refused(self) -> None:
+        with self.assertRaisesRegex(PatchError, "expected one"):
+            patch_runner_profile("def slice_settings():\n    pass\n")
+        with self.assertRaisesRegex(PatchError, "does not import os"):
+            patch_runner_profile(UNPATCHED_RUNNER_PROFILE.replace("import os\n", ""))
+
+    def test_a_patch_that_does_not_take_fails_the_session_before_any_model_and_costs_nothing(self) -> None:
+        broken = UNPATCHED_RUNNER_PROFILE.replace(
+            'allow.append(f"Edit({handoff})")',
+            'allow.append(f"Edit({handoff})")\n        allow.append(f"Bash(git add {handoff})")',
+        )
+        env = isolated_environment(os.environ, self.tmp / "source-private")
+        git(["checkout", "--quiet", "-b", "broken-base", self.base], self.repo, env)
+        (self.repo / BASE_PATCH.path).write_text(broken)
+        _commit_all(self.repo, env, "a base whose git add rule takes an outside handoff")
+        base = git(["rev-parse", "HEAD"], self.repo, env).strip()
+        runner = FakeRunner()
+        record = self.session("S", runner, make_task(base, self.head))
+        self.assertEqual(record["status"], "patch_failed")
+        self.assertIn("outside_handoff_has_no_git_add", record["error"])
+        self.assertEqual(runner.calls_to("automation/supervisor/run_next.py"), [])
+        self.assertEqual(pilot.charged(record, 4.5), 0.0)
+
+    def test_the_patch_takes_at_the_real_bases_runner_profiles(self) -> None:
+        env = isolated_environment(os.environ, self.tmp / "real")
+        bases = {
+            "d276a1044f87a2f05450831e1c61aa69b3db0128": "applied",  # before #271
+            "149c6ce687118f6697bea69d9fa327f174b137de": "already present",  # after #279
+        }
+        if not all(has_object(REPO_ROOT, sha, env) for sha in bases):
+            self.skipTest("this checkout doesn't hold the task window's commits")
+        for sha, expected in bases.items():
+            text = git(["show", f"{sha}:{BASE_PATCH.path}"], REPO_ROOT, env)
+            self.assertEqual(patch_runner_profile(text)[1], expected, sha)
+
+
+class GreenBaseTests(TrackRTestCase):
+    """Amendment 1: every required validation must pass at the setup commit before any model session."""
+
+    def test_a_session_records_its_setup_validations(self) -> None:
+        record = self.session("U", FakeRunner(edits={"pkg/calc.py": CALC_FIXED}))
+        validations = record["setup_validations"]
+        self.assertTrue(validations["green"])
+        self.assertEqual([item["command"] for item in validations["validations"]], ["test -f pkg/calc.py"])
+        self.assertEqual(record["status"], "ran")
+
+    def test_a_red_base_starts_no_session_in_either_arm_and_costs_nothing(self) -> None:
+        task = make_task(self.base, self.head, required_validations=["test -f pkg/calc.py", "test -f pkg/not-yet.py"])
+        for arm in ("U", "S"):
+            runner = FakeRunner(edits={"pkg/calc.py": CALC_FIXED})
+            record = self.session(arm, runner, task)
+            self.assertEqual(record["status"], "base_not_green")
+            self.assertEqual([item["passed"] for item in record["setup_validations"]["validations"]], [True, False])
+            self.assertEqual([call for call in runner.calls if "-p" in call["argv"]], [])
+            self.assertEqual(runner.calls_to("automation/supervisor/run_next.py"), [])
+            self.assertEqual(pilot.charged(record, 4.5), 0.0)
+
+    def test_selection_rejects_a_candidate_whose_validations_fail_at_base(self) -> None:
+        green = select_module.green_base_check(
+            self.repo, self.base, ["test -f pkg/calc.py"], runner=FakeRunner(), environ=self.environ, work_dir=self.work
+        )
+        red = select_module.green_base_check(
+            self.repo, self.base, ["test -f pkg/not-yet.py"], runner=FakeRunner(), environ=self.environ, work_dir=self.work
+        )
+        self.assertTrue(green["green"])
+        self.assertFalse(red["green"])
+        pr = {
+            "number": 1,
+            "title": "PR 1",
+            "body": "",
+            "mergedAt": "2026-11-14T00:00:00Z",
+            "mergeCommit": {"oid": self.head},
+            "files": [{"path": "automation/tests/test_calc.py"}, {"path": "pkg/calc.py"}],
+        }
+        scope = make_task(self.base, self.head, required_validations=["test -f pkg/not-yet.py"])
+        tasks, audit = select_module.select_tasks(
+            [pr],
+            self.repo,
+            runner=FakeRunner(),
+            environ=self.environ,
+            work_dir=self.work,
+            patch=BASE_PATCH,
+            scopes={1: scope},
+        )
+        self.assertEqual(tasks, [])
+        self.assertFalse(audit[0]["checks"]["green_base"])
+        self.assertIn("fails at base_sha+patch", audit[0]["reasons"][0])
+        self.assertEqual(audit[0]["green_base"]["validations_from"], "the task's blinded scope")
+
+    def test_selection_keeps_a_blinded_scope_unchanged_and_checks_new_tasks_with_the_default_gate(self) -> None:
+        pr = {
+            "number": 1,
+            "title": "PR 1",
+            "body": "",
+            "mergedAt": "2026-11-14T00:00:00Z",
+            "mergeCommit": {"oid": self.head},
+            "files": [{"path": "automation/tests/test_calc.py"}, {"path": "pkg/calc.py"}],
+        }
+        scope = {**make_task(self.base, self.head), "scope_provenance": {"by": "blinded writer"}}
+        (kept,), _ = select_module.select_tasks(
+            [pr],
+            self.repo,
+            runner=FakeRunner(),
+            environ=self.environ,
+            work_dir=self.work,
+            patch=BASE_PATCH,
+            scopes={1: scope},
+        )
+        for field in (*SCOPE_FIELDS, "scope_provenance"):
+            self.assertEqual(kept[field], scope[field], field)
+        self.assertEqual(kept["scope_status"], "kept from the earlier blinded scope")
+        calls = FakeRunner()
+        _, (entry,) = select_module.select_tasks(
+            [pr], self.repo, runner=calls, environ=self.environ, work_dir=self.work, patch=BASE_PATCH
+        )
+        self.assertEqual(entry["green_base"]["validations_from"], "DEFAULT_REQUIRED_VALIDATIONS (no scope yet)")
+        ran = [call["argv"][2] for call in calls.calls if call["argv"][:2] == ["/bin/sh", "-c"]]
+        self.assertEqual(ran, list(DEFAULT_REQUIRED_VALIDATIONS))
+
+
+class InterruptTests(TrackRTestCase):
+    """A signal to the pilot or driver kills the running session's process group and records it."""
+
+    def test_sigterm_kills_the_sessions_process_group_and_the_caller_sees_interrupted(self) -> None:
+        pid_file = self.tmp / "grandchild.pid"
+        marker = self.tmp / "marker.txt"
+        script = self.tmp / "child.py"
+        script.write_text(
+            "import sys\n"
+            "from pathlib import Path\n"
+            "from automation.benchmark.trackr.common import Interrupted, install_interrupt_handlers, subprocess_runner\n"
+            "install_interrupt_handlers()\n"
+            "try:\n"
+            f"    subprocess_runner(['/bin/sh', '-c', 'sleep 300 & echo $! > {pid_file}; wait'], Path('.'), {{'PATH': '/bin:/usr/bin'}}, 600)\n"
+            f"    Path({str(marker)!r}).write_text('finished')\n"
+            "except Interrupted as error:\n"
+            f"    Path({str(marker)!r}).write_text('interrupted ' + str(error.signum))\n"
+            "    sys.exit(143)\n"
+        )
+        child = subprocess.Popen([sys.executable, str(script)], cwd=REPO_ROOT, env={**os.environ, "PYTHONPATH": str(REPO_ROOT)})
+        self.addCleanup(child.kill)
+        deadline = time.monotonic() + 30
+        while not (pid_file.exists() and pid_file.read_text().strip()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        grandchild = int(pid_file.read_text())
+        child.send_signal(signal.SIGTERM)
+        self.assertEqual(child.wait(timeout=30), 143)
+        self.assertEqual(marker.read_text(), f"interrupted {int(signal.SIGTERM)}")
+        deadline = time.monotonic() + 10
+        while _alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(_alive(grandchild), "the session's child outlived the interrupted pilot")
+
+    def test_an_interrupted_session_is_recorded_and_the_interrupt_goes_on(self) -> None:
+        runner = FakeRunner(interrupt_on=lambda argv: argv[0] == "claude" and "-p" in argv)
+        with self.assertRaises(Interrupted):
+            driver.run_session(make_task(self.base, self.head), "U", self.repo, self.tmp / "out" / "U", self.config(runner))
+        record = read_json(self.tmp / "out" / "U" / "record.json")
+        self.addCleanup(driver.cleanup_session, record)
+        self.assertEqual((record["status"], record["phase"], record["interrupted_by"]), ("interrupted", "session", "SIGTERM"))
+        self.assertTrue(record["setup_validations"]["green"])
+        self.assertEqual(pilot.charged(record, 4.5), 4.5)  # no measurable cost, so the full cap
+
+    def test_the_pilot_writes_its_results_then_passes_the_interrupt_on(self) -> None:
+        runner = FakeRunner(
+            edits={"pkg/calc.py": CALC_FIXED}, interrupt_on=lambda argv: argv[1:2] == ["automation/supervisor/run_next.py"]
+        )
+        out = self.tmp / "pilot"
+        with self.assertRaises(Interrupted):
+            pilot.run_pilot([make_task(self.base, self.head)], self.repo, out, self.config(runner), rng=random.Random(1))
+        rows = [json.loads(line) for line in (out / "results.jsonl").read_text().splitlines()]
+        self.assertEqual([(row["arm"], row["record"]["status"]) for row in rows], [("U", "ran"), ("S", "interrupted")])
+        summary = read_json(out / "summary.json")
+        self.assertIn("interrupted by SIGTERM during pr1 arm S", summary["stopped"])
+        self.assertEqual(summary["arms"]["S"]["interrupted"], 1)
+        self.assertEqual(list(self.work.iterdir()), [], "an interrupted session's clone is still removed")
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # A zombie still answers kill(0); it has exited, which is what matters here.
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
+class ReviewFindingsTests(TrackRTestCase):
+    """The /code-review max findings on #297, one test each."""
+
+    def test_a_session_error_is_recorded_and_the_pilot_still_writes_its_mapping_and_summary(self) -> None:
+        calls = []
+        runner = FakeRunner(edits={"pkg/calc.py": CALC_FIXED})
+
+        def session(task, arm, mirror, session_dir, config):
+            calls.append(arm)
+            if len(calls) == 2:
+                session_dir.mkdir(parents=True, exist_ok=True)
+                write_json(session_dir / "record.json", {"task": "pr1", "arm": arm, "phase": "session"})
+                raise RuntimeError("git exploded")
+            return driver.run_session(task, arm, mirror, session_dir, config)
+
+        tasks = [make_task(self.base, self.head, number=n, id=f"pr{n}") for n in (1, 2)]
+        out = self.tmp / "pilot"
+        summary = pilot.run_pilot(tasks, self.repo, out, self.config(runner), session_fn=session, rng=random.Random(3))
+        self.assertEqual(calls, ["U", "S", "S", "U"], "the pilot went on after the error")
+        rows = [json.loads(line) for line in (out / "results.jsonl").read_text().splitlines()]
+        self.assertEqual(rows[1]["record"]["status"], "session_error")
+        self.assertIn("git exploded", rows[1]["record"]["error"])
+        self.assertEqual(summary["spent_usd"], 1.25 * 3 + 4.5)  # an unknown cost counts as the full cap
+        self.assertEqual(len(read_json(out / "mapping.json")["sessions"]), 3)
+        self.assertTrue((out / "summary.json").exists())
+
+    def test_an_oracle_error_keeps_the_session_and_its_cost(self) -> None:
+        def broken_oracle(*args, **kwargs):
+            raise RuntimeError("oracle clone failed")
+
+        out = self.tmp / "pilot"
+        summary = pilot.run_pilot(
+            [make_task(self.base, self.head)], self.repo, out, self.config(FakeRunner()), oracle_fn=broken_oracle
+        )
+        rows = [json.loads(line) for line in (out / "results.jsonl").read_text().splitlines()]
+        self.assertEqual([row["record"]["oracle_error"] for row in rows], ["RuntimeError: oracle clone failed"] * 2)
+        self.assertEqual(summary["spent_usd"], 2.5)
+        self.assertTrue((out / "mapping.json").exists())
+
+    def test_review_directories_are_written_together_after_every_session_in_an_order_unrelated_to_the_arm(self) -> None:
+        out = self.tmp / "pilot"
+        seen_during_sessions = []
+
+        def session(task, arm, mirror, session_dir, config):
+            seen_during_sessions.append((out / "review").exists() and any((out / "review").iterdir()))
+            return driver.run_session(task, arm, mirror, session_dir, config)
+
+        tasks = [make_task(self.base, self.head, number=n, id=f"pr{n}") for n in (1, 2)]
+        pilot.run_pilot(tasks, self.repo, out, self.config(FakeRunner(edits={"pkg/calc.py": CALC_FIXED})), session_fn=session)
+        self.assertEqual(seen_during_sessions, [False] * 4, "no review directory exists before every session is done")
+        for path in (out / "review").rglob("*"):
+            self.assertEqual(path.stat().st_mtime, pilot.REVIEW_MTIME, path)
+        # The write order follows the shuffle, not the plan: over seeds it takes more than one arm order.
+        pending = [
+            pilot.PendingReview(task=f"pr{n // 2}", arm=arm, session_dir="", order=n, patch="", task_text="")
+            for n, arm in enumerate(["U", "S", "S", "U", "U", "S"])
+        ]
+        orders = set()
+        for seed in range(12):
+            target = self.tmp / f"reviews-{seed}"
+            created: list[str] = []
+            original = Path.mkdir
+
+            def recording_mkdir(path, *args, _created=created, **kwargs):
+                original(path, *args, **kwargs)
+                if path.parent.name == "review":
+                    _created.append(path.name)
+
+            with unittest.mock.patch.object(Path, "mkdir", recording_mkdir):
+                mapping = pilot.write_reviews(target, pending, random.Random(seed))
+            orders.add(tuple(mapping[review_id]["arm"] for review_id in created))
+        self.assertGreater(len(orders), 1)
+
+    def test_a_background_child_holding_the_output_open_is_not_a_timeout(self) -> None:
+        pid_file = self.tmp / "bg.pid"
+        started = time.monotonic()
+        completed = subprocess_runner(
+            ["/bin/sh", "-c", f"sleep 60 & echo $! > {pid_file}; echo finished"], self.tmp, {"PATH": "/bin:/usr/bin"}, 20
+        )
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertEqual((completed.returncode, completed.timed_out, completed.stdout.strip()), (0, False, "finished"))
+        deadline = time.monotonic() + 10
+        background = int(pid_file.read_text())
+        while _alive(background) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(_alive(background), "the command's leftover child was not collected")
+
+    def test_the_driver_cli_preflights_claude_and_scores_the_session_before_removing_its_clone(self) -> None:
+        tasks_file = self.tmp / "tasks.json"
+        write_json(tasks_file, {"base_patch": BASE_PATCH.record(), "tasks": [make_task(self.base, self.head)]})
+        argv = ["--tasks", str(tasks_file), "--task", "pr1", "--arm", "U", "--mirror", str(self.repo)]
+        argv += ["--session-dir", str(self.tmp / "cli"), "--yes", "--claude-bin", "/nonexistent/claude"]
+        with (
+            unittest.mock.patch.object(driver, "claude_preflight", return_value=["--max-budget-usd"]) as preflight,
+            unittest.mock.patch.object(driver, "run_session") as run,
+        ):
+            self.assertEqual(driver.main(argv), 2)
+        preflight.assert_called_once()
+        run.assert_not_called()
+
+        scored = []
+        clone = self.tmp / "trackr-session-x" / "repo"
+        clone.mkdir(parents=True)
+        record = {"status": "ran", "paths": {"clone": str(clone), "root": str(clone.parent)}, "setup_sha": "a", "final_sha": "b"}
+
+        def evaluate(task, session_clone, *args, **kwargs):
+            scored.append(session_clone.exists())
+            return {"hidden_tests_pass": True}
+
+        with (
+            unittest.mock.patch.object(driver, "claude_preflight", return_value=[]),
+            unittest.mock.patch.object(driver, "run_session", return_value=record),
+            unittest.mock.patch.object(driver, "evaluate", evaluate),
+        ):
+            self.assertEqual(driver.main(argv), 0)
+        self.assertEqual(scored, [True], "the oracle ran while the clone still existed")
+        self.assertFalse(clone.parent.exists(), "the clone is removed once scored")
+        self.assertEqual(read_json(self.tmp / "cli" / "record.json")["oracle"], {"hidden_tests_pass": True})
+
+    def test_the_oracle_installs_the_hidden_tests_support_files(self) -> None:
+        env = isolated_environment(os.environ, self.tmp / "source-private")
+        git(["checkout", "--quiet", "-b", "with-helper", self.head], self.repo, env)
+        (self.repo / "automation/tests/calc_cases.py").write_text("CASES = [(2, 3, 5), (1, 1, 2)]\n")
+        (self.repo / "automation/tests/test_calc.py").write_text(
+            "from automation.tests.calc_cases import CASES\nfrom pkg.calc import add\n\n\n"
+            "def test_add():\n    assert all(add(a, b) == c for a, b, c in CASES)\n"
+        )
+        (self.repo / "automation/tests/__init__.py").write_text("")
+        _commit_all(self.repo, env, "head with a helper")
+        head = git(["rev-parse", "HEAD"], self.repo, env).strip()
+        task = make_task(
+            self.base, head, hidden_test_support_files=["automation/tests/__init__.py", "automation/tests/calc_cases.py"]
+        )
+        runner = FakeRunner(edits={"pkg/calc.py": CALC_FIXED})
+        record = self.session("U", runner, task)
+        verdict = oracle.evaluate(
+            task,
+            Path(record["paths"]["clone"]),
+            record["setup_sha"],
+            record["final_sha"],
+            self.repo,
+            runner=runner,
+            environ=self.environ,
+        )
+        self.assertTrue(verdict["hidden_tests_pass"], verdict["hidden_tests"]["output_tail"])
+
+    def test_a_scope_needs_its_provenance_and_is_refused_when_the_diff_was_seen(self) -> None:
+        task = make_task(self.base, self.head)
+        self.assertEqual(scope_errors(task), [])
+        self.assertIn("scope_provenance is missing", scope_errors({**task, "scope_provenance": None}))
+        seen = {**BLIND_PROVENANCE, "inputs": "the PR's title, body and diff; I saw the diff"}
+        self.assertTrue(any("diff" in error for error in scope_errors({**task, "scope_provenance": seen})))
+        self.assertTrue(
+            any(
+                "unknown keys" in error
+                for error in scope_errors({**task, "scope_provenance": {**BLIND_PROVENANCE, "diff_seen": False}})
+            )
+        )
+        self.assertEqual(sorted(select_module.SCOPE_TEMPLATE["scope_provenance"]), sorted(SCOPE_PROVENANCE_FIELDS))
+
+    def test_an_arm_u_edit_to_a_supervisor_owned_path_is_out_of_scope(self) -> None:
+        runner = FakeRunner(edits={"pkg/calc.py": CALC_FIXED, "automation/queue/slices.json": "{}"})
+        task = make_task(self.base, self.head)
+        record = self.session("U", runner, task)
+        verdict = oracle.evaluate(
+            task,
+            Path(record["paths"]["clone"]),
+            record["setup_sha"],
+            record["final_sha"],
+            self.repo,
+            runner=runner,
+            environ=self.environ,
+        )
+        self.assertEqual(verdict["out_of_scope_paths"], ["automation/queue/slices.json"])
+        env = isolated_environment(os.environ, self.tmp / "check")
+        patch = pilot.review_patch(Path(record["paths"]["clone"]), record["setup_sha"], record["final_sha"], env)
+        self.assertIn("automation/queue/slices.json", patch)
+
+
+class VoidTaskSetTests(TrackRTestCase):
+    def test_a_real_run_refuses_a_void_task_set_but_a_dry_run_may_use_it(self) -> None:
+        tasks_file = self.tmp / "void.json"
+        write_json(tasks_file, {"status": "void", "void_reason": "floor effect", "base_patch": BASE_PATCH.record(), "tasks": []})
+        out = self.tmp / "void-out"
+        common = ["--tasks", str(tasks_file), "--cache-dir", str(self.tmp / "cache")]
+        self.assertEqual(pilot.main([*common, "--out", str(out), "--yes"]), 2)
+        argv = ["--tasks", str(tasks_file), "--task", "pr1", "--arm", "U", "--mirror", str(self.repo), "--session-dir", str(out)]
+        self.assertEqual(driver.main([*argv, "--yes"]), 2)
+
+
 class FrozenTaskSetTests(unittest.TestCase):
     """The committed pilot task set, and a dry run of the pilot over it with placeholder scopes."""
 
     def setUp(self) -> None:
         self.data = read_json(TASKS_FILE)
 
-    def test_the_frozen_set_has_six_tasks_that_passed_every_check_and_a_blinded_scope(self) -> None:
+    def test_the_frozen_set_passed_every_check_and_each_task_has_a_blinded_scope_or_none_yet(self) -> None:
         tasks = self.data["tasks"]
-        self.assertEqual(len(tasks), 6)
-        self.assertEqual(len({task["number"] for task in tasks}), 6)
+        self.assertLessEqual(len(tasks), select_module.TASK_COUNT)
+        self.assertEqual(len({task["number"] for task in tasks}), len(tasks))
         for task in tasks:
             self.assertTrue(all(task["checks"].values()), task["number"])
+            self.assertTrue(task["checks"]["green_base"], task["number"])
+            self.assertTrue(task["green_base"]["green"], task["number"])
             self.assertTrue(task["hidden_tests"])
             self.assertLessEqual(task["human_solution"]["files_changed"], select_module.MAX_FILES_CHANGED)
             self.assertFalse(any(path.startswith(select_module.EXCLUDED_PREFIXES) for path in task["human_solution"]["files"]))
-            self.assertEqual(scope_errors(task), [], task["number"])
-            # Written blind, from the pull request's description only, and recorded as such.
-            self.assertIn("title and body only", task["scope_provenance"]["inputs"])
+            if task["scope_status"] == "new: needs a blinded scope":
+                self.assertEqual(
+                    len(scope_errors(task)),
+                    len(SCOPE_FIELDS) + len(SCOPE_PROVENANCE_FIELDS),
+                    "a new task's scope and its provenance are left to a blinded writer",
+                )
+                self.assertEqual(sorted(task["scope_provenance"]), sorted(SCOPE_PROVENANCE_FIELDS))
+            else:
+                self.assertEqual(scope_errors(task), [], task["number"])
+                # Written blind, from the pull request's description only, and recorded as such.
+                self.assertIn("title and body only", task["scope_provenance"]["inputs"])
+        self.assertEqual(
+            self.data["provenance"]["task_changes"]["need_blinded_scope"],
+            [task["number"] for task in tasks if task["scope_status"] == "new: needs a blinded scope"],
+        )
         kept = [entry["number"] for entry in self.data["audit"] if entry["decision"] == "kept"]
         self.assertEqual(kept, [task["number"] for task in tasks])
         self.assertTrue(all(entry["reasons"] for entry in self.data["audit"]))
-        self.assertEqual(self.data["provenance"]["model_sessions"], 0)
-        self.assertEqual(self.data["overlay"]["commit"], OVERLAY.commit)
-        self.assertTrue(all(task["oracle"]["overlay"] == OVERLAY.commit for task in tasks))
+        # The record is true to what ran: R1 pilot v1's real sessions, and the set is void.
+        self.assertEqual(self.data["provenance"]["model_sessions"], 3)
+        self.assertEqual(self.data["status"], "void")
+        self.assertIn("floor effect", self.data["void_reason"])
+        self.assertNotIn("preregistered", json.dumps(self.data["provenance"]["amendments"]))
+        self.assertIn("blinded subagents", self.data["scope_instructions"])
+        self.assertEqual(self.data["base_patch"]["source_commit"], BASE_PATCH.source_commit)
+        self.assertNotIn("overlay", self.data)
+        self.assertTrue(all(task["oracle"]["base_patch"] == BASE_PATCH.id for task in tasks))
+        self.assertEqual([amendment["id"] for amendment in self.data["provenance"]["amendments"]], [0, 1, 2])
 
     def test_a_dry_run_over_the_frozen_set_with_placeholder_scopes(self) -> None:
         env = isolated_environment(os.environ, Path(tempfile.mkdtemp(prefix="trackr-env-")))
@@ -660,24 +1117,25 @@ class FrozenTaskSetTests(unittest.TestCase):
             "allowed_paths": ["./"],
             "required_validations": ["true"],
             "max_files_changed": 15,
+            "scope_provenance": dict(BLIND_PROVENANCE),
         }
         tasks = [{**task, **placeholder} for task in self.data["tasks"]]
         with tempfile.TemporaryDirectory(prefix="trackr-frozen-") as scratch:
             root = Path(scratch).resolve()
             runner = FakeRunner(edits={"TRACKR_DRY_RUN.txt": "placeholder\n"})
-            overlay = Overlay.from_record(self.data["overlay"])
-            config = driver.DriverConfig(runner=runner, environ={**os.environ, "HOME": str(root)}, work_dir=root, overlay=overlay)
+            patch = BasePatch.from_record(self.data["base_patch"])
+            config = driver.DriverConfig(runner=runner, environ={**os.environ, "HOME": str(root)}, work_dir=root, patch=patch)
             summary = pilot.run_pilot(tasks, REPO_ROOT, root / "out", config, oracle_fn=lambda *a, **k: _placeholder_verdict())
-            self.assertEqual(summary["sessions_run"], 12)
+            self.assertEqual(summary["sessions_run"], 2 * len(tasks))
             rows = [json.loads(line) for line in (root / "out" / "results.jsonl").read_text().splitlines()]
-            first, second = (f"pr{task['number']}" for task in tasks[:2])
-            self.assertEqual(
-                [(row["task"], row["arm"]) for row in rows[:4]], [(first, "U"), (first, "S"), (second, "S"), (second, "U")]
-            )
+            expected = [(f"pr{task['number']}", arm) for index, task in enumerate(tasks) for arm in pilot.arm_order(index)]
+            self.assertEqual([(row["task"], row["arm"]) for row in rows], expected)
             records = [row["record"] for row in rows]
-            self.assertTrue(all(record["overlay"]["commit"] == OVERLAY.commit for record in records))
+            self.assertTrue(all(record["base_patch"]["id"] == BASE_PATCH.id for record in records))
+            self.assertTrue(all(all(record["base_patch"]["verified"].values()) for record in records))
+            self.assertTrue(all(record["setup_validations"]["green"] for record in records))
             self.assertTrue(all(record["solution_absent_from_clone"] and record["remotes"] == [] for record in records))
-            self.assertEqual(len(read_json(root / "out" / "mapping.json")["sessions"]), 12)
+            self.assertEqual(len(read_json(root / "out" / "mapping.json")["sessions"]), 2 * len(tasks))
 
 
 def _placeholder_verdict() -> dict[str, Any]:

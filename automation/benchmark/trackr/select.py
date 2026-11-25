@@ -15,8 +15,8 @@ the default) to 2026-11-23T23:59:59Z, in merge order. A candidate is kept when:
    ``head_sha`` into a clean clone at ``base_sha``, fail or error there, and pass at ``head_sha``.
 
 The first six kept are the pilot set. Every candidate's checks and the reason it was kept or
-rejected go into the task file's ``audit``. The scope fields stay empty: a person fills them in
-from each pull request's description alone, without its diff, and records that.
+rejected go into the task file's ``audit``. The scope fields stay empty: blinded subagents (the owner's
+decision) fill them in from each pull request's description alone, without its diff, and record that.
 
 Run it as a module, never as a script (a script's directory would shadow the standard library's
 ``select``)::
@@ -29,6 +29,7 @@ It reads GitHub (``gh pr list`` and a mirror clone) and starts no model.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -47,11 +48,14 @@ from .common import (
     UPSTREAM,
     UPSTREAM_REPOSITORY,
     UV_SYNC,
-    OVERLAY,
+    DEFAULT_REQUIRED_VALIDATIONS,
+    BASE_PATCH,
+    SCOPE_FIELDS,
+    SCOPE_PROVENANCE_FIELDS,
     CommandRunner,
-    Overlay,
+    BasePatch,
+    PatchError,
     TrackRError,
-    apply_overlay,
     clone_at,
     ensure_mirror,
     git,
@@ -59,8 +63,11 @@ from .common import (
     isolated_environment,
     name_status,
     numstat,
+    prepare_setup,
+    read_json,
     require_outside_repository,
     run_hidden_tests,
+    run_validations,
     subprocess_runner,
     tail,
     write_json,
@@ -85,8 +92,20 @@ SELECTION_RULE = {
         "not documentation only (some file is neither under docs/ nor a .md file nor mkdocs.yml)",
         "nothing under " + ", ".join(EXCLUDED_PREFIXES),
         "the merge commit's diff from its first parent is exactly the pull request's file list",
-        "hidden tests fail or error at base_sha+overlay and pass at head_sha+overlay",
+        "the base patch applies at base_sha and head_sha and takes (amendment 2)",
+        "hidden tests fail or error at base_sha+patch and pass at head_sha+patch",
+        "green base: every required validation passes at base_sha+patch (amendment 1)",
     ],
+    "base_patch": f"#279's handoff-rule fix ({BASE_PATCH.source_commit}) to {BASE_PATCH.path} and nothing else: the "
+    "one rule-building line is rewritten so a handoff outside the repository gets Edit(//abs), and the patched "
+    "slice_settings is called to check that an outside handoff gets the absolute rule and no git add rule, and an "
+    "inside handoff is unchanged. A base that already has the fix is left as it is. Every session, oracle run and "
+    "green-base check starts from base (or head) plus this patch, after uv sync.",
+    "green_base": "in a clean clone at base_sha: uv sync --frozen, the base patch, commit that as the setup, and run "
+    "every required validation. They are the task's own blinded required_validations, or for a candidate with no "
+    "blinded scope yet: "
+    + "; ".join(DEFAULT_REQUIRED_VALIDATIONS)
+    + ". The pilot runs the same check at every session's setup commit, in both arms, before any model session.",
     "base_sha": "the first parent of the squash merge commit",
     "head_sha": "the squash merge commit",
     "hidden_tests": "automation/tests/test_*.py files the pull request added or changed",
@@ -94,10 +113,6 @@ SELECTION_RULE = {
     "`uv run --frozen python -m pytest -q -p no:cacheprovider <hidden tests>`. Fails at base: pytest exits 1 or 2 "
     "(a failure, an error or an import error). Passes at head: pytest exits 0 having run at least one test.",
     "count": TASK_COUNT,
-    "overlay": "both oracle runs, like every session, replace "
-    + ", ".join(OVERLAY.paths)
-    + f" with their contents at {OVERLAY.commit} (v0.5.3) before uv sync, so base means base+overlay and head means "
-    "head+overlay. A pull request that needs its own supervisor to pass is already excluded by the path rule.",
 }
 
 SCOPE_TEMPLATE: dict[str, Any] = {
@@ -105,12 +120,9 @@ SCOPE_TEMPLATE: dict[str, Any] = {
     "allowed_paths": [],
     "required_validations": [],
     "max_files_changed": None,
-    "scope_provenance": {
-        "written_by": "",
-        "written_at": "",
-        "source": "the pull request's title and description only, without its diff",
-        "diff_seen": None,
-    },
+    # The keys common.SCOPE_PROVENANCE_FIELDS requires; a blinded scope writer fills them in. ``inputs``
+    # must say the scope came from the title and body only, without the diff.
+    "scope_provenance": {name: "" for name in SCOPE_PROVENANCE_FIELDS},
 }
 
 
@@ -193,21 +205,20 @@ def oracle_check(
     head_sha: str,
     hidden_tests: Sequence[str],
     *,
+    support: Sequence[str] = (),
     runner: CommandRunner,
     environ: Mapping[str, str],
     work_dir: Optional[Path] = None,
-    overlay: Optional[Overlay] = None,
+    patch: Optional[BasePatch] = None,
 ) -> dict[str, Any]:
     """The hidden tests at base (expected to fail) and at head (expected to pass), each in a clean clone
-    with the overlay applied, as every session's clone has it."""
+    with the base patch applied, as every session's clone has it."""
     result: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="trackr-select-", dir=work_dir) as scratch:
         root = Path(scratch)
         env = isolated_environment(environ, root / "private")
         for label, sha in (("base", base_sha), ("head", head_sha)):
             clone = clone_at(mirror, sha, root / label, env)
-            if overlay is not None:
-                result[f"{label}_overlay_files"] = len(apply_overlay(mirror, clone, overlay, env))
             synced = runner(list(UV_SYNC), clone, env, SYNC_TIMEOUT_SECONDS)
             if synced.returncode != 0:
                 result[label] = {
@@ -215,7 +226,8 @@ def oracle_check(
                     "uv_sync_output": tail(synced.stdout + synced.stderr, 15),
                 }
                 continue
-            outcome = run_hidden_tests(runner, mirror, head_sha, hidden_tests, clone, env, PYTEST_TIMEOUT_SECONDS)
+            result[f"{label}_setup"] = commit_setup(clone, patch, env, runner)
+            outcome = run_hidden_tests(runner, mirror, head_sha, hidden_tests, clone, env, PYTEST_TIMEOUT_SECONDS, support)
             outcome["output_tail"] = tail(outcome["output_tail"], 15 if label == "base" else 3)
             result[label] = {"uv_sync_exit_code": 0, **outcome}
     base, head = result.get("base", {}), result.get("head", {})
@@ -224,15 +236,48 @@ def oracle_check(
     return result
 
 
+def commit_setup(clone: Path, patch: Optional[BasePatch], env: Mapping[str, str], runner: CommandRunner) -> dict[str, Any]:
+    """The sessions' setup commit, minus arm S's queue: the base patch, checked."""
+    prepared = prepare_setup(clone, patch, env, runner)
+    git(["commit", "--quiet", "--allow-empty", "-m", "Track R setup"], clone, env)
+    return {"patch": prepared["patch"]}
+
+
+def green_base_check(
+    mirror: Path,
+    base_sha: str,
+    validations: Sequence[str],
+    *,
+    runner: CommandRunner,
+    environ: Mapping[str, str],
+    work_dir: Optional[Path] = None,
+    patch: Optional[BasePatch] = None,
+) -> dict[str, Any]:
+    """Every required validation at base+patch, before anything else changes.
+
+    A validation that already fails there would fail whatever the agent does, and arm S's agent,
+    seeing it fail at baseline, stops blocked: it biases the experiment against S.
+    """
+    with tempfile.TemporaryDirectory(prefix="trackr-green-", dir=work_dir) as scratch:
+        root = Path(scratch)
+        env = isolated_environment(environ, root / "private")
+        clone = clone_at(mirror, base_sha, root / "base", env)
+        synced = runner(list(UV_SYNC), clone, env, SYNC_TIMEOUT_SECONDS)
+        if synced.returncode != 0:
+            return {"green": False, "uv_sync_exit_code": synced.returncode, "validations": []}
+        setup = commit_setup(clone, patch, env, runner)
+        return {"setup": setup, **run_validations(validations, clone, env, runner)}
+
+
 def oracle_reasons(oracle: Mapping[str, Any]) -> list[str]:
     reasons = []
     for label in ("base", "head"):
         if oracle.get(label, {}).get("uv_sync_exit_code", 0) != 0:
-            reasons.append(f"uv sync --frozen failed at {label}_sha with the overlay, so the oracle could not run")
+            reasons.append(f"uv sync --frozen failed at {label}_sha with the base patch, so the oracle could not run")
     if not oracle["fails_at_base"] and oracle.get("base", {}).get("uv_sync_exit_code") == 0:
-        reasons.append("the hidden tests already pass at base_sha with the overlay")
+        reasons.append("the hidden tests already pass at base_sha with the base patch")
     if not oracle["passes_at_head"] and oracle.get("head", {}).get("uv_sync_exit_code") == 0:
-        reasons.append("the hidden tests do not pass at head_sha with the overlay")
+        reasons.append("the hidden tests do not pass at head_sha with the base patch")
     return reasons
 
 
@@ -245,9 +290,17 @@ def select_tasks(
     work_dir: Optional[Path] = None,
     count: int = TASK_COUNT,
     progress: Any = None,
-    overlay: Optional[Overlay] = OVERLAY,
+    patch: Optional[BasePatch] = BASE_PATCH,
+    scopes: Optional[Mapping[int, Mapping[str, Any]]] = None,
+    green_base: bool = True,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """The first ``count`` candidates that pass every check, and the audit of every candidate."""
+    """The first ``count`` candidates that pass every check, and the audit of every candidate.
+
+    ``scopes`` are blinded scopes already written, by pull request number. A kept task keeps its
+    scope unchanged, and the green-base check uses its ``required_validations``; a candidate with no
+    scope yet is checked with ``DEFAULT_REQUIRED_VALIDATIONS`` and kept with empty scope fields.
+    """
+    scopes = scopes or {}
     tasks: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="trackr-select-env-", dir=work_dir) as scratch:
@@ -265,16 +318,26 @@ def select_tasks(
             if not reasons:
                 if progress:
                     progress(f"oracle check for #{pr['number']} {pr['title']}")
-                oracle = oracle_check(
-                    mirror,
-                    static["base_sha"],
-                    static["head_sha"],
-                    static["hidden_tests"],
-                    runner=runner,
-                    environ=environ,
-                    work_dir=work_dir,
-                    overlay=overlay,
-                )
+                try:
+                    oracle = oracle_check(
+                        mirror,
+                        static["base_sha"],
+                        static["head_sha"],
+                        static["hidden_tests"],
+                        support=static["hidden_test_support_files"],
+                        runner=runner,
+                        environ=environ,
+                        work_dir=work_dir,
+                        patch=patch,
+                    )
+                except PatchError as error:
+                    # The base patch did not apply or did not take: the task can't start from base+patch.
+                    entry["checks"]["base_patch_applies"] = False
+                    entry["oracle"] = f"not run: {error}"
+                    entry.update(decision="rejected", reasons=[f"the base patch fails here: {error}"], green_base="not run")
+                    audit.append(entry)
+                    continue
+                entry["checks"]["base_patch_applies"] = True
                 entry["checks"].update(
                     oracle_fails_at_base=oracle["fails_at_base"], oracle_passes_at_head=oracle["passes_at_head"]
                 )
@@ -292,10 +355,34 @@ def select_tasks(
                 }
             else:
                 entry["oracle"] = "not run: a cheaper check already rejected it"
+            scope = scopes.get(pr["number"])
+            green = None
+            if not reasons and green_base:
+                validations = list(scope["required_validations"]) if scope else list(DEFAULT_REQUIRED_VALIDATIONS)
+                if progress:
+                    progress(f"green-base check for #{pr['number']}")
+                green = green_base_check(
+                    mirror, static["base_sha"], validations, runner=runner, environ=environ, work_dir=work_dir, patch=patch
+                )
+                green["validations_from"] = "the task's blinded scope" if scope else "DEFAULT_REQUIRED_VALIDATIONS (no scope yet)"
+                entry["checks"]["green_base"] = green["green"]
+                entry["green_base"] = green
+                if not green["green"]:
+                    failing = [item["command"] for item in green["validations"] if not item["passed"]]
+                    reasons.append("a required validation fails at base_sha+patch: " + ", ".join(failing or ["uv sync"]))
+            elif not reasons:
+                entry["green_base"] = "not run"
+            else:
+                entry["green_base"] = "not run: an earlier check already rejected it"
             entry.update(decision="rejected" if reasons else "kept", reasons=reasons or ["passes every check"])
             audit.append(entry)
             if reasons or oracle is None:
                 continue
+            kept_scope = (
+                {field: copy.deepcopy(scope[field]) for field in (*SCOPE_FIELDS, "scope_provenance") if field in scope}
+                if scope
+                else copy.deepcopy(SCOPE_TEMPLATE)
+            )
             tasks.append(
                 {
                     "id": f"pr{pr['number']}",
@@ -309,8 +396,10 @@ def select_tasks(
                     "hidden_test_support_files": static["hidden_test_support_files"],
                     "human_solution": static["human_solution"],
                     "checks": entry["checks"],
-                    "oracle": {"overlay": overlay.commit if overlay else None, "base": oracle["base"], "head": oracle["head"]},
-                    **json.loads(json.dumps(SCOPE_TEMPLATE)),
+                    "oracle": {"base_patch": patch.id if patch else None, "base": oracle["base"], "head": oracle["head"]},
+                    "green_base": green,
+                    "scope_status": "kept from the earlier blinded scope" if scope else "new: needs a blinded scope",
+                    **kept_scope,
                 }
             )
     return tasks, audit
@@ -333,7 +422,8 @@ def provenance(pull_requests: Sequence[Mapping[str, Any]], source: str) -> dict[
         "python": platform.python_version(),
         "uv": tool,
         "platform": f"{platform.system()} {platform.machine()}",
-        "model_sessions": 0,
+        "model_sessions": REAL_SESSIONS["count"],
+        "model_sessions_detail": REAL_SESSIONS,
     }
 
 
@@ -347,7 +437,69 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pull-requests", type=Path, help="A saved `gh pr list` JSON to use instead of calling gh.")
     parser.add_argument("--out", type=Path, default=TASKS_FILE, help="The task file to write (default: %(default)s).")
     parser.add_argument("--count", type=int, default=TASK_COUNT)
+    parser.add_argument(
+        "--previous",
+        type=Path,
+        help="An earlier task file whose blinded scopes, amendments and history carry over (default: --out, if it exists).",
+    )
     return parser
+
+
+SCOPE_WRITERS = "Scopes are written by blinded subagents, one per task, by the owner's decision (2026-11-24), not by a person: each fills in task_statement, allowed_paths, required_validations and max_files_changed from the pull request's title and body only, without its diff or files, and records by, when, inputs and leakage_ignored in scope_provenance. The pilot refuses to start until every task has them."
+# Real model sessions made from this task set so far, all from R1 pilot v1, before amendments 1 and 2.
+REAL_SESSIONS = {
+    "count": 3,
+    "complete": 2,
+    "interrupted": 1,
+    "cost_usd_approx": 3.9,
+    "results": "discarded",
+    "note": "R1 pilot v1, run before amendments 1 and 2; stopped after 2 complete sessions and part of a third",
+}
+
+
+AMENDMENTS = [
+    {
+        "id": 0,
+        "date": "2026-11-24",
+        "made_after": "the R0 dry run, before any model session",
+        "why": "the dry run showed that each base's own supervisor, from before #279, gives a handoff outside the "
+        "repository the rule Edit(/abs), which Claude Code reads as relative to the settings file, so arm S could never "
+        "write its handoff",
+        "change": "every clone, in both arms, got automation/supervisor/, automation/schemas/ and automation/context/ "
+        "replaced by their v0.5.3 contents (b193297), and the oracle check was redone with that overlay",
+        "superseded_by": 2,
+    },
+    {
+        "id": 1,
+        "date": "2026-11-25",
+        "made_after": "the first 2 real R1 sessions and part of a third, about $3.90; their results are discarded",
+        "why": "with the overlay the base was red before the agent changed anything: `UV_PYTHON=3.12 make reusable-check` "
+        "failed at base+overlay, first at `settings_view.py --docs --check`. Arm S's agent saw a required validation fail "
+        "at baseline and stopped blocked with no commit. Every task would hit it, which biases the experiment against S.",
+        "change": "a new check, green base, added after real sessions had run: a task is kept only when every required validation passes at "
+        "its setup commit, and the pilot runs the same check at each session's setup, in both arms, before any model "
+        "session. Blinded scopes of tasks that still qualify are kept unchanged; no task's required_validations changed.",
+    },
+    {
+        "id": 2,
+        "date": "2026-11-25",
+        "made_after": "the same 2 real sessions, by the owner's decision, once the green-base check showed that with the "
+        "overlay only one task in the window qualified",
+        "why": "the overlay made every base's own tests disagree with the overlaid supervisor (the legacy-variable "
+        "removal version, run_next's warnings and prompt errors, the telemetry exporter), so their bases could never be "
+        "green, and a starting checkout with test files overlaid too would be one nobody ever shipped",
+        "change": "the overlay is dropped. Each base gets only #279's runner_profile.py fix for a handoff outside the "
+        "repository (Edit(//abs), no git add rule), checked by calling the patched slice_settings. Selection, with the "
+        "oracle check and the green-base check on base+patch, was rerun over the same window in the same merge order.",
+    },
+]
+# The driver also stopped setting BOUNDROOM_TELEMETRY=off in the environments it builds: that kill switch
+# broke the repository's own telemetry tests in `make reusable-check`, in every arm, check and oracle run.
+
+
+def previous_task_file(args: argparse.Namespace) -> Optional[dict[str, Any]]:
+    path = args.previous or (args.out if args.out.exists() else None)
+    return read_json(path) if path else None
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -358,26 +510,42 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pull_requests = json.loads(args.pull_requests.read_text(encoding="utf-8")) if args.pull_requests else fetch_pull_requests()
     with tempfile.TemporaryDirectory(prefix="trackr-mirror-env-") as scratch:
         mirror = ensure_mirror(args.source, args.cache_dir, isolated_environment(os.environ, Path(scratch)))
+    previous = previous_task_file(args)
+    scopes = {task["number"]: task for task in (previous or {}).get("tasks", []) if task.get("task_statement")}
     tasks, audit = select_tasks(
         pull_requests,
         mirror,
         work_dir=args.work_dir,
         count=args.count,
         progress=lambda message: print(message, file=sys.stderr),
+        scopes=scopes,
     )
+    record = provenance(pull_requests, args.source)
+    earlier = (previous or {}).get("provenance", {})
+    record["amendments"] = AMENDMENTS
+    record["earlier_selections"] = [
+        *earlier.get("earlier_selections", []),
+        *(
+            [{"selected_at": earlier.get("selected_at"), "tasks": [task["number"] for task in previous["tasks"]]}]
+            if previous and earlier.get("selected_at")
+            else []
+        ),
+    ]
+    previous_numbers = {task["number"] for task in (previous or {}).get("tasks", [])}
+    record["task_changes"] = {
+        "dropped": sorted(previous_numbers - {task["number"] for task in tasks}),
+        "added": [task["number"] for task in tasks if task["number"] not in previous_numbers],
+        "need_blinded_scope": [task["number"] for task in tasks if not task.get("task_statement")],
+    }
     write_json(
         args.out,
         {
             "schema": "boundroom.trackr.tasks/1",
             "spec": "SPEC-012 Track R, phase R0",
             "selection_rule": SELECTION_RULE,
-            "overlay": {**OVERLAY.record(), "source": args.source, "release": "v0.5.3"},
-            "provenance": provenance(pull_requests, args.source),
-            "scope_instructions": (
-                "A person fills in task_statement, allowed_paths, required_validations and max_files_changed for each task "
-                "from its title and body only, without looking at its diff or files, and records who did it and when in "
-                "scope_provenance. The pilot refuses to start until every task has them."
-            ),
+            "base_patch": {**BASE_PATCH.record(), "source": args.source, "replaces": "the v0.5.3 overlay (amendment 2)"},
+            "provenance": record,
+            "scope_instructions": SCOPE_WRITERS,
             "tasks": tasks,
             "audit": audit,
         },

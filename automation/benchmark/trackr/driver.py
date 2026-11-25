@@ -7,10 +7,11 @@ and SSH agent socket are removed, so nothing in the session can push or reach Gi
 operator's credentials. The driver runs ``uv sync --frozen`` (so the agent never needs the network
 for dependencies), makes one setup commit, runs the arm, and records the session's final commit.
 
-The setup commit replaces ``automation/supervisor/``, ``automation/schemas/`` and
-``automation/context/`` with their contents at the overlay commit (v0.5.3), in both arms, so the
-starting checkouts stay identical and arm S runs today's supervisor rather than the one the task's
-base shipped with. Arm S's setup commit also adds its queue.
+The setup commit applies the base patch, #279's handoff-rule fix to
+``automation/supervisor/runner_profile.py`` and nothing else, in both arms, so the starting
+checkouts stay identical and arm S's runner can write its handoff outside the repository. Arm S's
+setup commit also adds its queue. Before any model session, every required validation runs at the
+setup commit; a red base starts no session.
 
 **Arm U, unbounded.** ``claude -p "<task_statement>\\n\\nCommit your change when you are done."
 --output-format json --max-budget-usd <cap>`` with ``--permission-mode acceptEdits`` and a settings
@@ -38,6 +39,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -49,15 +51,19 @@ from typing import Any, Mapping, Optional, Sequence
 from automation.supervisor import runner_profile
 
 from .common import (
-    OVERLAY,
+    BASE_PATCH,
     SUPERVISOR_OWNED_PATHS,
     UV_SYNC,
     CommandRunner,
     Completed,
     TrackRError,
-    Overlay,
-    apply_overlay,
+    Interrupted,
+    PatchError,
+    BasePatch,
     clone_at,
+    install_interrupt_handlers,
+    prepare_setup,
+    run_validations,
     git,
     has_object,
     isolated_environment,
@@ -70,6 +76,7 @@ from .common import (
     task_id,
     write_json,
 )
+from .oracle import evaluate
 
 ARMS = ("U", "S")
 DEFAULT_CAP_USD = 4.50
@@ -124,8 +131,10 @@ class DriverConfig:
     s_session_transcript: bool = True
     # Dry runs: stage the human solution next to the clone for the fake Claude Code to apply.
     stage_human_patch: bool = False
-    # Today's supervisor, schemas and context in both arms' setup commit (the owner's decision).
-    overlay: Optional[Overlay] = OVERLAY
+    # #279's handoff-rule fix in both arms' setup commit (the owner's decision, amendment 2).
+    patch: Optional[BasePatch] = BASE_PATCH
+    # Run every required validation at the setup commit before the session (amendment 1).
+    check_green_base: bool = True
 
 
 # --- arm U ----------------------------------------------------------------------------------------
@@ -564,14 +573,15 @@ def session_environment(
 
 def setup_commit(
     clone: Path, arm: str, task: Mapping[str, Any], config: DriverConfig, env: Mapping[str, str], mirror: Path
-) -> tuple[str, list[str]]:
-    """The one setup commit: the overlay in both arms, and arm S's queue. Returns its sha and the overlay's files."""
-    overlaid = apply_overlay(mirror, clone, config.overlay, env) if config.overlay else []
+) -> tuple[str, dict[str, Any]]:
+    """The one setup commit: in both arms the base patch, in arm S also its queue. Returns its sha
+    and what the patch did."""
+    prepared = prepare_setup(clone, config.patch, env, config.runner)
     if arm == "S":
         write_json(clone / QUEUE_PATH, queue_data(task, config.timeout_seconds))
         git(["add", QUEUE_PATH], clone, env)
     git(["commit", "--quiet", "--allow-empty", "-m", "Track R setup"], clone, env)
-    return git(["rev-parse", "HEAD"], clone, env).strip(), overlaid
+    return git(["rev-parse", "HEAD"], clone, env).strip(), prepared
 
 
 def run_session(
@@ -611,6 +621,37 @@ def run_session(
         "solution_absent_from_clone": not has_object(clone, str(task["head_sha"]), base_env),
         "isolation_args": list(ISOLATION_ARGS) if config.isolate_user_config else [],
     }
+    try:
+        return _session_steps(task, arm, mirror, session_dir, config, record, root, base_env, clone)
+    except Interrupted as error:
+        # A signal reached the driver: the session's process group is already killed (subprocess_runner).
+        record.update(status="interrupted", interrupted_by=signal.Signals(error.signum).name)
+        record["usage"] = session_usage(transcript_usage(transcript_dirs(clone, config.environ)), None, config.cap_usd)
+        record["cost_usd"] = record["usage"]["cost_usd"]
+        write_json(session_dir / "record.json", record)
+        raise
+    except Exception as error:
+        # Recorded before it goes on, so the pilot can charge what the session spent and keep going.
+        record.update(status="session_error", error=f"{type(error).__name__}: {error}")
+        if record.get("phase") == "session":
+            record["usage"] = session_usage(transcript_usage(transcript_dirs(clone, config.environ)), None, config.cap_usd)
+            record["cost_usd"] = record["usage"]["cost_usd"]
+        write_json(session_dir / "record.json", record)
+        raise
+
+
+def _session_steps(
+    task: Mapping[str, Any],
+    arm: str,
+    mirror: Path,
+    session_dir: Path,
+    config: DriverConfig,
+    record: dict[str, Any],
+    root: Path,
+    base_env: Mapping[str, str],
+    clone: Path,
+) -> dict[str, Any]:
+    record["phase"] = "setup"
     if not record["solution_absent_from_clone"]:
         raise TrackRError(f"the clone for {task_id(task)} still holds head_sha {task['head_sha']}")
     synced = config.runner(list(UV_SYNC), clone, base_env, SYNC_TIMEOUT_SECONDS)
@@ -625,8 +666,26 @@ def run_session(
         staged.write_text(
             git(["diff", "--binary", str(task["base_sha"]), str(task["head_sha"])], mirror, base_env), encoding="utf-8"
         )
-    record["setup_sha"], overlaid = setup_commit(clone, arm, task, config, base_env, mirror)
-    record["overlay"] = {**config.overlay.record(), "files_changed": len(overlaid)} if config.overlay else None
+    try:
+        record["setup_sha"], prepared = setup_commit(clone, arm, task, config, base_env, mirror)
+    except PatchError as error:
+        record.update(status="patch_failed", error=str(error))
+        write_json(session_dir / "record.json", record)
+        return record
+    record["base_patch"] = prepared["patch"]
+    # The green-base precheck (amendment 1): every required validation at the setup commit, before
+    # any model session. A validation already failing there would fail whatever the agent did.
+    if config.check_green_base:
+        record["phase"] = "green_base_check"
+        record["setup_validations"] = run_validations(task["required_validations"], clone, base_env, config.runner)
+        dirty = git(["status", "--porcelain"], clone, base_env).strip()
+        if dirty:
+            record["setup_validations"]["left_tree_dirty"] = dirty.splitlines()[:20]
+            record["setup_validations"]["green"] = False
+        if not record["setup_validations"]["green"]:
+            record["status"] = "base_not_green"
+            write_json(session_dir / "record.json", record)
+            return record
 
     wrapper = None
     if arm == "S":
@@ -646,6 +705,7 @@ def run_session(
     record["env_names_recorded"] = recorded_env_names(env)
     record["arm_env"] = {name: env[name] for name in sorted(env) if base_env.get(name) != env[name]}
     record["claude_code_version"] = claude_version(config.runner, config.claude_bin, env, clone)
+    record["phase"] = "session"
 
     if arm == "U":
         settings_path = session_dir / "settings.json"
@@ -665,6 +725,7 @@ def run_session(
     (session_dir / "stderr.log").write_text(completed.stderr, encoding="utf-8")
     record.update(_outcome(task, arm, clone, record["setup_sha"], completed, output_text, session_dir, config, base_env, argv))
     _keep_fake_record(root, session_dir)
+    record["phase"] = "done"
     write_json(session_dir / "record.json", record)
     return record
 
@@ -759,7 +820,9 @@ def cleanup_session(record: Mapping[str, Any]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run one Track R session (SPEC-012). A real run is spending.")
+    parser = argparse.ArgumentParser(
+        description="Run one Track R session and score it with the oracle (SPEC-012). A real run is spending."
+    )
     parser.add_argument("--tasks", type=Path, required=True)
     parser.add_argument("--task", required=True, help="The task id, such as pr243.")
     parser.add_argument("--arm", choices=ARMS, required=True)
@@ -767,25 +830,69 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session-dir", type=Path, required=True, help="Outside any repository.")
     parser.add_argument("--cap-usd", type=float, default=DEFAULT_CAP_USD)
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument("--claude-bin", default="claude")
     parser.add_argument("--fake", choices=("human", "noop"), help="Use the fake Claude Code instead of a real session.")
     parser.add_argument("--yes", action="store_true", help="Required for a real session, which is spending.")
+    parser.add_argument("--keep-clone", action="store_true", help="Keep the session clone after it is scored.")
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """One session, then the oracle on its final commit, then the clone is removed.
+
+    The clone is scored here, before it goes, because nothing else can score it afterwards.
+    """
+
     args = build_parser().parse_args(argv)
     if not args.fake and not args.yes:
         print("stop: a real session is spending; pass --yes once a person has approved it, or --fake.", file=sys.stderr)
         return 2
-    tasks = {task_id(task): task for task in read_json(args.tasks)["tasks"]}
     data = read_json(args.tasks)
-    config = DriverConfig(cap_usd=args.cap_usd, timeout_seconds=args.timeout, overlay=Overlay.from_record(data.get("overlay")))
+    if data.get("status") == "void" and not args.fake:
+        print(
+            f"stop: this task set is void ({data.get('void_reason', 'no reason recorded')}); only a dry run may use it.",
+            file=sys.stderr,
+        )
+        return 2
+    tasks = {task_id(task): task for task in data["tasks"]}
+    config = DriverConfig(
+        cap_usd=args.cap_usd,
+        timeout_seconds=args.timeout,
+        claude_bin=args.claude_bin,
+        patch=BasePatch.from_record(data.get("base_patch")),
+    )
     if args.fake:
         config.claude_bin = str(write_fake_claude(args.session_dir / "fake-claude-bin", args.fake))
         config.stage_human_patch = args.fake == "human"
-    record = run_session(tasks[args.task], args.arm, args.mirror, args.session_dir, config)
+    args.session_dir.mkdir(parents=True, exist_ok=True)
+    missing = claude_preflight(config.runner, config.claude_bin, config.environ, args.session_dir)
+    if missing:
+        print(f"stop: {config.claude_bin} --help doesn't list {', '.join(missing)}", file=sys.stderr)
+        return 2
+    install_interrupt_handlers()
+    record: dict[str, Any] = {}
+    try:
+        record = run_session(tasks[args.task], args.arm, args.mirror, args.session_dir, config)
+        if record.get("status") == "ran":
+            record["oracle"] = evaluate(
+                tasks[args.task],
+                Path(record["paths"]["clone"]),
+                record["setup_sha"],
+                record["final_sha"],
+                args.mirror,
+                runner=config.runner,
+                environ=config.environ,
+                work_dir=config.work_dir,
+            )
+            write_json(args.session_dir / "record.json", record)
+    except Interrupted as error:
+        print(f"stop: {error}; the session was killed and recorded as interrupted", file=sys.stderr)
+        return 128 + error.signum
+    finally:
+        written = args.session_dir / "record.json"
+        if not args.keep_clone:
+            cleanup_session(record or (read_json(written) if written.exists() else {}))
     print(json.dumps(record, indent=2))
-    cleanup_session(record)
     return 0
 
 

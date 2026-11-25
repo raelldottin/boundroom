@@ -22,9 +22,11 @@ import argparse
 import json
 import os
 import random
+import signal
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -32,8 +34,10 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from .common import (
     TASKS_FILE,
     UPSTREAM,
-    Overlay,
+    BasePatch,
+    Interrupted,
     TrackRError,
+    install_interrupt_handlers,
     ensure_mirror,
     isolated_environment,
     read_json,
@@ -46,7 +50,6 @@ from .driver import (
     ARMS,
     DEFAULT_CAP_USD,
     DEFAULT_TIMEOUT_SECONDS,
-    QUEUE_PATH,
     DriverConfig,
     claude_preflight,
     claude_version,
@@ -58,7 +61,12 @@ from .oracle import evaluate, scope_and_budget
 
 DEFAULT_BUDGET_TOTAL = 60.0
 # Paths that never reach the reviewer: Claude Code settings, and the supervisor's own queue and handoffs.
-REVIEW_EXCLUDED = (".claude", QUEUE_PATH, "automation/handoffs")
+# Only Claude Code's own settings directory is left out of the reviewer's diff. The supervisor's queue
+# and handoff directory stay in: arm S's queue is in the setup commit, so it is in no diff unless the
+# agent changed it, and an arm U edit there is the agent's change like any other.
+REVIEW_EXCLUDED = (".claude",)
+# Every review file and directory gets this modification time, so file times can't order the queue.
+REVIEW_MTIME = 0
 NEUTRAL_HEADER = (
     "From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n"
     "From: Track R review <review@example.invalid>\n"
@@ -80,8 +88,10 @@ def plan(tasks: Sequence[Mapping[str, Any]]) -> list[tuple[int, Mapping[str, Any
 
 def charged(record: Mapping[str, Any], cap_usd: float) -> float:
     """What a session counts against the total: its measured cost, or the full cap when unknown."""
-    if record.get("status") == "setup_failed":
-        return 0.0
+    if record.get("status") in ("setup_failed", "patch_failed", "base_not_green"):
+        return 0.0  # no model session started
+    if record.get("status") in ("interrupted", "session_error") and record.get("phase") in ("setup", "green_base_check"):
+        return 0.0  # it stopped before the model session started
     cost = record.get("cost_usd")
     return float(cost) if cost is not None else cap_usd
 
@@ -103,19 +113,61 @@ def review_patch(clone: Path, setup_sha: str, final_sha: str, env: Mapping[str, 
     return NEUTRAL_HEADER + (diff if diff else "(no change)\n")
 
 
-def export_for_review(
-    out_dir: Path, task: Mapping[str, Any], record: Mapping[str, Any], env: Mapping[str, str], rng: random.Random
-) -> Optional[str]:
-    """Write one session's normalized diff under a random id. Returns the id, or None with no commit to show."""
+@dataclass
+class PendingReview:
+    """One session's normalized change, held until every session has finished."""
+
+    task: str
+    arm: str
+    session_dir: str
+    order: int
+    patch: str
+    task_text: str
+
+
+def pending_review(
+    task: Mapping[str, Any], arm: str, record: Mapping[str, Any], env: Mapping[str, str], order: int
+) -> Optional[PendingReview]:
+    """A session's change for blind review, or None with no commit to show. Nothing is written yet."""
     if record.get("status") != "ran":
         return None
-    review_id = "".join(rng.choice("0123456789abcdef") for _ in range(12))
-    directory = out_dir / "review" / review_id
-    directory.mkdir(parents=True, exist_ok=False)
-    patch = review_patch(Path(record["paths"]["clone"]), record["setup_sha"], record["final_sha"], env)
-    (directory / "change.patch").write_text(patch, encoding="utf-8")
-    (directory / "task.md").write_text(f"# Task\n\n{str(task['task_statement']).strip()}\n", encoding="utf-8")
-    return review_id
+    return PendingReview(
+        task=task_id(task),
+        arm=arm,
+        session_dir=str(record.get("paths", {}).get("session_dir", "")),
+        order=order,
+        patch=review_patch(Path(record["paths"]["clone"]), record["setup_sha"], record["final_sha"], env),
+        task_text=f"# Task\n\n{str(task['task_statement']).strip()}\n",
+    )
+
+
+def write_reviews(out_dir: Path, pending: Sequence[PendingReview], rng: random.Random) -> dict[str, dict[str, Any]]:
+    """Write every review directory in one batch, in a shuffled order, with normalized file times.
+
+    Sessions run in plan order with a fixed arm rotation, so directories written as each session ended
+    would give the arm away through their creation times. Written together at the end, in random order,
+    their creation order says nothing about the arm, and every modification time is the same.
+    Returns the arm mapping, by review id.
+    """
+    review_dir = out_dir / "review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    shuffled = list(pending)
+    rng.shuffle(shuffled)
+    mapping: dict[str, dict[str, Any]] = {}
+    for item in shuffled:
+        review_id = "".join(rng.choice("0123456789abcdef") for _ in range(12))
+        while review_id in mapping:
+            review_id = "".join(rng.choice("0123456789abcdef") for _ in range(12))
+        directory = review_dir / review_id
+        directory.mkdir()
+        (directory / "change.patch").write_text(item.patch, encoding="utf-8")
+        (directory / "task.md").write_text(item.task_text, encoding="utf-8")
+        mapping[review_id] = {"task": item.task, "arm": item.arm, "session_dir": item.session_dir, "order": item.order}
+    write_review_index(out_dir, mapping, rng)
+    for path in sorted(review_dir.rglob("*"), reverse=True):
+        os.utime(path, (REVIEW_MTIME, REVIEW_MTIME))
+    os.utime(review_dir, (REVIEW_MTIME, REVIEW_MTIME))
+    return mapping
 
 
 def write_review_index(out_dir: Path, mapping: Mapping[str, Mapping[str, Any]], rng: random.Random) -> None:
@@ -141,7 +193,7 @@ def _rate(numerator: int, denominator: int) -> Optional[float]:
 
 
 def arm_summary(results: Sequence[Mapping[str, Any]], arm: str) -> dict[str, Any]:
-    rows = [row for row in results if row["record"]["arm"] == arm and row["record"].get("status") == "ran"]
+    rows = [row for row in results if row["record"].get("arm") == arm and row["record"].get("status") == "ran"]
     costs = [row["record"]["cost_usd"] for row in rows if row["record"].get("cost_usd") is not None]
     oracle = [row["oracle"] for row in rows if row.get("oracle")]
     out_of_scope = [row for row in rows if row.get("oracle") and not row["oracle"]["in_scope"]]
@@ -155,7 +207,13 @@ def arm_summary(results: Sequence[Mapping[str, Any]], arm: str) -> dict[str, Any
     summary: dict[str, Any] = {
         "sessions": len(rows),
         "setup_failed": sum(
-            1 for row in results if row["record"]["arm"] == arm and row["record"].get("status") == "setup_failed"
+            1 for row in results if row["record"].get("arm") == arm and row["record"].get("status") == "setup_failed"
+        ),
+        "base_not_green": sum(
+            1 for row in results if row["record"].get("arm") == arm and row["record"].get("status") == "base_not_green"
+        ),
+        "interrupted": sum(
+            1 for row in results if row["record"].get("arm") == arm and row["record"].get("status") == "interrupted"
         ),
         "mean_cost_usd": round(sum(costs) / len(costs), 4) if costs else None,
         "total_cost_usd": round(sum(costs), 4),
@@ -261,6 +319,8 @@ def stop_conditions(
 def summary_table(summaries: Mapping[str, Mapping[str, Any]]) -> str:
     rows = [
         ("sessions", "sessions"),
+        ("base not green (no session)", "base_not_green"),
+        ("interrupted", "interrupted"),
         ("mean $/session", "mean_cost_usd"),
         ("cost unknown", "cost_unknown"),
         ("hit the cap", "cap_hit"),
@@ -306,67 +366,127 @@ def run_pilot(
     progress: Callable[[str], None] = lambda message: None,
     keep_clones: bool = False,
 ) -> dict[str, Any]:
+    """Run the plan, one session at a time, and always leave a mapping and a summary behind.
+
+    A session, oracle or export that raises is recorded against its session, with what it cost,
+    and the pilot goes on to the next one. The reviews, the mapping and the summary are written in a
+    ``finally``, so a run that stops early, by a signal or an error, can still be totalled and unblinded.
+    """
     rng = rng or random.SystemRandom()
     out_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
-    mapping: dict[str, dict[str, Any]] = {}
-    spent = 0.0
-    stopped = None
+    pending: list[PendingReview] = []
+    totals = {"spent": 0.0}
+    stopped: Optional[str] = None
     results_file = out_dir / "results.jsonl"
-    for index, task, arm in plan(tasks):
-        if spent + config.cap_usd > budget_total:
-            stopped = (
-                f"budget: {spent:.2f} spent + {config.cap_usd:.2f} cap > {budget_total:.2f} before {task_id(task)} arm {arm}"
-            )
-            progress(f"stop: {stopped}")
-            break
-        progress(f"session {len(results) + 1}: {task_id(task)} arm {arm}")
-        session_dir = out_dir / "sessions" / f"{task_id(task)}-{arm}"
-        record = session_fn(task, arm, mirror, session_dir, config)
-        spent += charged(record, config.cap_usd)
-        verdict = None
-        try:
-            if record.get("status") == "ran":
-                verdict = oracle_fn(
-                    task,
-                    Path(record["paths"]["clone"]),
-                    record["setup_sha"],
-                    record["final_sha"],
-                    mirror,
-                    runner=config.runner,
-                    environ=config.environ,
-                    work_dir=config.work_dir,
-                )
-                env = isolated_environment(config.environ, Path(record["paths"]["root"]) / "private")
-                review_id = export_for_review(out_dir, task, record, env, rng)
-                if review_id:
-                    mapping[review_id] = {
-                        "task": task_id(task),
-                        "arm": arm,
-                        "session_dir": str(session_dir),
-                        "order": len(results),
-                    }
-        finally:
-            if not keep_clones:
-                cleanup_session(record)
-        row = {"task": task_id(task), "index": index, "arm": arm, "record": record, "oracle": verdict}
+    interrupted: Optional[Interrupted] = None
+
+    def add_row(row: dict[str, Any]) -> None:
         results.append(row)
         with results_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
-    write_review_index(out_dir, mapping, rng)
-    summaries = {arm: arm_summary(results, arm) for arm in ARMS}
-    summary = {
-        "sessions_run": len(results),
-        "spent_usd": round(spent, 4),
-        "budget_total_usd": budget_total,
-        "stopped": stopped,
-        "arms": summaries,
-        "human_solution_baseline": human_baseline(tasks),
-        "stop_conditions": stop_conditions(tasks, results, summaries, out_dir),
-    }
-    write_json(out_dir / "summary.json", summary)
-    (out_dir / "summary.md").write_text(summary_table(summaries), encoding="utf-8")
+
+    try:
+        for index, task, arm in plan(tasks):
+            if totals["spent"] + config.cap_usd > budget_total:
+                stopped = (
+                    f"budget: {totals['spent']:.2f} spent + {config.cap_usd:.2f} cap > {budget_total:.2f} "
+                    f"before {task_id(task)} arm {arm}"
+                )
+                progress(f"stop: {stopped}")
+                break
+            progress(f"session {len(results) + 1}: {task_id(task)} arm {arm}")
+            session_dir = out_dir / "sessions" / f"{task_id(task)}-{arm}"
+            record, verdict, error = _one_session(
+                task, arm, mirror, session_dir, config, session_fn, oracle_fn, totals, pending, len(results)
+            )
+            if not keep_clones and record:
+                cleanup_session(record)
+            add_row({"task": task_id(task), "index": index, "arm": arm, "record": record, "oracle": verdict})
+            if isinstance(error, Interrupted):
+                interrupted = error
+                stopped = f"interrupted by {signal.Signals(error.signum).name} during {task_id(task)} arm {arm}"
+                progress(f"stop: {stopped}")
+                break
+            if error is not None:
+                progress(f"error in {task_id(task)} arm {arm}: {error}; recorded, going on")
+    finally:
+        try:
+            write_reviews(out_dir, pending, rng)
+        finally:
+            summaries = {arm: arm_summary(results, arm) for arm in ARMS}
+            summary = {
+                "sessions_run": len(results),
+                "spent_usd": round(totals["spent"], 4),
+                "budget_total_usd": budget_total,
+                "stopped": stopped,
+                "arms": summaries,
+                "human_solution_baseline": human_baseline(tasks),
+                "stop_conditions": stop_conditions(tasks, results, summaries, out_dir),
+            }
+            write_json(out_dir / "summary.json", summary)
+            (out_dir / "summary.md").write_text(summary_table(summaries), encoding="utf-8")
+    if interrupted is not None:
+        raise interrupted
     return summary
+
+
+def _one_session(
+    task: Mapping[str, Any],
+    arm: str,
+    mirror: Path,
+    session_dir: Path,
+    config: DriverConfig,
+    session_fn: SessionFn,
+    oracle_fn: OracleFn,
+    totals: dict[str, float],
+    pending: list[PendingReview],
+    order: int,
+) -> tuple[dict[str, Any], Optional[dict[str, Any]], Optional[BaseException]]:
+    """One session, its oracle and its review diff. Returns (record, verdict, the error if any).
+
+    Errors are returned, not raised: the caller stops after an ``Interrupted`` and goes on after any
+    other ``Exception``, which is recorded against this session.
+    """
+    record: dict[str, Any] = {}
+    verdict = None
+    try:
+        record = session_fn(task, arm, mirror, session_dir, config)
+        totals["spent"] += charged(record, config.cap_usd)
+    except (Exception, Interrupted) as error:
+        # The session's process group is already killed (subprocess_runner). The driver writes its
+        # record before it re-raises, so what was running and what it cost come from there.
+        written = session_dir / "record.json"
+        record = read_json(written) if written.exists() else {"task": task_id(task), "arm": arm}
+        if isinstance(error, Interrupted):
+            record["status"] = "interrupted"
+            record.setdefault("interrupted_by", signal.Signals(error.signum).name)
+        else:
+            record.update(status="session_error", error=f"{type(error).__name__}: {error}")
+        totals["spent"] += charged(record, config.cap_usd)
+        return record, None, error
+    if record.get("status") != "ran":
+        return record, None, None
+    try:
+        verdict = oracle_fn(
+            task,
+            Path(record["paths"]["clone"]),
+            record["setup_sha"],
+            record["final_sha"],
+            mirror,
+            runner=config.runner,
+            environ=config.environ,
+            work_dir=config.work_dir,
+        )
+        env = isolated_environment(config.environ, Path(record["paths"]["root"]) / "private")
+        review = pending_review(task, arm, record, env, order)
+        if review is not None:
+            pending.append(review)
+    except (Exception, Interrupted) as error:
+        # The session finished and was charged; only its scoring is missing.
+        record["oracle_error"] = "interrupted" if isinstance(error, Interrupted) else f"{type(error).__name__}: {error}"
+        return record, None, error
+    return record, verdict, None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -400,11 +520,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         require_outside_repository(args.work_dir, "--work-dir")
         args.work_dir.mkdir(parents=True, exist_ok=True)
     data = read_json(args.tasks)
-    tasks = data["tasks"]
-    overlay = Overlay.from_record(data.get("overlay"))
-    if overlay is None:
+    if data.get("status") == "void" and not args.dry_run:
         print(
-            "stop: the task file records no overlay; its oracle check wasn't made with the supervisor under test.",
+            f"stop: this task set is void ({data.get('void_reason', 'no reason recorded')}); only a dry run may use it.",
+            file=sys.stderr,
+        )
+        return 2
+    tasks = data["tasks"]
+    patch = BasePatch.from_record(data.get("base_patch"))
+    if patch is None:
+        print(
+            "stop: the task file records no base patch; its checks weren't made on the code the sessions start from.",
             file=sys.stderr,
         )
         return 2
@@ -412,7 +538,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if missing:
         for name, errors in missing.items():
             print(f"stop: {name}: {'; '.join(errors)}", file=sys.stderr)
-        print("stop: a person fills in each task's scope from its description alone before the pilot runs.", file=sys.stderr)
+        print(
+            "stop: a blinded scope writer fills in each task's scope from its description alone before the pilot runs.",
+            file=sys.stderr,
+        )
         return 2
     config = DriverConfig(
         cap_usd=args.cap_usd,
@@ -420,7 +549,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         claude_bin=args.claude_bin,
         work_dir=args.work_dir,
         isolate_user_config=not args.no_isolate_user_config,
-        overlay=overlay,
+        patch=patch,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.dry_run:
@@ -443,20 +572,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "timeout_seconds": config.timeout_seconds,
             "budget_total_usd": args.budget_total,
             "isolate_user_config": config.isolate_user_config,
-            "overlay": overlay.record(),
+            "base_patch": patch.record(),
             "tasks": [task_id(task) for task in tasks],
             "plan": [{"task": task_id(task), "arm": arm} for _, task, arm in plan(tasks)],
         },
     )
-    summary = run_pilot(
-        tasks,
-        mirror,
-        out_dir,
-        config,
-        budget_total=args.budget_total,
-        progress=lambda message: print(message, file=sys.stderr),
-        keep_clones=args.keep_clones,
-    )
+    # SIGTERM, SIGINT or SIGHUP kills the running session's process group and records it as
+    # interrupted, instead of leaving run_next.py and claude running after the pilot has gone.
+    install_interrupt_handlers()
+    try:
+        summary = run_pilot(
+            tasks,
+            mirror,
+            out_dir,
+            config,
+            budget_total=args.budget_total,
+            progress=lambda message: print(message, file=sys.stderr),
+            keep_clones=args.keep_clones,
+        )
+    except Interrupted as error:
+        print(f"stop: {error}; the session was killed and recorded as interrupted in {out_dir}", file=sys.stderr)
+        return 128 + error.signum
     print((out_dir / "summary.md").read_text(encoding="utf-8"))
     print(json.dumps({"stopped": summary["stopped"], "stop_conditions": summary["stop_conditions"]}, indent=2))
     return 0

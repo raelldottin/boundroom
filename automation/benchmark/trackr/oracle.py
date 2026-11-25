@@ -5,8 +5,8 @@ In a fresh clone at the session's final commit, the oracle:
 1. runs every one of the task's ``required_validations``, not only the two the supervisor replays;
 2. copies the hidden tests from the task's ``head_sha`` over the clone's copies and runs them;
 3. computes ``git diff --numstat setup..final``, the paths outside the task's ``allowed_paths``
-   (``automation.supervisor.policy.out_of_scope_paths``, with the example queue's supervisor-owned
-   paths) and whether the changed-file count is within ``max_files_changed``.
+   (``automation.supervisor.policy.out_of_scope_paths``, with no supervisor-owned path exempt)
+   and whether the changed-file count is within ``max_files_changed``.
 
 Its inputs are the task file, the final commit's tree and the mirror's ``head_sha``. Nothing the
 agent wrote about its work counts: not the handoff, not its log, not its claims. The clone is
@@ -26,7 +26,6 @@ from automation.supervisor import policy
 
 from .common import (
     PYTEST,
-    SUPERVISOR_OWNED_PATHS,
     UV_SYNC,
     CommandRunner,
     TrackRError,
@@ -50,9 +49,15 @@ TEST_HARNESS_FILES = ("automation/tests/conftest.py", "pyproject.toml", "pytest.
 
 
 def scope_and_budget(task: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Out-of-scope paths and diff-budget status for a list of changed files, as the gates would see them."""
+    """Out-of-scope paths and diff-budget status for a list of changed files.
+
+    No path is exempt. The supervisor treats its own paths (the queue, the handoff directory) as its
+    business, not the slice's, but in a scored diff an edit there is the agent's: arm U has no
+    supervisor writing them, and arm S's runner may not touch them. Arm S's queue file is in the setup
+    commit, so it is in no session's diff unless the agent changed it, and then it counts.
+    """
     paths = [str(row["path"]) for row in rows]
-    outside = policy.out_of_scope_paths(paths, list(task["allowed_paths"]), list(SUPERVISOR_OWNED_PATHS))
+    outside = policy.out_of_scope_paths(paths, list(task["allowed_paths"]), [])
     budget = int(task["max_files_changed"])
     return {
         "files_changed": len(paths),
@@ -122,7 +127,8 @@ def evaluate(
         result["validations"] = validations
         result["validations_passed"] = all(item["passed"] for item in validations)
         hidden = list(task["hidden_tests"])
-        install_hidden_tests(mirror, str(task["head_sha"]), hidden, clone, env)
+        support = list(task.get("hidden_test_support_files") or [])
+        install_hidden_tests(mirror, str(task["head_sha"]), hidden, clone, env, support)
         tests = hidden_test_result(runner([*PYTEST, *hidden], clone, env, PYTEST_TIMEOUT_SECONDS))
         tests["output_tail"] = tail(tests["output_tail"], 15)
         result["hidden_tests"] = tests

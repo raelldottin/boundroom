@@ -1,6 +1,9 @@
 {
   "schema": "boundroom.trackr.tasks/1",
   "spec": "SPEC-012 Track R, phase R0",
+  "status": "void",
+  "void_reason": "the hidden tests assert literal documentation and YAML text that the blinded scopes deliberately left out, and the sessions run with the network off, so neither arm can pass them: a floor effect with no signal",
+  "void_decided": "2026-11-25, after an adversarial review; R1 pilot v1 is void and no real session may start from this file",
   "selection_rule": {
     "task_set": "R-b: Boundroom's own merged pull requests",
     "window": {
@@ -14,24 +17,24 @@
       "not documentation only (some file is neither under docs/ nor a .md file nor mkdocs.yml)",
       "nothing under automation/supervisor/, automation/schemas/, automation/context/, automation/queue/",
       "the merge commit's diff from its first parent is exactly the pull request's file list",
-      "hidden tests fail or error at base_sha+overlay and pass at head_sha+overlay"
+      "the base patch applies at base_sha and head_sha and takes (amendment 2)",
+      "hidden tests fail or error at base_sha+patch and pass at head_sha+patch",
+      "green base: every required validation passes at base_sha+patch (amendment 1)"
     ],
+    "base_patch": "#279's handoff-rule fix (30ab82bb1854079776e98b1499f2816e49a3d5f4) to automation/supervisor/runner_profile.py and nothing else: the one rule-building line is rewritten so a handoff outside the repository gets Edit(//abs), and the patched slice_settings is called to check that an outside handoff gets the absolute rule and no git add rule, and an inside handoff is unchanged. A base that already has the fix is left as it is. Every session, oracle run and green-base check starts from base (or head) plus this patch, after uv sync.",
+    "green_base": "in a clean clone at base_sha: uv sync --frozen, the base patch, commit that as the setup, and run every required validation. They are the task's own blinded required_validations, or for a candidate with no blinded scope yet: git diff --check; UV_PYTHON=3.12 make reusable-check; NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict. The pilot runs the same check at every session's setup commit, in both arms, before any model session.",
     "base_sha": "the first parent of the squash merge commit",
     "head_sha": "the squash merge commit",
     "hidden_tests": "automation/tests/test_*.py files the pull request added or changed",
     "oracle": "copy the hidden tests from head_sha into a clean clone, `uv sync --frozen`, then `uv run --frozen python -m pytest -q -p no:cacheprovider <hidden tests>`. Fails at base: pytest exits 1 or 2 (a failure, an error or an import error). Passes at head: pytest exits 0 having run at least one test.",
-    "count": 6,
-    "overlay": "both oracle runs, like every session, replace automation/supervisor, automation/schemas, automation/context with their contents at b193297829c68d2243e5e32d1517cf0b51568813 (v0.5.3) before uv sync, so base means base+overlay and head means head+overlay. A pull request that needs its own supervisor to pass is already excluded by the path rule."
+    "count": 6
   },
-  "overlay": {
-    "commit": "b193297829c68d2243e5e32d1517cf0b51568813",
-    "paths": [
-      "automation/supervisor",
-      "automation/schemas",
-      "automation/context"
-    ],
+  "base_patch": {
+    "id": "pr279-outside-handoff-rule",
+    "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+    "path": "automation/supervisor/runner_profile.py",
     "source": "https://github.com/raelldottin/boundroom.git",
-    "release": "v0.5.3"
+    "replaces": "the v0.5.3 overlay (amendment 2)"
   },
   "provenance": {
     "repository": "raelldottin/boundroom",
@@ -40,21 +43,383 @@
     "pull_requests_listed": 249,
     "candidates_in_window": 51,
     "candidates_sha256": "236793da4a3c72dffa568cdfe12fa52e22ece3c0a7d229bf6463ee447ebc3086",
-    "selected_at": "2026-11-25T02:12:28Z",
+    "selected_at": "2026-11-25T06:24:48Z",
     "selected_by": "automation/benchmark/trackr/select.py",
-    "selector_commit": "b193297829c68d2243e5e32d1517cf0b51568813",
+    "selector_commit": "12f5690cc24ab52a8fe88ac692b4c3d2662a0b56",
     "python": "3.12.16",
     "uv": "uv 0.13.9 (Homebrew 2026-11-17 aarch64-apple-darwin)",
     "platform": "Darwin arm64",
-    "model_sessions": 0
+    "model_sessions": 3,
+    "amendments": [
+      {
+        "id": 0,
+        "date": "2026-11-24",
+        "made_after": "the R0 dry run, before any model session",
+        "why": "the dry run showed that each base's own supervisor, from before #279, gives a handoff outside the repository the rule Edit(/abs), which Claude Code reads as relative to the settings file, so arm S could never write its handoff",
+        "change": "every clone, in both arms, got automation/supervisor/, automation/schemas/ and automation/context/ replaced by their v0.5.3 contents (b193297), and the oracle check was redone with that overlay",
+        "superseded_by": 2
+      },
+      {
+        "id": 1,
+        "date": "2026-11-25",
+        "made_after": "the first 2 real R1 sessions and part of a third, about $3.90; their results are discarded",
+        "why": "with the overlay the base was red before the agent changed anything: `UV_PYTHON=3.12 make reusable-check` failed at base+overlay, first at `settings_view.py --docs --check`. Arm S's agent saw a required validation fail at baseline and stopped blocked with no commit. Every task would hit it, which biases the experiment against S.",
+        "change": "a new check, green base, added after real sessions had run: a task is kept only when every required validation passes at its setup commit, and the pilot runs the same check at each session's setup, in both arms, before any model session. Blinded scopes of tasks that still qualify are kept unchanged; no task's required_validations changed."
+      },
+      {
+        "id": 2,
+        "date": "2026-11-25",
+        "made_after": "the same 2 real sessions, by the owner's decision, once the green-base check showed that with the overlay only one task in the window qualified",
+        "why": "the overlay made every base's own tests disagree with the overlaid supervisor (the legacy-variable removal version, run_next's warnings and prompt errors, the telemetry exporter), so their bases could never be green, and a starting checkout with test files overlaid too would be one nobody ever shipped",
+        "change": "the overlay is dropped. Each base gets only #279's runner_profile.py fix for a handoff outside the repository (Edit(//abs), no git add rule), checked by calling the patched slice_settings. Selection, with the oracle check and the green-base check on base+patch, was rerun over the same window in the same merge order."
+      }
+    ],
+    "earlier_selections": [
+      {
+        "selected_at": "2026-11-25T02:12:28Z",
+        "tasks": [
+          244,
+          245,
+          246,
+          257,
+          262,
+          263
+        ]
+      }
+    ],
+    "task_changes": {
+      "dropped": [
+        257,
+        262,
+        263
+      ],
+      "added": [
+        230,
+        243,
+        255
+      ],
+      "need_blinded_scope": [
+        230,
+        243,
+        255
+      ]
+    },
+    "model_sessions_detail": {
+      "count": 3,
+      "complete": 2,
+      "interrupted": 1,
+      "cost_usd_approx": 3.9,
+      "results": "discarded",
+      "note": "R1 pilot v1, run before amendments 1 and 2; stopped after 2 complete sessions and part of a third"
+    }
   },
-  "scope_instructions": "A person fills in task_statement, allowed_paths, required_validations and max_files_changed for each task from its title and body only, without looking at its diff or files, and records who did it and when in scope_provenance. The pilot refuses to start until every task has them.",
+  "scope_instructions": "Scopes are written by blinded subagents, one per task, by the owner's decision (2026-11-24), not by a person: each fills in task_statement, allowed_paths, required_validations and max_files_changed from the pull request's title and body only, without its diff or files, and records by, when, inputs and leakage_ignored in scope_provenance. The pilot refuses to start until every task has them.",
   "tasks": [
+    {
+      "id": "pr230",
+      "number": 230,
+      "title": "feat(plugin): let users set the runner profile and telemetry in /config (SPEC-008 RA-SET-006)",
+      "body": "## What this does\n\nThis is SPEC-008's RA-SET-006, implementing **your decision of 2026-11-12**, recorded in #228: *\"everything, especially telemetry, must be configured by the user; telemetry must be disabled by default.\"* **It's stacked on #229.** Decisions 3 and 4 are recorded in SPEC-008 in this PR.\n\n- **`plugins/boundroom/.claude-plugin/plugin.json`** gains five `userConfig` options, all free-text strings, and **none with a default**:\n  - `claude_profile` and `claude_profile_ceiling`;\n  - `telemetry`, the mode;\n  - `telemetry_capture` and `telemetry_runner`.\n\n  **Destinations are not options,** by your decision 4 (2026-11-12): the telemetry endpoint and file directory come only from your own files under `~/.config/boundroom/`, `BOUNDROOM_*` variables, or flags you give in a request.\n\n  Each description says what an empty value means. **Headers and tokens are deliberately not options,** because they're secrets: they go in the environment or `~/.config/boundroom/telemetry.json`.\n- **The `boundroom-run-next` skill** passes each option that's set as its own flag, with exactly the user's value, through `${user_config.<key>}`. It leaves out any empty option, so the supervisor's default applies. **Telemetry therefore stays off** until the user sets both a mode and, outside `/config`, a destination. These are the user's standing choices, so passing them counts as the user asking. The skill still adds no other telemetry or profile flag unless the user asks in that request, and never puts a header or token on the command line.\n- **No fixed-choice `options` pickers,** by your decision 3 (2026-11-12): the options stay free text, with no minimum Claude Code version. The supervisor validates each value, and the skill reports a refusal rather than changing the value.\n- **Codex and Hermes have no `userConfig`,** so every option is also reachable through the supervisor's own flags and variables. The test below enforces this.\n\n## Tests (`automation/tests/test_settings_registry.py`, PS-4)\n\n- Every option maps to a registered setting that qualifies: it's security or essential, not a secret, and has a `run_next` flag.\n- No option has a default, a header key, or a non-string type.\n- The skill pairs each option with that setting's flag, as `` `--flag` `${user_config.key}` ``.\n\n`claude plugin validate plugins/boundroom` passes. As SPEC-002 requires, the plugin's version moves only with a release a person approves, so this ships with `v0.4.0`.\n\n## Merge note\n\n#222 changes the same run-next skill paragraph on the telemetry stack. Whichever lands second gets its wording reconciled, keeping both rules: standing choices from `/config`, and nothing else unless the user asks.\n\n## Performance (AGENTS.md)\n\nNone.\n\n## Checks run locally\n\n`make reusable-check` exits 0: 1002 passed, 5 skipped.\n\nAuthored by `boundroom-agent[bot]`. It needs an approving review from a person other than the author before merge.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "merged_at": "2026-11-13T07:23:25Z",
+      "base_sha": "f460d4f5b5d8add666fe0f7f2da5c1013f4b604e",
+      "head_sha": "9e03371eb478cd6722c85bc079894f139e0d36e1",
+      "hidden_tests": [
+        "automation/tests/test_settings_registry.py"
+      ],
+      "hidden_test_support_files": [],
+      "human_solution": {
+        "files": [
+          "automation/tests/test_settings_registry.py",
+          "docs/architecture/plugin-settings.md",
+          "plugins/boundroom/.claude-plugin/plugin.json",
+          "plugins/boundroom/skills/boundroom-run-next/SKILL.md"
+        ],
+        "numstat": [
+          {
+            "path": "automation/tests/test_settings_registry.py",
+            "added": 44,
+            "deleted": 0
+          },
+          {
+            "path": "docs/architecture/plugin-settings.md",
+            "added": 7,
+            "deleted": 6
+          },
+          {
+            "path": "plugins/boundroom/.claude-plugin/plugin.json",
+            "added": 28,
+            "deleted": 1
+          },
+          {
+            "path": "plugins/boundroom/skills/boundroom-run-next/SKILL.md",
+            "added": 10,
+            "deleted": 0
+          }
+        ],
+        "files_changed": 4,
+        "lines_added": 89,
+        "lines_deleted": 7
+      },
+      "checks": {
+        "merge_commit_present": true,
+        "single_parent": true,
+        "has_test_file": true,
+        "files_changed_at_most_15": true,
+        "not_documentation_only": true,
+        "no_supervisor_owned_paths": true,
+        "squash_matches_pull_request": true,
+        "base_patch_applies": true,
+        "oracle_fails_at_base": true,
+        "oracle_passes_at_head": true,
+        "green_base": true
+      },
+      "oracle": {
+        "base_patch": "pr279-outside-handoff-rule",
+        "base": {
+          "uv_sync_exit_code": 0,
+          "exit_code": 1,
+          "timed_out": false,
+          "passed": 11,
+          "failed": 6,
+          "errors": 0,
+          "skipped": 0,
+          "passed_all": false,
+          "failed_any": true,
+          "output_tail": "        for key, setting_id in USER_CONFIG.items():\n            flag = next(f.options[0] for f in settings.BY_ID[setting_id].flags if f.entry_point == \"run_next\")\n            with self.subTest(option=key):\n>               self.assertIn(f\"`{flag}` `${{user_config.{key}}}`\", self.skill)\nE               AssertionError: '`--telemetry-runner` `${user_config.telemetry_runner}`' not found in '---\\nname: boundroom-run-next\\ndescription: Run exactly one queued slice through this repository\\'s Boundroom supervisor, then stop and report the handoff and the stop reason. Use when asked to run the next slice, advance the queue by one, or start supervised work in a repository that has adopted Boundroom.\\nlicense: GPL-2.0-only\\n---\\n\\n# Run the next slice\\n\\nThis skill drives the supervisor that `Tools/boundroom-sync.sh` copied into the repository you are working in. That copy, its queue and its gates decide what runs. This skill only starts it.\\n\\n## Before you run anything\\n\\nRun each check as its own command. Don\\'t join them with `&&`, `;` or a pipe: a harness with a narrow command allowlist can refuse the combined form.\\n\\n1. Work from the repository root. Run `test -f automation/supervisor/run_next.py`. If it fails, stop and say: \"This repository has not adopted Boundroom.\"\\n2. Run `python3 automation/supervisor/run_next.py --help` and read its output for `--single-slice`. If it isn\\'t listed, stop and say the synced copy is too old for this plugin and needs a sync to a newer Boundroom release.\\n\\n## The one supported command\\n\\n```bash\\npython3 automation/supervisor/run_next.py --single-slice\\n```\\n\\nYou may append these flags when the user asks for them: `--dry-run`, `--include-blocked`, `--queue <path>`, `--handoff-dir <path>`, `--board <dir> --kanban-overlay <file>` (also spelled `--kanban-board`), `--board-backend local` or `--board-backend hermes`, `--memory-config <file> --memory-project <name>`.\\n\\nA Kanban board can be a local board, which needs no Hermes, or a Hermes board. The overlay\\'s `backend` says which, and the supervisor refuses a `--board-backend` that disagrees. Report that refusal; don\\'t change the flag to get past it.\\n\\nTelemetry is off unless the user turns it on. Add a telemetry flag (`--telemetry`, `--telemetry-file-dir`, `--telemetry-endpoint`, `--telemetry-capture`, `--telemetry-runner`, `--telemetry-required` or `--no-telemetry`) only when the user asked for telemetry in this request, with exactly the values they gave. Never choose a destination for them, and never put a header or token on the command line: those come only from the user\\'s own environment or `~/.config/boundroom/telemetry.json`.\\n\\nNever add `--autonomous-limit`, in any form. With `--single-slice`, the supervisor refuses it with exit 64 and runs nothing. Don\\'t work around that refusal; report it.\\n\\n## After it returns\\n\\nReport:\\n\\n- the exit code;\\n- the slice it ran, from the JSON decision report on stdout;\\n- the decision and stop reason;\\n- the handoff file under `automation/handoffs/`.\\n\\nThen stop. Do not run the command again, start the next slice, schedule a later run, or loop. Only the supervisor decides whether work continues, and with `--single-slice` it has already decided to stop. If the user wants another slice, they invoke this skill again.\\n\\n## What this skill does not guarantee\\n\\nThese instructions guide you; they don\\'t enforce anything. The enforcement is `run_next.py --single-slice` itself. A plain `run_next.py` without the flag can run several slices, up to the queue\\'s `consecutive_autonomous_limit`, and a caller can raise that limit. Don\\'t run it that way from this skill.\\n'\n\nautomation/tests/test_settings_registry.py:194: AssertionError\n=========================== short test summary info ============================\nFAILED automation/tests/test_settings_registry.py::UserConfigTests::test_every_option_maps_to_a_qualifying_setting\nSUBFAILED(option='claude_profile') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='claude_profile_ceiling') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='telemetry') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='telemetry_capture') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='telemetry_runner') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\n6 failed, 11 passed, 163 subtests passed in 0.78s"
+        },
+        "head": {
+          "uv_sync_exit_code": 0,
+          "exit_code": 0,
+          "timed_out": false,
+          "passed": 12,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "passed_all": true,
+          "failed_any": false,
+          "output_tail": "............                           [100%]\n12 passed, 178 subtests passed in 0.71s"
+        }
+      },
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.049,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 260.116,
+            "failures": [],
+            "output_tail": ".......................................     [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n1623 passed, 5 skipped, 960 subtests passed in 250.92s (0:04:10)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 242ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.666,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-n21mqqpl/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.74 seconds"
+          }
+        ],
+        "validations_from": "DEFAULT_REQUIRED_VALIDATIONS (no scope yet)"
+      },
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "",
+      "allowed_paths": [],
+      "required_validations": [],
+      "max_files_changed": null,
+      "scope_provenance": {
+        "by": "",
+        "when": "",
+        "inputs": "",
+        "leakage_ignored": ""
+      }
+    },
+    {
+      "id": "pr243",
+      "number": 243,
+      "title": "docs: add the compatibility and deprecation policy (SPEC-009 RA-ENT-007)",
+      "body": "SPEC-009 RA-ENT-007: a written compatibility and deprecation policy.\n\n## What it says\n\n[`docs/reference/compatibility.md`](https://github.com/raelldottin/boundroom/blob/docs/compatibility-policy/docs/reference/compatibility.md):\n\n- **Release numbers.** Before 1.0, a patch release fixes things and renames, removes and changes the default of nothing. A minor release may also add, change defaults and remove what the policy lets it remove. 1.0 will tighten this so only a major release removes anything. A person still picks the number, because a person creates or approves the tag.\n- **What a consumer depends on.** A table of what a patch and a minor release may change, for each surface:\n  - settings;\n  - command-line flags;\n  - exit codes: a number never gets a new meaning;\n  - the handoff and slice schemas;\n  - the decision report;\n  - the sync's allowed places and the paths it treats as the consumer's;\n  - prompt placeholders;\n  - telemetry names;\n  - the plugin's skills.\n  It also says what isn't part of the surface: internal modules, message wording, human-readable layout and the sync manifest.\n- **A security exception:** a patch may restrict a behavior to fix a security problem, and its notes say so.\n- **How something is retired:**\n  1. a warning on stderr that names the replacement and the removal release;\n  2. an entry in the upgrade guide and in the policy's table;\n  3. at least one minor release of warning;\n  4. removal in a minor release.\n  If no release carried the warning before the planned minor, the removal moves one minor later.\n- **Current deprecations:** the RA-ENT-002 names, the retired manifest key, the old sync script name and the old lock name.\n\n## RA-ENT-002 follows it\n\nThe old names and `allow_owlory_specific` warn from the first release after v0.4.0 and stop working in v0.5.0. That holds only if a 0.4.x release ships the warnings first. The policy says that if the next release is v0.5.0 itself, the removal moves to v0.6.0. Choosing the next release number is your decision.\n\n## Links and test\n\n- **Links:** the README has a new \"Versions and compatibility\" section, the upgrade guide links the policy from \"Moving to a new release\" and from the old-names section, mkdocs has a nav entry, and SPEC-009 records the slice as delivered.\n- **`test_compatibility_policy.py`** fails if:\n  - the README or the upgrade guide stops linking the policy;\n  - a removal version in the code (`settings.LEGACY_ENV_REMOVAL` or the sync's `DEPRECATED_ENTRY_KEYS`) doesn't match the table;\n  - a planned removal falls inside the current minor line or on a patch release.\n\n## Checks\n\n- `make reusable-check` passes locally (937 passed, 5 skipped).\n- `mkdocs build --strict` passes.\n- This adds no supervisor code, so it has no performance impact.\n\nAuthored by `boundroom-agent[bot]`. It needs an approving review from a person other than the author before merge.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "merged_at": "2026-11-15T08:43:01Z",
+      "base_sha": "cb7df1fffa160230136f20e0bfcc3ff2f26ee722",
+      "head_sha": "d276a1044f87a2f05450831e1c61aa69b3db0128",
+      "hidden_tests": [
+        "automation/tests/test_compatibility_policy.py"
+      ],
+      "hidden_test_support_files": [],
+      "human_solution": {
+        "files": [
+          "README.md",
+          "automation/tests/test_compatibility_policy.py",
+          "docs/architecture/enterprise-readiness.md",
+          "docs/reference/compatibility.md",
+          "docs/workflows/upgrading.md",
+          "mkdocs.yml"
+        ],
+        "numstat": [
+          {
+            "path": "README.md",
+            "added": 4,
+            "deleted": 0
+          },
+          {
+            "path": "automation/tests/test_compatibility_policy.py",
+            "added": 92,
+            "deleted": 0
+          },
+          {
+            "path": "docs/architecture/enterprise-readiness.md",
+            "added": 1,
+            "deleted": 1
+          },
+          {
+            "path": "docs/reference/compatibility.md",
+            "added": 56,
+            "deleted": 0
+          },
+          {
+            "path": "docs/workflows/upgrading.md",
+            "added": 2,
+            "deleted": 2
+          },
+          {
+            "path": "mkdocs.yml",
+            "added": 1,
+            "deleted": 0
+          }
+        ],
+        "files_changed": 6,
+        "lines_added": 156,
+        "lines_deleted": 3
+      },
+      "checks": {
+        "merge_commit_present": true,
+        "single_parent": true,
+        "has_test_file": true,
+        "files_changed_at_most_15": true,
+        "not_documentation_only": true,
+        "no_supervisor_owned_paths": true,
+        "squash_matches_pull_request": true,
+        "base_patch_applies": true,
+        "oracle_fails_at_base": true,
+        "oracle_passes_at_head": true,
+        "green_base": true
+      },
+      "oracle": {
+        "base_patch": "pr279-outside-handoff-rule",
+        "base": {
+          "uv_sync_exit_code": 0,
+          "exit_code": 1,
+          "timed_out": false,
+          "passed": 2,
+          "failed": 5,
+          "errors": 0,
+          "skipped": 0,
+          "passed_all": false,
+          "failed_any": true,
+          "output_tail": "        \"\"\"\n        if \"b\" not in mode:\n            encoding = io.text_encoding(encoding)\n>       return io.open(self, mode, buffering, encoding, errors, newline)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-select-r22zm7i_/base/docs/reference/compatibility.md'\n\n/Users/raelldottin/.local/share/uv/python/cpython-3.14.10-macos-aarch64-none/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError\n=========================== short test summary info ============================\nSUBFAILED(page='README.md') automation/tests/test_compatibility_policy.py::PolicyLinkTests::test_the_readme_and_the_upgrade_guide_link_the_policy\nSUBFAILED(page='docs/workflows/upgrading.md') automation/tests/test_compatibility_policy.py::PolicyLinkTests::test_the_readme_and_the_upgrade_guide_link_the_policy\nSUBFAILED(key='allow_owlory_specific') automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_each_deprecated_manifest_key_stops_when_the_sync_says\nFAILED automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_legacy_variables_stop_when_the_registry_says\nFAILED automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_no_removal_lands_in_the_current_minor_line\n5 failed, 2 passed in 0.08s"
+        },
+        "head": {
+          "uv_sync_exit_code": 0,
+          "exit_code": 0,
+          "timed_out": false,
+          "passed": 4,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "passed_all": true,
+          "failed_any": false,
+          "output_tail": "....                                                              [100%]\n4 passed, 7 subtests passed in 0.03s"
+        }
+      },
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.087,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 179.702,
+            "failures": [],
+            "output_tail": "..............                                                  [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n933 passed, 5 skipped, 1029 subtests passed in 168.19s (0:02:48)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 324ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.279,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-67rc99oh/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.61 seconds"
+          }
+        ],
+        "validations_from": "DEFAULT_REQUIRED_VALIDATIONS (no scope yet)"
+      },
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "",
+      "allowed_paths": [],
+      "required_validations": [],
+      "max_files_changed": null,
+      "scope_provenance": {
+        "by": "",
+        "when": "",
+        "inputs": "",
+        "leakage_ignored": ""
+      }
+    },
     {
       "id": "pr244",
       "number": 244,
       "title": "feat(release): attest the release archive (SPEC-009 RA-ENT-003)",
-      "body": "SPEC-009 RA-ENT-003: each release archive gets signed build provenance that anyone can check with `gh attestation verify`.\n\n## What changes in `release.yml`\n\nThe new **attest** job runs between `build` and `release`:\n\n1. Downloads the files `build` staged.\n2. Checks the archive against its `.sha256`.\n3. Signs SLSA build provenance for `boundroom-<tag>.tar.gz` with `actions/attest`, pinned to the v4.2.2 commit (`1e69f48`, released 2026-08-04).\n\n**Why `actions/attest` instead of the `attest-build-provenance` that SPEC-009 named:** since v4, `attest-build-provenance` is only a wrapper around `actions/attest`, and its README says new setups should use `actions/attest` directly. The provenance is the same, with one fewer action in the chain.\n\n**Least privilege:**\n- `attest` is the only job with `id-token: write` and `attestations: write`, alongside `contents: read`.\n- It checks nothing out and runs no repository code, so neither the gate nor the dev dependencies can reach its signing token.\n- It doesn't need `artifact-metadata: write`, which only applies when pushing to an image registry.\n\n`release` now waits for both `build` and `attest`, so nothing is published unattested. The release notes include the verify command.\n\n## Docs\n\n- **Upgrade guide:** a new \"Verifying a release\" section with `gh attestation verify --repo \u2026 --signer-workflow \u2026`, the checksum check, and a note that releases up to v0.4.0 have no attestation.\n- **Workflow guide's Releases section:**\n  - describes the attest job;\n  - fixes the archive name, which was shown as `Boundroom-\u2026`;\n  - fixes the verify example, which still used the pre-0.3.0 `repo-automation-\u2026` name;\n  - replaces the MAJOR/MINOR/PATCH bullets, which contradicted the compatibility policy merged in #243, with a pointer to that policy.\n- **Control map:**\n  - adds the attestation control;\n  - narrows the \"Artifact attestations, SBOM\" gap to the SBOM, which still waits on your choice of generator (RA-ENT-004);\n  - adds the attest job to the least-privilege row;\n  - changes action pinning from \"process\" to \"enforced by a required check\".\n- **SPEC-009** records the slice as delivered.\n\n## Tests\n\n`test_release_workflow.py` reads the workflows as text, because PyYAML is only an indirect dependency. It fails if:\n- the attest job stops using a pinned `actions/attest`, attesting the archive, or checking the checksum first;\n- any job other than `attest`, or the top-level permissions, can mint an OIDC token;\n- the attest job checks out code or runs `uv`;\n- `release` stops needing `attest`;\n- any `uses:` in any workflow isn't pinned to a full commit SHA with a `# vN` comment. All 30 are pinned today.\n\n## Not verifiable yet\n\nThe acceptance criterion, `gh attestation verify` succeeding on a release archive, can only be met by a real release, and a release needs a tag you create or approve. The first release after v0.4.0 is the live check. If the job fails there, nothing is published, because `release` needs it.\n\n## Checks\n\n- `make reusable-check` passes locally (943 passed, 5 skipped).\n- `mkdocs build --strict` passes.\n- No supervisor code changes, so there's no performance impact.\n\nAuthored by `boundroom-agent[bot]`. It needs an approving review from a person other than the author before merge.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "body": "SPEC-009 RA-ENT-003: each release archive gets signed build provenance that anyone can check with `gh attestation verify`.\n\n## What changes in `release.yml`\n\nThe new **attest** job runs between `build` and `release`:\n\n1. Downloads the files `build` staged.\n2. Checks the archive against its `.sha256`.\n3. Signs SLSA build provenance for `boundroom-<tag>.tar.gz` with `actions/attest`, pinned to the v4.2.2 commit (`1e69f48`, released 2026-08-04).\n\n**Why `actions/attest` instead of the `attest-build-provenance` that SPEC-009 named:** since v4, `attest-build-provenance` is only a wrapper around `actions/attest`, and its README says new setups should use `actions/attest` directly. The provenance is the same, with one fewer action in the chain.\n\n**Least privilege:**\n- `attest` is the only job with `id-token: write` and `attestations: write`, alongside `contents: read`.\n- It checks nothing out and runs no repository code, so neither the gate nor the dev dependencies can reach its signing token.\n- It doesn't need `artifact-metadata: write`, which only applies when pushing to an image registry.\n\n`release` now waits for both `build` and `attest`, so nothing is published unattested. The release notes include the verify command.\n\n## Docs\n\n- **Upgrade guide:** a new \"Verifying a release\" section with `gh attestation verify --repo … --signer-workflow …`, the checksum check, and a note that releases up to v0.4.0 have no attestation.\n- **Workflow guide's Releases section:**\n  - describes the attest job;\n  - fixes the archive name, which was shown as `Boundroom-…`;\n  - fixes the verify example, which still used the pre-0.3.0 `repo-automation-…` name;\n  - replaces the MAJOR/MINOR/PATCH bullets, which contradicted the compatibility policy merged in #243, with a pointer to that policy.\n- **Control map:**\n  - adds the attestation control;\n  - narrows the \"Artifact attestations, SBOM\" gap to the SBOM, which still waits on your choice of generator (RA-ENT-004);\n  - adds the attest job to the least-privilege row;\n  - changes action pinning from \"process\" to \"enforced by a required check\".\n- **SPEC-009** records the slice as delivered.\n\n## Tests\n\n`test_release_workflow.py` reads the workflows as text, because PyYAML is only an indirect dependency. It fails if:\n- the attest job stops using a pinned `actions/attest`, attesting the archive, or checking the checksum first;\n- any job other than `attest`, or the top-level permissions, can mint an OIDC token;\n- the attest job checks out code or runs `uv`;\n- `release` stops needing `attest`;\n- any `uses:` in any workflow isn't pinned to a full commit SHA with a `# vN` comment. All 30 are pinned today.\n\n## Not verifiable yet\n\nThe acceptance criterion, `gh attestation verify` succeeding on a release archive, can only be met by a real release, and a release needs a tag you create or approve. The first release after v0.4.0 is the live check. If the job fails there, nothing is published, because `release` needs it.\n\n## Checks\n\n- `make reusable-check` passes locally (943 passed, 5 skipped).\n- `mkdocs build --strict` passes.\n- No supervisor code changes, so there's no performance impact.\n\nAuthored by `boundroom-agent[bot]`. It needs an approving review from a person other than the author before merge.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
       "merged_at": "2026-11-15T09:32:47Z",
       "base_sha": "d276a1044f87a2f05450831e1c61aa69b3db0128",
       "head_sha": "1b4e72e7776c13ba4f0820683f1e712c72d3456c",
@@ -115,11 +480,13 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
-        "overlay": "b193297829c68d2243e5e32d1517cf0b51568813",
+        "base_patch": "pr279-outside-handoff-rule",
         "base": {
           "uv_sync_exit_code": 0,
           "exit_code": 1,
@@ -130,7 +497,7 @@
           "skipped": 0,
           "passed_all": false,
           "failed_any": true,
-          "output_tail": "_______ ReleaseAttestationTests.test_the_release_notes_say_how_to_verify _______\n\nself = <test_release_workflow.ReleaseAttestationTests testMethod=test_the_release_notes_say_how_to_verify>\n\n    def test_the_release_notes_say_how_to_verify(self) -> None:\n>       self.assertIn(\"gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY\", self.jobs[\"release\"])\nE       AssertionError: 'gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY' not found in '    name: Publish GitHub release\\n    needs: build\\n    runs-on: ubuntu-latest\\n    timeout-minutes: 5\\n    permissions:\\n      contents: write\\n    steps:\\n      - name: Download release files\\n        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8\\n        with:\\n          name: release\\n          path: dist\\n\\n      - name: Create release\\n        env:\\n          GH_TOKEN: ${{ github.token }}\\n          TAG: ${{ github.ref_name }}\\n          COMMIT: ${{ needs.build.outputs.commit }}\\n          PRERELEASE: ${{ needs.build.outputs.prerelease }}\\n        run: |\\n          flags=()\\n          [[ \"$PRERELEASE\" == \"true\" ]] && flags+=(--prerelease)\\n          gh release create \"$TAG\" dist/* \\\\\\n            --repo \"$GITHUB_REPOSITORY\" \\\\\\n            --verify-tag \\\\\\n            --title \"$TAG\" \\\\\\n            --notes \"Manifest-owned tree of raelldottin/boundroom at commit $COMMIT. Consumers sync from this tag; see docs/workflows/boundroom.md#releases.\" \\\\\\n            \"${flags[@]}\"\\n'\n\nautomation/tests/test_release_workflow.py:76: AssertionError\n=========================== short test summary info ============================\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_nothing_is_published_before_it_is_attested\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_attest_job_runs_no_repository_code\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_attest_job_signs_the_archive_with_actions_attest\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_release_notes_say_how_to_verify\n4 failed, 2 passed, 32 subtests passed in 0.02s"
+          "output_tail": "_______ ReleaseAttestationTests.test_the_release_notes_say_how_to_verify _______\n\nself = <test_release_workflow.ReleaseAttestationTests testMethod=test_the_release_notes_say_how_to_verify>\n\n    def test_the_release_notes_say_how_to_verify(self) -> None:\n>       self.assertIn(\"gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY\", self.jobs[\"release\"])\nE       AssertionError: 'gh attestation verify boundroom-$TAG.tar.gz --repo $GITHUB_REPOSITORY' not found in '    name: Publish GitHub release\\n    needs: build\\n    runs-on: ubuntu-latest\\n    timeout-minutes: 5\\n    permissions:\\n      contents: write\\n    steps:\\n      - name: Download release files\\n        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8\\n        with:\\n          name: release\\n          path: dist\\n\\n      - name: Create release\\n        env:\\n          GH_TOKEN: ${{ github.token }}\\n          TAG: ${{ github.ref_name }}\\n          COMMIT: ${{ needs.build.outputs.commit }}\\n          PRERELEASE: ${{ needs.build.outputs.prerelease }}\\n        run: |\\n          flags=()\\n          [[ \"$PRERELEASE\" == \"true\" ]] && flags+=(--prerelease)\\n          gh release create \"$TAG\" dist/* \\\\\\n            --repo \"$GITHUB_REPOSITORY\" \\\\\\n            --verify-tag \\\\\\n            --title \"$TAG\" \\\\\\n            --notes \"Manifest-owned tree of raelldottin/boundroom at commit $COMMIT. Consumers sync from this tag; see docs/workflows/boundroom.md#releases.\" \\\\\\n            \"${flags[@]}\"\\n'\n\nautomation/tests/test_release_workflow.py:76: AssertionError\n=========================== short test summary info ============================\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_nothing_is_published_before_it_is_attested\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_attest_job_runs_no_repository_code\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_attest_job_signs_the_archive_with_actions_attest\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_release_notes_say_how_to_verify\n4 failed, 2 passed, 32 subtests passed in 0.04s"
         },
         "head": {
           "uv_sync_exit_code": 0,
@@ -142,9 +509,57 @@
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": "......                                [100%]\n6 passed, 35 subtests passed in 0.01s"
+          "output_tail": "......                                [100%]\n6 passed, 35 subtests passed in 0.02s"
         }
       },
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.028,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 156.514,
+            "failures": [],
+            "output_tail": "..........................                                      [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n937 passed, 5 skipped, 1037 subtests passed in 148.11s (0:02:28)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 228ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.222,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-jy1z48z1/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.53 seconds"
+          }
+        ],
+        "validations_from": "the task's blinded scope"
+      },
+      "scope_status": "kept from the earlier blinded scope",
       "task_statement": "Give each release archive signed build provenance that anyone can check with `gh attestation verify`. This is SPEC-009 item RA-ENT-003.\n\nThe release workflow needs a new step between building the archive and publishing the release. That step:\n- checks the built archive against its published SHA-256 checksum;\n- signs SLSA build provenance for the archive with GitHub's official attestation action, pinned to a full commit SHA.\n\nRequirements:\n- **Nothing is published unattested.** Publishing must wait for the attestation step. If attestation fails, no release goes out.\n- **Least privilege.** Only the attestation job may mint an OIDC token or write attestations, and the top-level workflow permissions must not grant either. The attestation job must not check out the repository or run repository code or dev tooling, so nothing else can reach its signing token.\n- **Release notes** include the verify command.\n\nDocumentation:\n- **Upgrade guide:** add a \"Verifying a release\" section with the `gh attestation verify` command (repository and signer workflow), the checksum check, and a note that releases up to v0.4.0 have no attestation.\n- **Workflow guide's Releases section:**\n  - describe the attestation step;\n  - correct the archive name and the stale pre-0.3.0 name in the verify example;\n  - replace the outdated MAJOR/MINOR/PATCH bullets, which contradict the compatibility policy, with a pointer to that policy.\n- **Compliance control map:**\n  - record the attestation control;\n  - narrow the \"artifact attestations, SBOM\" gap to the SBOM alone, which still waits on the owner's choice of generator;\n  - add the attestation job to the least-privilege entry;\n  - record that action pinning is now enforced by a required check.\n- **SPEC-009:** mark this slice as delivered.\n\nAdd or update tests that read the workflow files and fail if:\n- the attestation job stops using a pinned attestation action, stops attesting the archive, or stops checking the checksum first;\n- any other job, or the top-level permissions, can mint an OIDC token;\n- the attestation job checks out code or runs uv;\n- publishing stops depending on attestation;\n- any `uses:` in any workflow is not pinned to a full commit SHA with a `# vN` version comment.\n\nDone means: the required checks and the strict docs build pass. The live acceptance check, `gh attestation verify` succeeding on a real archive, waits for the next human-approved release tag.",
       "allowed_paths": [
         ".github/workflows/",
@@ -164,15 +579,13 @@
         "inputs": "the PR's title and body only (scratchpad/scopes/pr244.desc.md); no repository, diff or file access; one Read tool call each",
         "leakage_ignored": "I left out these implementation details from the description:\n- the test file name, test_release_workflow.py;\n- the job name \"attest\" and the choice of actions/attest over attest-build-provenance;\n- the pinned version and commit (v4.2.2, 1e69f48);\n- the reasoning that artifact-metadata: write is not needed;\n- the text-parsing approach (no PyYAML);\n- the count of 30 pinned uses;\n- local test counts (943 passed, 5 skipped);\n- the PR #243 reference.",
         "owner_decision": "R-b scopes written by an agent from the description, not by a person (owner chose this, 2026-11-24)"
-      },
-      "required_proof_level": "domain-tested",
-      "scope_notes": "Only a real release can prove the end-to-end acceptance criterion, and a release needs a tag that a person creates or approves. Those tests and docs therefore have to make the workflow's structure and permissions safe ahead of time. SBOM generation (RA-ENT-004) is out of scope until the owner picks a generator."
+      }
     },
     {
       "id": "pr245",
       "number": 245,
       "title": "feat(release): keep a changelog and publish it as the release notes (SPEC-009 RA-ENT-006)",
-      "body": "SPEC-009 RA-ENT-006: a changelog, and release notes that come from it.\n\n## `CHANGELOG.md`\n\n- **A section for every release, v0.1.0 to v0.4.0**, written from the pull requests merged between each pair of tags. Each section groups changes under Added, Changed, Deprecated, Removed and Fixed.\n- **An Unreleased section** for everything since v0.4.0: the telemetry upgrade and the OTLP header fix (#240), the generic runner prompt (#241), the sync allowlist and the deprecations (#242), the compatibility policy (#243), the attestation (#244), and the removal of Discord and Slack support (#238).\n- **How to keep it up:** a pull request that changes what a consumer sees adds a line under Unreleased. The release pull request renames that heading to `## <version> (<YYYY-MM-DD>)`.\n\n## Release notes from the changelog\n\n`Tools/changelog_section.py <tag>` prints the tag's section. It exits 1 if the section is missing or empty, if a version has two sections, or if a heading can't be read, and 64 for a malformed tag. A prerelease needs a section of its own.\n\nIn `release.yml`:\n- **`semver`** (the first job) runs the tool, so a tag without a section stops before the gate spends a run.\n- **`build`** writes the section to `notes/notes.md` and uploads it as a `release-notes` artifact. It's kept apart from `dist/`, because every file in `dist/` becomes a release asset and the attest job attests that artifact.\n- **`release`** publishes the section with `--notes-file`, followed by the commit and the `gh attestation verify` command. This replaces the generic one-line notes.\n\n## Docs\n\n- **AGENTS.md:** the release rule now asks for `Tools/changelog_section.py <tag>` to pass, next to `Tools/check_plugin_version.py <tag>`, before a person creates the tag. That's the only change to AGENTS.md.\n- **Workflow guide, upgrade guide and README:** link the changelog and explain where release notes come from. The workflow guide also lists the new refusal.\n- **SPEC-009** records the slice as delivered.\n\n## Tests\n\n- **`test_changelog.py`** fails if:\n  - the changelog has no section for the version every manifest declares (`pyproject.toml` and the three plugin manifests);\n  - Unreleased isn't the first section;\n  - releases or their dates are out of order;\n  - a released section is empty.\n  It also covers each refusal of the tool and its command-line exit codes.\n- **`test_release_workflow.py`** additionally fails if:\n  - `semver` stops checking for the section;\n  - the notes stop coming from it;\n  - the notes end up in `dist/` or in the attest job.\n\n## For your review\n\nI wrote the past sections from the commit history. Please check that they describe each release the way you'd want consumers to read it, especially v0.1.0, which has little history to draw on.\n\n## Checks\n\n- `make reusable-check` passes locally (963 passed, 5 skipped).\n- `mkdocs build --strict` passes.\n- No supervisor code changes, so there's no performance impact.\n\nAuthored by `boundroom-agent[bot]`. It needs an approving review from a person other than the author before merge.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "body": "SPEC-009 RA-ENT-006: a changelog, and release notes that come from it.\n\n## `CHANGELOG.md`\n\n- **A section for every release, v0.1.0 to v0.4.0**, written from the pull requests merged between each pair of tags. Each section groups changes under Added, Changed, Deprecated, Removed and Fixed.\n- **An Unreleased section** for everything since v0.4.0: the telemetry upgrade and the OTLP header fix (#240), the generic runner prompt (#241), the sync allowlist and the deprecations (#242), the compatibility policy (#243), the attestation (#244), and the removal of Discord and Slack support (#238).\n- **How to keep it up:** a pull request that changes what a consumer sees adds a line under Unreleased. The release pull request renames that heading to `## <version> (<YYYY-MM-DD>)`.\n\n## Release notes from the changelog\n\n`Tools/changelog_section.py <tag>` prints the tag's section. It exits 1 if the section is missing or empty, if a version has two sections, or if a heading can't be read, and 64 for a malformed tag. A prerelease needs a section of its own.\n\nIn `release.yml`:\n- **`semver`** (the first job) runs the tool, so a tag without a section stops before the gate spends a run.\n- **`build`** writes the section to `notes/notes.md` and uploads it as a `release-notes` artifact. It's kept apart from `dist/`, because every file in `dist/` becomes a release asset and the attest job attests that artifact.\n- **`release`** publishes the section with `--notes-file`, followed by the commit and the `gh attestation verify` command. This replaces the generic one-line notes.\n\n## Docs\n\n- **AGENTS.md:** the release rule now asks for `Tools/changelog_section.py <tag>` to pass, next to `Tools/check_plugin_version.py <tag>`, before a person creates the tag. That's the only change to AGENTS.md.\n- **Workflow guide, upgrade guide and README:** link the changelog and explain where release notes come from. The workflow guide also lists the new refusal.\n- **SPEC-009** records the slice as delivered.\n\n## Tests\n\n- **`test_changelog.py`** fails if:\n  - the changelog has no section for the version every manifest declares (`pyproject.toml` and the three plugin manifests);\n  - Unreleased isn't the first section;\n  - releases or their dates are out of order;\n  - a released section is empty.\n  It also covers each refusal of the tool and its command-line exit codes.\n- **`test_release_workflow.py`** additionally fails if:\n  - `semver` stops checking for the section;\n  - the notes stop coming from it;\n  - the notes end up in `dist/` or in the attest job.\n\n## For your review\n\nI wrote the past sections from the commit history. Please check that they describe each release the way you'd want consumers to read it, especially v0.1.0, which has little history to draw on.\n\n## Checks\n\n- `make reusable-check` passes locally (963 passed, 5 skipped).\n- `mkdocs build --strict` passes.\n- No supervisor code changes, so there's no performance impact.\n\nAuthored by `boundroom-agent[bot]`. It needs an approving review from a person other than the author before merge.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
       "merged_at": "2026-11-15T09:41:06Z",
       "base_sha": "1b4e72e7776c13ba4f0820683f1e712c72d3456c",
       "head_sha": "7fa9142a8338ac0196655aa4ed0af41ecbfee4cc",
@@ -258,11 +671,13 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
-        "overlay": "b193297829c68d2243e5e32d1517cf0b51568813",
+        "base_patch": "pr279-outside-handoff-rule",
         "base": {
           "uv_sync_exit_code": 0,
           "exit_code": 2,
@@ -273,7 +688,7 @@
           "skipped": 0,
           "passed_all": false,
           "failed_any": true,
-          "output_tail": "==================================== ERRORS ====================================\n_____________ ERROR collecting automation/tests/test_changelog.py ______________\nautomation/tests/test_changelog.py:19: in <module>\n    spec.loader.exec_module(changelog)\n<frozen importlib._bootstrap_external>:759: in exec_module\n    ???\n<frozen importlib._bootstrap_external>:896: in get_code\n    ???\n<frozen importlib._bootstrap_external>:954: in get_data\n    ???\nE   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-select-tggixe9p/base/Tools/changelog_section.py'\n=========================== short test summary info ============================\nERROR automation/tests/test_changelog.py - FileNotFoundError: [Errno 2] No su...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.05s"
+          "output_tail": "==================================== ERRORS ====================================\n_____________ ERROR collecting automation/tests/test_changelog.py ______________\nautomation/tests/test_changelog.py:19: in <module>\n    spec.loader.exec_module(changelog)\n<frozen importlib._bootstrap_external>:759: in exec_module\n    ???\n<frozen importlib._bootstrap_external>:896: in get_code\n    ???\n<frozen importlib._bootstrap_external>:954: in get_data\n    ???\nE   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-select-izd8os59/base/Tools/changelog_section.py'\n=========================== short test summary info ============================\nERROR automation/tests/test_changelog.py - FileNotFoundError: [Errno 2] No su...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.06s"
         },
         "head": {
           "uv_sync_exit_code": 0,
@@ -285,9 +700,57 @@
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": "..........................          [100%]\n26 passed, 37 subtests passed in 1.12s"
+          "output_tail": "..........................          [100%]\n26 passed, 37 subtests passed in 2.95s"
         }
       },
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.04,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 194.616,
+            "failures": [],
+            "output_tail": "................................................ [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n943 passed, 5 skipped, 1073 subtests passed in 186.01s (0:03:06)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 236ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.533,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-i69sri7v/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.71 seconds"
+          }
+        ],
+        "validations_from": "the task's blinded scope"
+      },
+      "scope_status": "kept from the earlier blinded scope",
       "task_statement": "Releases have no changelog, and the published release notes are a generic one-liner. Following SPEC-009 (RA-ENT-006), add a changelog and make each release's notes come from it.\n\nDone looks like:\n- A changelog in Keep a Changelog style. It has a section for every past release, v0.1.0 through v0.4.0, written from the pull requests merged between each pair of tags. Each section groups changes under Added, Changed, Deprecated, Removed and Fixed.\n- An Unreleased section at the top for everything merged since v0.4.0, with the rule for keeping it current written down. A pull request that changes what a consumer sees adds a line under Unreleased. The release pull request renames that heading to the version and date.\n- A small release tool that, given a tag, prints that version's changelog section. It fails with exit 1 if the section is missing or empty, if a version has two sections, or if a heading can't be parsed. It fails with exit 64 for a malformed tag. A prerelease needs a section of its own.\n- The release workflow uses the tool in three places:\n  - Its first, tag-validation job checks that the section exists, so a tag without one stops before the full gate runs.\n  - The build job saves the notes as a separate artifact. The notes must stay out of the release-asset directory and out of what gets attested.\n  - The publish job uses that section, plus the commit and the attestation verify command, as the release notes, replacing the generic notes.\n- Docs:\n  - The release rule in the agent instructions also requires the changelog-section check to pass before a person creates a tag. Change nothing else in that file.\n  - The workflow guide, upgrade guide and README link to the changelog and say where release notes come from. The workflow guide also lists the new refusal.\n  - SPEC-009 records the slice as delivered.\n- Add or update tests. They must fail if:\n  - the changelog has no section for the version every manifest declares (the project metadata and the plugin manifests);\n  - Unreleased isn't the first section;\n  - releases or their dates are out of order;\n  - a released section is empty;\n  - the tool's refusals or exit codes change;\n  - the release workflow stops checking for the section, stops taking the notes from it, or puts the notes in the release assets or the attested artifact.",
       "allowed_paths": [
         "CHANGELOG.md",
@@ -310,15 +773,13 @@
         "inputs": "the PR's title and body only (scratchpad/scopes/pr245.desc.md); no repository, diff or file access; one Read tool call each",
         "leakage_ignored": "Left out: the file names (CHANGELOG.md, Tools/changelog_section.py, notes/notes.md, release.yml), the job names (semver, build, release, attest), the release-notes artifact name, the --notes-file flag, the test file names (test_changelog.py, test_release_workflow.py), the list of Unreleased PR numbers (#238 to #244), and the local test counts.",
         "owner_decision": "R-b scopes written by an agent from the description, not by a person (owner chose this, 2026-11-24)"
-      },
-      "required_proof_level": "domain-tested",
-      "scope_notes": "The past sections are reconstructed from commit history, so a person should check that they describe each release the way consumers should read it, especially v0.1.0, which has little history. Supervisor code doesn't change, so there's no performance impact."
+      }
     },
     {
       "id": "pr246",
       "number": 246,
       "title": "ci: test Python 3.13, 3.14 and macOS, and publish the support matrix (SPEC-009 RA-ENT-008)",
-      "body": "SPEC-009 RA-ENT-008: a support matrix, and CI that runs it.\n\n## CI\n\n**`lint.yml`:**\n- Adds Python 3.13 and 3.14 to the `make reusable-check` matrix. They go after 3.11 and 3.12, because the `main` ruleset requires `make reusable-check (3.11)` and `(3.12)` by name, and those names don't change.\n- Adds a separate `make reusable-check (macOS)` job on `macos-latest` with Python 3.12. It's a job of its own rather than a matrix axis, because adding an `os` axis would rename the required checks.\n- The new jobs aren't required. Making them required is a ruleset change, which is yours.\n\n**`release.yml`:** the gate runs the same Python matrix plus a `gate-macos` job, and `build` waits for both. So a release is never tested on less than a pull request.\n\n## The support matrix\n\nIt's in the README, under \"Versions and compatibility\":\n\n| Component | Tested |\n| --- | --- |\n| Python | 3.11, 3.12, 3.13, 3.14 on Linux; 3.11 and 3.12 required |\n| Operating system | Linux, and macOS with Python 3.12. Windows isn't tested or supported. |\n| Synced copy in a consumer | Python 3.11 or later with Pydantic 2, which the sync checks before writing |\n| Claude Code runner | 2.1.311 on macOS, from the RA-BD-004 canary. Not run in CI. |\n| Codex and Hermes runners | Fakes only. Live canaries are deferred to an approved machine. |\n\nThe compatibility policy gains a row: adding a Python version or an operating system is a patch-level change, and dropping one needs a minor release that was announced in an earlier release. The CHANGELOG's Unreleased section and SPEC-009 record the change.\n\n**One addition beyond SPEC-009:** the spec named 3.13. I added 3.14 too, because it's the current stable Python and the gate passes on it.\n\n## Evidence\n\n- **Locally on macOS:** the full gate passes on Python 3.13.18 and 3.14.10 (963 passed, 5 skipped on each). This PR's own CI runs the new jobs on Linux and macOS.\n- **`test_support_matrix.py`** fails if:\n  - `lint.yml` and the release gate run different Pythons;\n  - the README's Python list differs from them;\n  - 3.11 and 3.12 stop being first;\n  - `requires-python` stops matching the oldest tested version;\n  - either workflow loses its macOS job;\n  - the release build stops waiting for both gates.\n\n## Checks\n\n- `make reusable-check` passes locally (969 passed, 5 skipped).\n- `mkdocs build --strict` passes.\n- CI gains three jobs per pull request: about 2 to 3 minutes each, run in parallel. Hosted runners are free for this public repository.\n- No supervisor code changes.\n\nAuthored by `boundroom-agent[bot]`. It needs an approving review from a person other than the author before merge.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "body": "SPEC-009 RA-ENT-008: a support matrix, and CI that runs it.\n\n## CI\n\n**`lint.yml`:**\n- Adds Python 3.13 and 3.14 to the `make reusable-check` matrix. They go after 3.11 and 3.12, because the `main` ruleset requires `make reusable-check (3.11)` and `(3.12)` by name, and those names don't change.\n- Adds a separate `make reusable-check (macOS)` job on `macos-latest` with Python 3.12. It's a job of its own rather than a matrix axis, because adding an `os` axis would rename the required checks.\n- The new jobs aren't required. Making them required is a ruleset change, which is yours.\n\n**`release.yml`:** the gate runs the same Python matrix plus a `gate-macos` job, and `build` waits for both. So a release is never tested on less than a pull request.\n\n## The support matrix\n\nIt's in the README, under \"Versions and compatibility\":\n\n| Component | Tested |\n| --- | --- |\n| Python | 3.11, 3.12, 3.13, 3.14 on Linux; 3.11 and 3.12 required |\n| Operating system | Linux, and macOS with Python 3.12. Windows isn't tested or supported. |\n| Synced copy in a consumer | Python 3.11 or later with Pydantic 2, which the sync checks before writing |\n| Claude Code runner | 2.1.311 on macOS, from the RA-BD-004 canary. Not run in CI. |\n| Codex and Hermes runners | Fakes only. Live canaries are deferred to an approved machine. |\n\nThe compatibility policy gains a row: adding a Python version or an operating system is a patch-level change, and dropping one needs a minor release that was announced in an earlier release. The CHANGELOG's Unreleased section and SPEC-009 record the change.\n\n**One addition beyond SPEC-009:** the spec named 3.13. I added 3.14 too, because it's the current stable Python and the gate passes on it.\n\n## Evidence\n\n- **Locally on macOS:** the full gate passes on Python 3.13.18 and 3.14.10 (963 passed, 5 skipped on each). This PR's own CI runs the new jobs on Linux and macOS.\n- **`test_support_matrix.py`** fails if:\n  - `lint.yml` and the release gate run different Pythons;\n  - the README's Python list differs from them;\n  - 3.11 and 3.12 stop being first;\n  - `requires-python` stops matching the oldest tested version;\n  - either workflow loses its macOS job;\n  - the release build stops waiting for both gates.\n\n## Checks\n\n- `make reusable-check` passes locally (969 passed, 5 skipped).\n- `mkdocs build --strict` passes.\n- CI gains three jobs per pull request: about 2 to 3 minutes each, run in parallel. Hosted runners are free for this public repository.\n- No supervisor code changes.\n\nAuthored by `boundroom-agent[bot]`. It needs an approving review from a person other than the author before merge.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
       "merged_at": "2026-11-15T09:55:16Z",
       "base_sha": "7fa9142a8338ac0196655aa4ed0af41ecbfee4cc",
       "head_sha": "50b6e2318b30539576bb56b846346edfc14a912d",
@@ -391,11 +852,13 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
-        "overlay": "b193297829c68d2243e5e32d1517cf0b51568813",
+        "base_patch": "pr279-outside-handoff-rule",
         "base": {
           "uv_sync_exit_code": 0,
           "exit_code": 1,
@@ -406,7 +869,7 @@
           "skipped": 0,
           "passed_all": false,
           "failed_any": true,
-          "output_tail": "        for line in README.splitlines():\n            cells = [cell.strip() for cell in line.strip().strip(\"|\").split(\"|\")]\n            if cells and cells[0] == component:\n                return cells\n>       raise AssertionError(f\"the README's support matrix has no {component} row\")\nE       AssertionError: the README's support matrix has no Python row\n\nautomation/tests/test_support_matrix.py:41: AssertionError\n=========================== short test summary info ============================\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_a_release_waits_for_every_gate\nSUBFAILED(workflow='lint.yml') automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nSUBFAILED(workflow='release.yml') automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_the_readme_names_exactly_the_pythons_ci_runs\n5 failed, 3 passed in 0.02s"
+          "output_tail": "        for line in README.splitlines():\n            cells = [cell.strip() for cell in line.strip().strip(\"|\").split(\"|\")]\n            if cells and cells[0] == component:\n                return cells\n>       raise AssertionError(f\"the README's support matrix has no {component} row\")\nE       AssertionError: the README's support matrix has no Python row\n\nautomation/tests/test_support_matrix.py:41: AssertionError\n=========================== short test summary info ============================\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_a_release_waits_for_every_gate\nSUBFAILED(workflow='lint.yml') automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nSUBFAILED(workflow='release.yml') automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_the_readme_names_exactly_the_pythons_ci_runs\n5 failed, 3 passed in 0.04s"
         },
         "head": {
           "uv_sync_exit_code": 0,
@@ -418,9 +881,57 @@
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": "......                                                                 [100%]\n6 passed, 2 subtests passed in 0.01s"
+          "output_tail": "......                                                                 [100%]\n6 passed, 2 subtests passed in 0.02s"
         }
       },
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.045,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 196.706,
+            "failures": [],
+            "output_tail": "....................                                            [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n963 passed, 5 skipped, 1077 subtests passed in 187.36s (0:03:07)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 321ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.513,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-af8_3c06/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.71 seconds"
+          }
+        ],
+        "validations_from": "the task's blinded scope"
+      },
+      "scope_status": "kept from the earlier blinded scope",
       "task_statement": "Publish a support matrix and make CI actually test what it claims (SPEC-009 RA-ENT-008). Today CI only checks Python 3.11 and 3.12 on Linux, and nothing written down says which Python versions, operating systems, consumer environments and runners are supported.\n\nGoals:\n- Widen the pull request checks to cover Python 3.13 and 3.14, plus macOS (one Python version is enough there). The existing required check names must not change, because the main ruleset requires them by name. The new jobs are not required; making them required is a ruleset change the owner makes, not part of this task.\n- Make the release gate test at least as much as a pull request does: the same Python versions plus macOS, and the release build waits for all of them.\n- Publish the support matrix in the README's versions and compatibility section. It covers: the tested Python versions and which are required; the tested operating systems, saying plainly that Windows is not tested or supported; the requirements for a synced copy in a consumer; the Claude Code runner version that was canaried (not run in CI); and the fact that the Codex and Hermes runners are tested only with fakes.\n- Add a row to the compatibility policy: adding a Python version or an operating system is a patch-level change, and dropping one needs a minor release that was announced in an earlier release.\n- Record the change in the CHANGELOG's Unreleased section and in SPEC-009.\n- Add or update tests that fail when the pull request CI and the release gate test different Python versions, when the README's Python list disagrees with CI, when the required versions stop coming first, when the declared minimum Python version stops matching the oldest tested one, when either workflow loses its macOS job, or when the release build stops waiting for both gates.\n\nDone when the full gate passes, including on the newly added Python versions, the docs build strictly, and the new tests are in place. No supervisor code changes.",
       "allowed_paths": [
         ".github/workflows/",
@@ -441,80 +952,48 @@
         "inputs": "the PR's title and body only (scratchpad/scopes/pr246.desc.md); no repository, diff or file access; one Read tool call each",
         "leakage_ignored": "Ignored: workflow file names (lint.yml, release.yml), job names (gate-macos, the macOS job title, the build job), the choice of a separate job rather than an os matrix axis, macos-latest, the test file name test_support_matrix.py, the requires-python key, the exact matrix table rows and version numbers (Claude Code 2.1.311, RA-BD-004 canary), local test counts and Python patch versions, and the CI cost estimate.",
         "owner_decision": "R-b scopes written by an agent from the description, not by a person (owner chose this, 2026-11-24)"
-      },
-      "required_proof_level": "domain-tested",
-      "scope_notes": "Required check names in the main ruleset (\"make reusable-check (3.11)\" and \"(3.12)\") must keep their exact names, so any new matrix entries or OS coverage must be added without renaming them. Changing which checks are required, and anything else in the ruleset, is the owner's decision."
+      }
     },
     {
-      "id": "pr257",
-      "number": 257,
-      "title": "docs: add the contribution guide, templates and pre-commit hooks (SPEC-009 RA-ENT-012)",
-      "body": "## What and why\n\nSPEC-009 RA-ENT-012: the contribution guide, issue and pull-request templates, and a pre-commit configuration. It's all delivered except `CODE_OF_CONDUCT.md`, whose text is an owner decision (open decision 5 in SPEC-009). The guide says no code of conduct has been adopted yet. This PR doesn't pick a text.\n\n- **`CONTRIBUTING.md`:** setup and the gate, how to make a change (tests, regenerated files, the compatibility policy, the changelog, the supervisor-cost rule), the commit rules, and the five required checks. It also covers **segregation of duties**: the author never approves, an approval covers one head commit, merges are pinned to that commit, nobody weakens a control, and the agent acts as `boundroom-agent[bot]` and never approves. Then releases and syncs, security, conduct (pending) and licensing (owner decisions).\n- **`.github/pull_request_template.md`:** this description uses it. It asks for what changes for a consumer, the gate's result, tests, regenerated files, the docs build, the exit-code reference, the supervisor cost, and the trailer check.\n- **`.github/ISSUE_TEMPLATE/`:** a bug form that asks for what the troubleshooting guide says to include, a change-request form that names the owner decisions, and a `config.yml` that turns off blank issues and sends vulnerabilities to private reporting.\n- **`.pre-commit-config.yaml`:** local hooks only. On commit, ruff check and ruff's format check run on the staged files. On push, the trailer check and `make reusable-check` run. There's no remote hook repository, so pre-commit downloads no code and has no versions to pin.\n- README and `docs/index.md` link the guide. SPEC-009 gets a progress note.\n\n## What a consumer sees\n\nNothing a consumer sees. These files aren't in the sync manifest, so there's no changelog line.\n\n## Evidence\n\n- [x] `make reusable-check` passes locally. Python version: 3.12 (997 passed, 5 skipped)\n- [x] Tests added or changed: new `automation/tests/test_contributing.py`\n- [x] Generated files are current (`automation.schemas.generate`, `settings_view.py --docs`), or none changed\n- [x] `uv run mkdocs build --strict` passes, or no docs changed\n- [x] A new exit code, failure reason or decision is in `docs/reference/exit-codes.md`, or there is none\n\n**Acceptance: the templates ask for the evidence the gate needs.** `test_contributing.py` reads the required checks from `AGENTS.md` and the gate's commands from the `Makefile`, so it follows them if they change. It fails if:\n\n- the guide or the pull request template doesn't name every required check;\n- the template's Evidence and Approval sections don't ask, as checkboxes, for the gate, its schema and settings checks, tests, the docs build, the exit-code reference and the trailer check;\n- the template doesn't ask what a consumer sees, or what the supervisor costs;\n- the bug form doesn't ask for what the troubleshooting guide's \"Reporting a problem\" lists;\n- an issue form doesn't point vulnerabilities at private reporting;\n- a pre-commit hook comes from a remote repository, isn't `language: system`, or runs a command that isn't in the gate;\n- a push stops running `make reusable-check` and the trailer check;\n- the guide loses a segregation-of-duties rule;\n- a relative link breaks;\n- an issue form or the hook configuration isn't valid YAML. GitHub ignores an issue form it can't parse, without an error, and this check found one such error in the first draft.\n\nMutation check, run locally. Each of these 11 changes fails the test:\n\n- dropping a required check from the template;\n- adding a required check to `AGENTS.md`;\n- removing the template's gate checkbox;\n- adding a remote hook repository;\n- a hook running `black`;\n- the push hook dropping the gate;\n- the `Makefile` dropping a gate command;\n- the bug form dropping `operator_status`;\n- the guide dropping `--match-head-commit`;\n- the template dropping the supervisor-cost question;\n- the template dropping the trailer checkbox.\n\n**Not run: pre-commit itself.** pre-commit is a new tool, and this machine is approved for Claude Code only, so I didn't install it. The test checks the configuration's structure and that it parses. Every hook runs a command the gate already runs and that passed here.\n\n## Supervisor cost\n\nNo. No supervisor, policy, validation or context code changes.\n\n## Approval\n\nThese must pass before a merge: `make reusable-check (3.11)`, `make reusable-check (3.12)`,\n`Tests + coverage comment`, `No agent attribution trailers` and `Review dependency graph diff`.\nA person other than the author approves the head commit; a push needs a new approval.\n\n- [x] No commit carries an agent attribution trailer (`Tools/check-commit-trailers.sh`)\n- [x] This doesn't choose or change a license, spend money, create a release tag, or weaken a check\n- Author: `boundroom-agent[bot]`\n\n**Owner decision left open:** the text of `CODE_OF_CONDUCT.md`, including how to report a problem. A common choice is the Contributor Covenant, which is licensed CC BY 4.0. That license is yours to weigh, too.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
-      "merged_at": "2026-11-17T15:24:23Z",
-      "base_sha": "3087416a46fdb3b1a1059df8621bf37fe4904103",
-      "head_sha": "728c7c14049661b5f42f78373cfd18c75c690cf4",
+      "id": "pr255",
+      "number": 255,
+      "title": "docs: add the operator docs and a checked exit-code reference (SPEC-009 RA-ENT-011)",
+      "body": "SPEC-009 RA-ENT-011: operator docs. These four pages are drawn from the specs, the harness guide and the code. The specs stay the source of truth, and each page says so.\n\n## What's added\n\n- **`docs/reference/architecture.md`:** the components, one slice from selection to verdict, who owns each piece of state, how a release reaches a consumer, and what is proposed but not built.\n- **`docs/reference/security-model.md`:** the assets, who is trusted with what, the controls and where each is enforced, and a section on what Boundroom does not protect against. That section says plainly that Boundroom is not a sandbox: during a session, the runner's own permissions are the limit.\n- **`docs/reference/exit-codes.md`:** every exit code for the 12 command-line entry points (the supervisor's commands, `run_agent.sh`, the sync tool and the two release checks), plus every failure reason, every decision with its queue status, and the prompt and runner-rules error codes.\n- **`docs/reference/troubleshooting.md`:** each `stop:` and `boundroom-sync: error:` message, with its exit code, cause and fix. It also covers recovering a slice stuck `in_progress`, which the docs didn't cover before.\n\nThey're linked from the README (a new \"Operating Boundroom\" section), `docs/index.md`, the mkdocs nav and the compatibility policy's exit-code row. There's also a changelog line and a SPEC-009 progress note.\n\n## Acceptance: every exit code is documented, checked by a test\n\n`automation/tests/test_operator_docs.py` reads the code without running it:\n\n- It discovers every Python entry point (`if __name__ == \"__main__\"`) in `automation/supervisor`, `automation/context` and `Tools`, adds `run_agent.sh` and the sync tool, and fails if one has no section in the reference.\n- It extracts each command's exit codes. For Python it uses the AST: literal returns and exits, names assigned a code and then returned or exited with (`EX_CONFIG`, or evaluate_handoff's `code = 0 if ... else 1`), and the `exit_code=` default. For shell it matches `exit N` and `return N` anywhere on a line, after removing quoted strings, comments and heredoc bodies. It parses every Python heredoc a shell command runs: the sync tool's whole program, and `run_agent.sh`'s sandbox probe. It fails if a code isn't listed, and if a listed code can't be exited with. The one exception is `swarm_wiki.py`'s 0, which is the compiler's own exit code.\n- It finds entry points with the AST, so `'__main__'` in either quote style counts.\n- It checks that the failure reasons match run_next's `fail()` calls and `session_error()`, that the decisions and their queue statuses match `policy.py`'s `CompletionDecision` calls, and that the prompt and runner-rules errors match the error codes run_next raises with `ConfigError`. All three are exact matches, so a stale row also fails.\n- Guards stop it passing on an empty glob or a broken extractor. One checks that `\"exit 75\"` inside a quoted sandbox command in `run_agent.sh` isn't counted.\n\nMutation check, run locally. Each of these fails the test:\n\n- adding `return 99` to `settings_view.py`;\n- adding `exit 42`, or `cmd || exit 70`, to `run_agent.sh`;\n- renaming a `fail()` reason, or a decision;\n- changing evaluate_handoff's `else 1` to `else 3`;\n- changing the sandbox probe's `sys.exit(1 ...)` to `sys.exit(3 ...)`;\n- adding a new `Tools/*.py` entry point that uses single quotes;\n- dropping `settings_view.py`'s `return 64`, which leaves a stale row.\n\n## Things the reference makes explicit\n\n- **A slice that fails its checks exits 0.** `run_next.py` records `stop_failed`, `stop_blocked` or `stop_for_review` in the decision report and the queue, then exits 0. A non-zero exit means the supervisor refused to start, or couldn't judge the slice. This was true before, but no page said it.\n- **The autonomous limit gives `stop_for_review`, not `stop`.**\n- **The runner's exit code passes through `run_next.py`.** So `run_next.py` can exit 64, 66, 69, 73 or 78 from `run_agent.sh`, as well as its own 2, 64 and 78. For 64 and 78, a printed failure report says the slice was claimed and is now `failed`.\n- **A Git failure while the supervisor measures a claimed slice exits 2 and leaves the slice `in_progress`, with no failure report.** `_cli_entry` catches the `ConfigError` without calling `fail()`. The docs describe this and how to recover. Changing the code to fail the slice instead is a separate supervisor change.\n- **In a run of several slices, a refusal keeps the earlier slices' verdicts.**\n- **evaluate_handoff's exit 1 is also an unhandled error**, with a traceback and no report.\n\n## Review fixes (second commit)\n\nA code review found places where the pages and the code disagreed, and gaps in the test. The second commit fixes them:\n\n- the 64 and 78 ambiguity;\n- slices left `in_progress` after a claim;\n- multi-slice refusals;\n- evaluate_handoff's exit 1;\n- the architecture diagram, which built the context after the claim, but the code builds it before;\n- the ceiling, which doesn't cap `custom`;\n- the extraction gaps and the two-way check described above.\n\n## Checks\n\n- `make reusable-check` passes locally on Python 3.12 (983 passed, 5 skipped).\n- `mkdocs build --strict` passes.\n- No supervisor or sync code changes. No new file, network or subprocess work in the supervisor paths.\n\nAuthored by `boundroom-agent[bot]`. It needs an approving review from a person other than the author before merge.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "merged_at": "2026-11-17T08:36:04Z",
+      "base_sha": "50b6e2318b30539576bb56b846346edfc14a912d",
+      "head_sha": "e9263da22aaccaedf93c43025bee7e0a0f06dccb",
       "hidden_tests": [
-        "automation/tests/test_contributing.py"
+        "automation/tests/test_operator_docs.py"
       ],
       "hidden_test_support_files": [],
       "human_solution": {
         "files": [
-          ".github/ISSUE_TEMPLATE/bug_report.yml",
-          ".github/ISSUE_TEMPLATE/change_request.yml",
-          ".github/ISSUE_TEMPLATE/config.yml",
-          ".github/pull_request_template.md",
-          ".pre-commit-config.yaml",
-          "CONTRIBUTING.md",
+          "CHANGELOG.md",
           "README.md",
-          "Tools/check-commit-trailers.sh",
-          "automation/tests/test_contributing.py",
+          "automation/tests/test_operator_docs.py",
           "docs/architecture/enterprise-readiness.md",
-          "docs/index.md"
+          "docs/index.md",
+          "docs/reference/architecture.md",
+          "docs/reference/compatibility.md",
+          "docs/reference/exit-codes.md",
+          "docs/reference/security-model.md",
+          "docs/reference/troubleshooting.md",
+          "mkdocs.yml"
         ],
         "numstat": [
           {
-            "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
-            "added": 67,
-            "deleted": 0
-          },
-          {
-            "path": ".github/ISSUE_TEMPLATE/change_request.yml",
-            "added": 43,
-            "deleted": 0
-          },
-          {
-            "path": ".github/ISSUE_TEMPLATE/config.yml",
-            "added": 8,
-            "deleted": 0
-          },
-          {
-            "path": ".github/pull_request_template.md",
-            "added": 44,
-            "deleted": 0
-          },
-          {
-            "path": ".pre-commit-config.yaml",
-            "added": 42,
-            "deleted": 0
-          },
-          {
-            "path": "CONTRIBUTING.md",
-            "added": 93,
+            "path": "CHANGELOG.md",
+            "added": 1,
             "deleted": 0
           },
           {
             "path": "README.md",
-            "added": 4,
+            "added": 7,
             "deleted": 0
           },
           {
-            "path": "Tools/check-commit-trailers.sh",
-            "added": 3,
-            "deleted": 2
-          },
-          {
-            "path": "automation/tests/test_contributing.py",
-            "added": 205,
+            "path": "automation/tests/test_operator_docs.py",
+            "added": 303,
             "deleted": 0
           },
           {
@@ -526,171 +1005,41 @@
             "path": "docs/index.md",
             "added": 7,
             "deleted": 0
-          }
-        ],
-        "files_changed": 11,
-        "lines_added": 517,
-        "lines_deleted": 3
-      },
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": true,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true,
-        "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
-      },
-      "oracle": {
-        "overlay": "b193297829c68d2243e5e32d1517cf0b51568813",
-        "base": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 1,
-          "timed_out": false,
-          "passed": 2,
-          "failed": 14,
-          "errors": 0,
-          "skipped": 0,
-          "passed_all": false,
-          "failed_any": true,
-          "output_tail": "FAILED automation/tests/test_contributing.py::RequiredCheckTests::test_the_guide_and_the_pull_request_template_name_every_required_check\nFAILED automation/tests/test_contributing.py::PullRequestTemplateTests::test_it_asks_for_the_gate_and_the_evidence_around_it\nFAILED automation/tests/test_contributing.py::PullRequestTemplateTests::test_it_asks_what_a_consumer_sees_and_what_the_supervisor_costs\nFAILED automation/tests/test_contributing.py::PullRequestTemplateTests::test_it_says_a_person_other_than_the_author_approves\nFAILED automation/tests/test_contributing.py::IssueTemplateTests::test_a_bug_report_asks_for_what_troubleshooting_says_to_include\nSUBFAILED(file='.pre-commit-config.yaml') automation/tests/test_contributing.py::IssueTemplateTests::test_the_forms_and_the_hook_config_are_valid_yaml\nFAILED automation/tests/test_contributing.py::IssueTemplateTests::test_vulnerabilities_are_sent_to_private_reporting_not_an_issue\nFAILED automation/tests/test_contributing.py::PreCommitTests::test_a_push_runs_the_whole_gate_and_the_trailer_check\nFAILED automation/tests/test_contributing.py::PreCommitTests::test_every_hook_is_local\nFAILED automation/tests/test_contributing.py::PreCommitTests::test_every_hook_runs_a_command_from_the_gate\nFAILED automation/tests/test_contributing.py::ContributingTests::test_it_carries_the_segregation_of_duties_rules\nFAILED automation/tests/test_contributing.py::ContributingTests::test_relative_links_resolve\nFAILED automation/tests/test_contributing.py::ContributingTests::test_repository_paths_named_in_plain_text_exist\nFAILED automation/tests/test_contributing.py::ContributingTests::test_the_readme_links_the_guide\n14 failed, 2 passed in 0.20s"
-        },
-        "head": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 0,
-          "timed_out": false,
-          "passed": 15,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0,
-          "passed_all": true,
-          "failed_any": false,
-          "output_tail": "...............                                                  [100%]\n15 passed, 80 subtests passed in 0.08s"
-        }
-      },
-      "task_statement": "SCOPE INCOMPLETE: only a fragment of pull request #257's description reached this step. The single allowed read came back cut down to one checklist line (\"make reusable-check passes locally, Python 3.12, 997 passed, 5 skipped\"). The goal, motivation and changed areas of the PR were not visible, so this scope cannot state the actual task. What can be said: the work changes code or tests in this repository, outside the supervisor, schema, context and queue packages. It is done when the change is made, tests are added or updated to cover it, and the full reusable check passes on Python 3.12. Regenerate this scope from the complete description before using it in the experiment.",
-      "allowed_paths": [
-        "automation/benchmark/",
-        "automation/tests/",
-        "Tools/",
-        "docs/",
-        "README.md",
-        "CHANGELOG.md",
-        "Makefile",
-        "pyproject.toml"
-      ],
-      "required_validations": [
-        "git diff --check",
-        "UV_PYTHON=3.12 make reusable-check",
-        "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict"
-      ],
-      "max_files_changed": 10,
-      "scope_provenance": {
-        "by": "claude-code (for raelldottin): one blinded subagent per task, workflow run wf_d93c6315-ae7",
-        "when": "2026-11-24",
-        "inputs": "the PR's title and body only (scratchpad/scopes/pr257.desc.md); no repository, diff or file access; one Read tool call each",
-        "leakage_ignored": "Nothing was stripped, because no implementation details were visible. The one visible line gave only the local test result (997 passed, 5 skipped on Python 3.12), which was not used except to infer that code or tests change.",
-        "owner_decision": "R-b scopes written by an agent from the description, not by a person (owner chose this, 2026-11-24)"
-      },
-      "required_proof_level": "domain-tested",
-      "scope_notes": "The description file came back truncated: only its checklist line (line 19 of about 20) was returned, and the rest went into a context store that the one-call limit did not allow reading. The allowed paths, file budget and validations are cautious guesses, not drawn from the PR's content, and this scope should be regenerated from the full description."
-    },
-    {
-      "id": "pr262",
-      "number": 262,
-      "title": "feat(release): publish an attested CycloneDX SBOM with each release (SPEC-009 RA-ENT-004)",
-      "body": "SPEC-009 RA-ENT-004: each release publishes a signed CycloneDX SBOM, `boundroom-<tag>.cdx.json`, also attested against the archive.\n\n**Owner gate, for you to confirm.** The spec gated this on approving \"a new tool\". My earlier recommendation was GitHub's dependency-graph SBOM export. I didn't use it, because that API covers only the default branch, not the tag being released. This PR uses `uv export --format cyclonedx1.5` instead. uv already builds the release, but SBOM export is a preview feature of uv. The open decision in SPEC-009 says so and leaves it to you. Approving this PR settles it.\n\n**What the SBOM lists:** Boundroom's dependencies and every extra (pydantic, plus logfire and its dependencies from the telemetry extra), 30 packages at their `uv.lock` versions. It leaves out the dev group, because the archive ships none of those tools and a scanner would report their CVEs against the release.\n\n**Guard against the preview format:** `Tools/release_sbom.py <output> <tag>` refuses the SBOM unless:\n- its packages match exactly the ones uv's established requirements export lists for the same selection, with none missing and none extra;\n- its project version matches the tag. A tag made without bumping `pyproject.toml` fails the release.\n\n**Verification**\n- The provenance attestation now signs the `.cdx.json` as well as the archive. That way, `gh attestation verify boundroom-<tag>.cdx.json ...` checks the file you downloaded. The `.sha256` covers only the archive.\n- A second `actions/attest` step, pinned to the same commit, with `sbom-path`, binds the SBOM's content to the archive (`--predicate-type https://cyclonedx.org/bom`).\n- The attest job still checks nothing out and runs no repository code.\n\n**Second review's fixes (f6908b7)**\n- **Stale lock:** both exports use `--locked`, so a stale `uv.lock` is refused, not exported. CI (`lint.yml`, the required gate) runs `uv lock --check`, so a stale lock can't reach `main` in the first place.\n- **Version before the tag:** `Tools/check_plugin_version.py` also requires `pyproject.toml` to declare the tag's version, as an exact match or the PEP 440 form of a prerelease tag. You run it before tagging and the release's first job runs it again, so a missing bump fails before the tag is pushed, not after the gate. It still runs on any python3 (no tomllib). The SBOM check reuses the same rule, which also closes the prefix-match hole (`0.5.10` for `v0.5.1`, `rc` on a final tag).\n- **Fixed uv:** the build job pins uv 0.13.7, the version these tests ran on, because the SBOM comes from a preview export.\n- **SBOM checksum:** the build writes `boundroom-<tag>.cdx.json.sha256`, and the attest job checks it before signing, as it already does for the archive.\n- **Unreadable requirement:** a requirement line the check can't read, such as `name @ url`, now fails with a clear message instead of being skipped.\n\n**Docs:** the release notes, the upgrade guide, the exit-code reference, the control map, SPEC-009 and the changelog.\n\n**Tests**\n- `test_release_sbom.py`:\n  - a match passes, including a prerelease tag;\n  - a missing package, a wrong version, an extra (dev) package, the wrong project version, a malformed tag, an empty export or a non-CycloneDX document is refused;\n  - a failed or wrong export exits 1 and writes nothing;\n  - the real export of this repository includes pydantic and logfire and none of the dev tools.\n- `test_release_workflow.py`: the build passes the tag; the provenance signs both files; the SBOM step uses `sbom-path`; the notes show how to verify.\n- `UV_PYTHON=3.12 make reusable-check`: 1061 passed. `mkdocs build --strict` passes.\n\n**Review:** the `/code-review` comments on this PR covered scope, verification, version and the owner gate. All four are handled above.\n\n**Not checked live:** the first real run is the next release's `release.yml`.\n\nPerformance: no supervisor, policy, validation or context-building path changes.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
-      "merged_at": "2026-11-18T10:09:27Z",
-      "base_sha": "56b9ee6a441810ed2b82384e9110406f4b3a2354",
-      "head_sha": "ef6bed06b120c2c0b87ca6273fc50f6e34d1d963",
-      "hidden_tests": [
-        "automation/tests/test_check_plugin_version.py",
-        "automation/tests/test_release_sbom.py",
-        "automation/tests/test_release_workflow.py"
-      ],
-      "hidden_test_support_files": [],
-      "human_solution": {
-        "files": [
-          ".github/workflows/lint.yml",
-          ".github/workflows/release.yml",
-          "CHANGELOG.md",
-          "Tools/check_plugin_version.py",
-          "Tools/release_sbom.py",
-          "automation/tests/test_check_plugin_version.py",
-          "automation/tests/test_release_sbom.py",
-          "automation/tests/test_release_workflow.py",
-          "docs/architecture/enterprise-readiness.md",
-          "docs/compliance/controls.md",
-          "docs/reference/exit-codes.md",
-          "docs/workflows/upgrading.md"
-        ],
-        "numstat": [
+          },
           {
-            "path": ".github/workflows/lint.yml",
-            "added": 5,
+            "path": "docs/reference/architecture.md",
+            "added": 94,
             "deleted": 0
           },
           {
-            "path": ".github/workflows/release.yml",
-            "added": 30,
-            "deleted": 4
-          },
-          {
-            "path": "CHANGELOG.md",
+            "path": "docs/reference/compatibility.md",
             "added": 1,
-            "deleted": 0
-          },
-          {
-            "path": "Tools/check_plugin_version.py",
-            "added": 37,
-            "deleted": 3
-          },
-          {
-            "path": "Tools/release_sbom.py",
-            "added": 112,
-            "deleted": 0
-          },
-          {
-            "path": "automation/tests/test_check_plugin_version.py",
-            "added": 40,
-            "deleted": 0
-          },
-          {
-            "path": "automation/tests/test_release_sbom.py",
-            "added": 138,
-            "deleted": 0
-          },
-          {
-            "path": "automation/tests/test_release_workflow.py",
-            "added": 42,
-            "deleted": 2
-          },
-          {
-            "path": "docs/architecture/enterprise-readiness.md",
-            "added": 2,
-            "deleted": 2
-          },
-          {
-            "path": "docs/compliance/controls.md",
-            "added": 1,
-            "deleted": 2
+            "deleted": 1
           },
           {
             "path": "docs/reference/exit-codes.md",
-            "added": 12,
-            "deleted": 2
+            "added": 203,
+            "deleted": 0
           },
           {
-            "path": "docs/workflows/upgrading.md",
-            "added": 10,
+            "path": "docs/reference/security-model.md",
+            "added": 108,
+            "deleted": 0
+          },
+          {
+            "path": "docs/reference/troubleshooting.md",
+            "added": 107,
+            "deleted": 0
+          },
+          {
+            "path": "mkdocs.yml",
+            "added": 4,
             "deleted": 0
           }
         ],
-        "files_changed": 12,
-        "lines_added": 430,
-        "lines_deleted": 15
+        "files_changed": 11,
+        "lines_added": 836,
+        "lines_deleted": 2
       },
       "checks": {
         "merge_commit_present": true,
@@ -700,173 +1049,96 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
-        "overlay": "b193297829c68d2243e5e32d1517cf0b51568813",
-        "base": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 2,
-          "timed_out": false,
-          "passed": 0,
-          "failed": 0,
-          "errors": 1,
-          "skipped": 0,
-          "passed_all": false,
-          "failed_any": true,
-          "output_tail": "==================================== ERRORS ====================================\n____________ ERROR collecting automation/tests/test_release_sbom.py ____________\nautomation/tests/test_release_sbom.py:20: in <module>\n    _spec.loader.exec_module(release_sbom)\n<frozen importlib._bootstrap_external>:759: in exec_module\n    ???\n<frozen importlib._bootstrap_external>:896: in get_code\n    ???\n<frozen importlib._bootstrap_external>:954: in get_data\n    ???\nE   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-select-u49f5w_0/base/Tools/release_sbom.py'\n=========================== short test summary info ============================\nERROR automation/tests/test_release_sbom.py - FileNotFoundError: [Errno 2] No...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.05s"
-        },
-        "head": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 0,
-          "timed_out": false,
-          "passed": 46,
-          "failed": 0,
-          "errors": 0,
-          "skipped": 0,
-          "passed_all": true,
-          "failed_any": false,
-          "output_tail": "..............................................                                            [100%]\n46 passed, 55 subtests passed in 0.23s"
-        }
-      },
-      "task_statement": "Make published releases verifiable. Today the release workflow builds and publishes the archive and its .sha256 checksum, but a person downloading them cannot check where they came from. Change the release pipeline so that: the build is given the release tag it is building; build provenance (a signed attestation) covers both published files, the archive and the checksum; the SBOM attestation step points at the SBOM file the build actually produces; and the published release notes tell a reader how to verify the archive, checksum and provenance. The release must still rerun the required gate, publish only from a tag on main, and leave the required checks untouched. Add or update tests that pin each of these properties of the release workflow (the tag is passed to the build, provenance signs both files, the SBOM step uses the SBOM path, the notes include verification instructions), and update the release documentation and changelog if they describe the release steps. Done means a release built from a tag would produce attested archive and checksum files, with notes that explain how to check them, and the workflow tests fail if any of these is removed.",
-      "allowed_paths": [
-        ".github/workflows/",
-        "automation/tests/",
-        "Tools/",
-        "docs/",
-        "CHANGELOG.md",
-        "README.md"
-      ],
-      "required_validations": [
-        "git diff --check",
-        "UV_PYTHON=3.12 make reusable-check",
-        "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict"
-      ],
-      "max_files_changed": 7,
-      "scope_provenance": {
-        "by": "claude-code (for raelldottin): one blinded subagent per task, workflow run wf_d93c6315-ae7",
-        "when": "2026-11-24",
-        "inputs": "the PR's title and body only (scratchpad/scopes/pr262.desc.md); no repository, diff or file access; one Read tool call each",
-        "leakage_ignored": "I ignored the test file name (test_release_workflow.py) and the exact workflow input name (`sbom-path`). The goals behind them are kept in plain terms.",
-        "owner_decision": "R-b scopes written by an agent from the description, not by a person (owner chose this, 2026-11-24)"
-      },
-      "required_proof_level": "domain-tested",
-      "scope_notes": "The task changes release tooling, but it does not create or publish a release. Tags and releases still need a person's approval. Only the end of the description could be read, so the scope is built from its test summary, which lists the tag passed to the build, provenance over both files, the SBOM path and verification steps in the notes."
-    },
-    {
-      "id": "pr263",
-      "number": 263,
-      "title": "ci: add CodeQL for Python and the workflows (SPEC-009 RA-ENT-005)",
-      "body": "SPEC-009 RA-ENT-005: CodeQL analysis of the Python code and the GitHub Actions workflows.\n\n**What changes**\n- `.github/workflows/codeql.yml`:\n  - runs on pull requests, pushes to `main`, weekly, and by hand;\n  - `github/codeql-action` `init` and `analyze` are pinned to the v4.39.3 commit (`33d7b85`, released 2026-11-04);\n  - `build-mode: none`, since neither language is compiled;\n  - only the analyze job can write security events; the workflow default is `contents: read`.\n- **Not a required check.** The SPEC-009 owner gate is still yours. To make it block merges, add `CodeQL (python)` and `CodeQL (actions)` to the `main` ruleset. The control map says how. Until then, findings appear as code-scanning alerts.\n- **Control map:**\n  - Dependabot alerts and Dependabot security updates were shown as gaps, but both are on: I checked through the API today.\n  - The owner steps no longer give the commands to enable them.\n  - Step 5 now says not to turn on code scanning's default setup as well, because GitHub refuses an advanced workflow's uploads while default setup is on. Default setup is \"not-configured\" today.\n- SPEC-009 progress, open decision 4 (secret scanning and push protection were already on), and the changelog.\n\n**Tests**\n- `test_code_scanning.py`: the triggers; both languages; `init` and `analyze` on one pinned release; `security-events: write` only in the job; CodeQL not listed among AGENTS.md's required checks.\n- The existing pinning test covers the new `uses:` lines.\n- `UV_PYTHON=3.12 make reusable-check`: 1039 passed. `mkdocs build --strict` passes.\n\n**Watch on this PR:** this is CodeQL's first run, so its own check shows here. If the `actions` analysis reports findings on the existing workflows, I'll handle them in a follow-up PR, not this one.\n\nPerformance: no supervisor, policy, validation or context-building path changes.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
-      "merged_at": "2026-11-18T10:20:24Z",
-      "base_sha": "ef6bed06b120c2c0b87ca6273fc50f6e34d1d963",
-      "head_sha": "a79856ce115feecfc7eca5fea34017f1747c35ba",
-      "hidden_tests": [
-        "automation/tests/test_code_scanning.py"
-      ],
-      "hidden_test_support_files": [],
-      "human_solution": {
-        "files": [
-          ".github/workflows/codeql.yml",
-          "CHANGELOG.md",
-          "automation/tests/test_code_scanning.py",
-          "docs/architecture/enterprise-readiness.md",
-          "docs/compliance/controls.md"
-        ],
-        "numstat": [
-          {
-            "path": ".github/workflows/codeql.yml",
-            "added": 46,
-            "deleted": 0
-          },
-          {
-            "path": "CHANGELOG.md",
-            "added": 1,
-            "deleted": 0
-          },
-          {
-            "path": "automation/tests/test_code_scanning.py",
-            "added": 47,
-            "deleted": 0
-          },
-          {
-            "path": "docs/architecture/enterprise-readiness.md",
-            "added": 3,
-            "deleted": 3
-          },
-          {
-            "path": "docs/compliance/controls.md",
-            "added": 6,
-            "deleted": 15
-          }
-        ],
-        "files_changed": 5,
-        "lines_added": 103,
-        "lines_deleted": 18
-      },
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": true,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true,
-        "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
-      },
-      "oracle": {
-        "overlay": "b193297829c68d2243e5e32d1517cf0b51568813",
+        "base_patch": "pr279-outside-handoff-rule",
         "base": {
           "uv_sync_exit_code": 0,
           "exit_code": 1,
           "timed_out": false,
-          "passed": 0,
-          "failed": 5,
+          "passed": 6,
+          "failed": 12,
           "errors": 0,
           "skipped": 0,
           "passed_all": false,
           "failed_any": true,
-          "output_tail": "        \"\"\"\n        if \"b\" not in mode:\n            encoding = io.text_encoding(encoding)\n>       return io.open(self, mode, buffering, encoding, errors, newline)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-select-q9gue85t/base/.github/workflows/codeql.yml'\n\n/Users/raelldottin/.local/share/uv/python/cpython-3.14.10-macos-aarch64-none/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError\n=========================== short test summary info ============================\nFAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_init_and_analyze_are_the_same_pinned_release\nFAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_it_analyzes_python_and_the_workflows\nFAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_it_is_not_a_required_check\nFAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_it_runs_on_pull_requests_main_and_weekly\nFAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_only_the_analyze_job_can_write_security_events\n5 failed in 0.05s"
+          "output_tail": "automation/tests/test_operator_docs.py:291: AssertionError\n=========================== short test summary info ============================\nFAILED automation/tests/test_operator_docs.py::EntryPointTests::test_every_command_has_a_section\nFAILED automation/tests/test_operator_docs.py::ExitCodeTests::test_every_documented_code_is_one_the_source_can_exit_with\nFAILED automation/tests/test_operator_docs.py::ExitCodeTests::test_every_exit_code_in_the_source_is_documented\nFAILED automation/tests/test_operator_docs.py::ErrorTableTests::test_the_decisions_match_policy\nFAILED automation/tests/test_operator_docs.py::ErrorTableTests::test_the_failure_reasons_match_run_next\nFAILED automation/tests/test_operator_docs.py::ErrorTableTests::test_the_prompt_errors_match_run_next\nSUBFAILED(page='architecture.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nSUBFAILED(page='security-model.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nSUBFAILED(page='exit-codes.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nSUBFAILED(page='troubleshooting.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nFAILED automation/tests/test_operator_docs.py::LinkTests::test_relative_links_between_operator_pages_resolve\nFAILED automation/tests/test_operator_docs.py::LinkTests::test_the_readme_and_the_compatibility_policy_link_the_reference\n12 failed, 6 passed in 0.26s"
         },
         "head": {
           "uv_sync_exit_code": 0,
           "exit_code": 0,
           "timed_out": false,
-          "passed": 5,
+          "passed": 14,
           "failed": 0,
           "errors": 0,
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": ".....                                                                    [100%]\n5 passed in 0.01s"
+          "output_tail": "..............                                                          [100%]\n14 passed, 73 subtests passed in 0.42s"
         }
       },
-      "task_statement": "Add CodeQL static analysis that covers both the Python code and the GitHub Actions workflows (SPEC-009 item RA-ENT-005). The analysis should run on pull requests, on pushes to main, on a weekly schedule, and when started by hand. Pin the CodeQL actions to a full commit of a recent release, and use the same release for every CodeQL step. Neither language needs a build step. Grant least privilege: the workflow defaults to read-only contents, and only the analysis job may write security events. Do not make CodeQL a required check. Adding it to the main ruleset is the owner's decision, so the docs should say how the owner can make it block merges, and until then findings show up as code-scanning alerts. Update the compliance control map. Dependabot alerts and Dependabot security updates are listed there as gaps, but they are already on, so mark them as on and remove the owner steps that tell the owner to enable them. Add a warning not to turn on code scanning's default setup as well, because GitHub refuses uploads from an advanced workflow while default setup is on. Also update SPEC-009's progress, close the open decision about secret scanning and push protection (both are already on), and add a changelog entry. Add or update tests that check the triggers, that both languages are analyzed, that the CodeQL steps are pinned to one release, that security-events write permission is granted only at job level, and that CodeQL is not listed among AGENTS.md's required checks. Done means the existing action-pinning checks still pass, the new tests pass, and the docs build strictly.",
-      "allowed_paths": [
-        ".github/workflows/",
-        "automation/tests/",
-        "docs/compliance/",
-        "docs/architecture/",
-        "CHANGELOG.md"
-      ],
-      "required_validations": [
-        "git diff --check",
-        "UV_PYTHON=3.12 make reusable-check",
-        "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict"
-      ],
-      "max_files_changed": 8,
-      "scope_provenance": {
-        "by": "claude-code (for raelldottin): one blinded subagent per task, workflow run wf_d93c6315-ae7",
-        "when": "2026-11-24",
-        "inputs": "the PR's title and body only (scratchpad/scopes/pr263.desc.md); no repository, diff or file access; one Read tool call each",
-        "leakage_ignored": "I left out the workflow file name (codeql.yml), the test file name (test_code_scanning.py), the exact codeql-action version and commit (v4.39.3, 33d7b85), the build-mode setting, the check names CodeQL (python) and CodeQL (actions), the control map's step 5, open decision number 4, and the test count (1039 passed).",
-        "owner_decision": "R-b scopes written by an agent from the description, not by a person (owner chose this, 2026-11-24)"
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.046,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 210.643,
+            "failures": [],
+            "output_tail": "..................................................................................................                              [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n969 passed, 5 skipped, 1085 subtests passed in 201.46s (0:03:21)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 258ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.483,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-_qrwhx05/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.70 seconds"
+          }
+        ],
+        "validations_from": "DEFAULT_REQUIRED_VALIDATIONS (no scope yet)"
       },
-      "required_proof_level": "domain-tested",
-      "scope_notes": "Making CodeQL a required check stays the owner's decision, and this work must not change the ruleset or AGENTS.md's list of required checks. If the first CodeQL run reports findings on the existing workflows, they get fixed in a follow-up, not in this change."
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "",
+      "allowed_paths": [],
+      "required_validations": [],
+      "max_files_changed": null,
+      "scope_provenance": {
+        "by": "",
+        "when": "",
+        "inputs": "",
+        "leakage_ignored": ""
+      }
     }
   ],
   "audit": [
@@ -886,6 +1158,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "touches automation/supervisor/run_next.py, automation/supervisor/settings.py"
@@ -907,6 +1180,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "touches automation/supervisor/run_next.py, automation/supervisor/runner_profile.py, automation/supervisor/settings.py, automation/supervisor/settings_view.py"
@@ -926,30 +1200,79 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": false
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
         "base": {
           "uv_sync_exit_code": 0,
           "exit_code": 1,
           "passed": 11,
-          "failed": 7,
+          "failed": 6,
           "errors": 0,
-          "output_tail": "SUBFAILED(option='claude_profile') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='claude_profile_ceiling') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='telemetry') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='telemetry_capture') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='telemetry_runner') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\n7 failed, 11 passed, 165 subtests passed in 0.50s"
+          "output_tail": "SUBFAILED(option='claude_profile') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='claude_profile_ceiling') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='telemetry') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='telemetry_capture') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\nSUBFAILED(option='telemetry_runner') automation/tests/test_settings_registry.py::UserConfigTests::test_the_skill_passes_each_option_with_its_settings_flag\n6 failed, 11 passed, 163 subtests passed in 0.78s"
         },
         "head": {
           "uv_sync_exit_code": 0,
-          "exit_code": 1,
+          "exit_code": 0,
           "passed": 12,
-          "failed": 1,
+          "failed": 0,
           "errors": 0,
-          "output_tail": "=========================== short test summary info ============================\nSUBFAILED(entry_point='sync') automation/tests/test_settings_registry.py::CompletenessTests::test_ps1_every_flag_of_every_entry_point_is_registered\n1 failed, 12 passed, 180 subtests passed in 0.45s"
+          "output_tail": "............                           [100%]\n12 passed, 178 subtests passed in 0.71s"
         }
       },
-      "decision": "rejected",
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.049,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 260.116,
+            "failures": [],
+            "output_tail": ".......................................     [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n1623 passed, 5 skipped, 960 subtests passed in 250.92s (0:04:10)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 242ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.666,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-n21mqqpl/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.74 seconds"
+          }
+        ],
+        "validations_from": "DEFAULT_REQUIRED_VALIDATIONS (no scope yet)"
+      },
+      "decision": "kept",
       "reasons": [
-        "the hidden tests do not pass at head_sha with the overlay"
+        "passes every check"
       ]
     },
     {
@@ -968,6 +1291,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "no automation/tests/test_*.py file in its files"
@@ -989,6 +1313,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "no automation/tests/test_*.py file in its files",
@@ -1011,6 +1336,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "no automation/tests/test_*.py file in its files",
@@ -1033,6 +1359,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "53 files changed, more than 15"
@@ -1054,6 +1381,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "27 files changed, more than 15",
@@ -1076,6 +1404,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "no automation/tests/test_*.py file in its files",
@@ -1098,6 +1427,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "touches automation/supervisor/run_next.py"
@@ -1119,6 +1449,7 @@
         "squash_matches_pull_request": true
       },
       "oracle": "not run: a cheaper check already rejected it",
+      "green_base": "not run: an earlier check already rejected it",
       "decision": "rejected",
       "reasons": [
         "touches automation/supervisor/run_agent.sh, automation/supervisor/run_next.py, automation/supervisor/settings.py"
@@ -1138,8 +1469,10 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": false
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
         "base": {
@@ -1148,20 +1481,67 @@
           "passed": 2,
           "failed": 5,
           "errors": 0,
-          "output_tail": "SUBFAILED(page='README.md') automation/tests/test_compatibility_policy.py::PolicyLinkTests::test_the_readme_and_the_upgrade_guide_link_the_policy\nSUBFAILED(page='docs/workflows/upgrading.md') automation/tests/test_compatibility_policy.py::PolicyLinkTests::test_the_readme_and_the_upgrade_guide_link_the_policy\nSUBFAILED(key='allow_owlory_specific') automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_each_deprecated_manifest_key_stops_when_the_sync_says\nFAILED automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_legacy_variables_stop_when_the_registry_says\nFAILED automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_no_removal_lands_in_the_current_minor_line\n5 failed, 2 passed in 0.04s"
+          "output_tail": "SUBFAILED(page='README.md') automation/tests/test_compatibility_policy.py::PolicyLinkTests::test_the_readme_and_the_upgrade_guide_link_the_policy\nSUBFAILED(page='docs/workflows/upgrading.md') automation/tests/test_compatibility_policy.py::PolicyLinkTests::test_the_readme_and_the_upgrade_guide_link_the_policy\nSUBFAILED(key='allow_owlory_specific') automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_each_deprecated_manifest_key_stops_when_the_sync_says\nFAILED automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_legacy_variables_stop_when_the_registry_says\nFAILED automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_no_removal_lands_in_the_current_minor_line\n5 failed, 2 passed in 0.08s"
         },
         "head": {
           "uv_sync_exit_code": 0,
-          "exit_code": 1,
-          "passed": 3,
-          "failed": 1,
+          "exit_code": 0,
+          "passed": 4,
+          "failed": 0,
           "errors": 0,
-          "output_tail": "=========================== short test summary info ============================\nFAILED automation/tests/test_compatibility_policy.py::DeprecationTableTests::test_legacy_variables_stop_when_the_registry_says\n1 failed, 3 passed, 7 subtests passed in 0.02s"
+          "output_tail": "....                                                              [100%]\n4 passed, 7 subtests passed in 0.03s"
         }
       },
-      "decision": "rejected",
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.087,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 179.702,
+            "failures": [],
+            "output_tail": "..............                                                  [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n933 passed, 5 skipped, 1029 subtests passed in 168.19s (0:02:48)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 324ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.279,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-67rc99oh/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.61 seconds"
+          }
+        ],
+        "validations_from": "DEFAULT_REQUIRED_VALIDATIONS (no scope yet)"
+      },
+      "decision": "kept",
       "reasons": [
-        "the hidden tests do not pass at head_sha with the overlay"
+        "passes every check"
       ]
     },
     {
@@ -1178,8 +1558,10 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
         "base": {
@@ -1188,7 +1570,7 @@
           "passed": 2,
           "failed": 4,
           "errors": 0,
-          "output_tail": "=========================== short test summary info ============================\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_nothing_is_published_before_it_is_attested\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_attest_job_runs_no_repository_code\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_attest_job_signs_the_archive_with_actions_attest\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_release_notes_say_how_to_verify\n4 failed, 2 passed, 32 subtests passed in 0.02s"
+          "output_tail": "=========================== short test summary info ============================\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_nothing_is_published_before_it_is_attested\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_attest_job_runs_no_repository_code\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_attest_job_signs_the_archive_with_actions_attest\nFAILED automation/tests/test_release_workflow.py::ReleaseAttestationTests::test_the_release_notes_say_how_to_verify\n4 failed, 2 passed, 32 subtests passed in 0.04s"
         },
         "head": {
           "uv_sync_exit_code": 0,
@@ -1196,8 +1578,55 @@
           "passed": 6,
           "failed": 0,
           "errors": 0,
-          "output_tail": "......                                [100%]\n6 passed, 35 subtests passed in 0.01s"
+          "output_tail": "......                                [100%]\n6 passed, 35 subtests passed in 0.02s"
         }
+      },
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.028,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 156.514,
+            "failures": [],
+            "output_tail": "..........................                                      [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n937 passed, 5 skipped, 1037 subtests passed in 148.11s (0:02:28)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 228ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.222,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-jy1z48z1/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.53 seconds"
+          }
+        ],
+        "validations_from": "the task's blinded scope"
       },
       "decision": "kept",
       "reasons": [
@@ -1218,8 +1647,10 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
         "base": {
@@ -1228,7 +1659,7 @@
           "passed": 0,
           "failed": 0,
           "errors": 1,
-          "output_tail": "    ???\nE   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-select-tggixe9p/base/Tools/changelog_section.py'\n=========================== short test summary info ============================\nERROR automation/tests/test_changelog.py - FileNotFoundError: [Errno 2] No su...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.05s"
+          "output_tail": "    ???\nE   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-select-izd8os59/base/Tools/changelog_section.py'\n=========================== short test summary info ============================\nERROR automation/tests/test_changelog.py - FileNotFoundError: [Errno 2] No su...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.06s"
         },
         "head": {
           "uv_sync_exit_code": 0,
@@ -1236,8 +1667,55 @@
           "passed": 26,
           "failed": 0,
           "errors": 0,
-          "output_tail": "..........................          [100%]\n26 passed, 37 subtests passed in 1.12s"
+          "output_tail": "..........................          [100%]\n26 passed, 37 subtests passed in 2.95s"
         }
+      },
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.04,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 194.616,
+            "failures": [],
+            "output_tail": "................................................ [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n943 passed, 5 skipped, 1073 subtests passed in 186.01s (0:03:06)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 236ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.533,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-i69sri7v/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.71 seconds"
+          }
+        ],
+        "validations_from": "the task's blinded scope"
       },
       "decision": "kept",
       "reasons": [
@@ -1258,8 +1736,10 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
         "base": {
@@ -1268,7 +1748,7 @@
           "passed": 3,
           "failed": 5,
           "errors": 0,
-          "output_tail": "FAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_a_release_waits_for_every_gate\nSUBFAILED(workflow='lint.yml') automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nSUBFAILED(workflow='release.yml') automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_the_readme_names_exactly_the_pythons_ci_runs\n5 failed, 3 passed in 0.02s"
+          "output_tail": "FAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_a_release_waits_for_every_gate\nSUBFAILED(workflow='lint.yml') automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nSUBFAILED(workflow='release.yml') automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_macos_runs_in_ci_and_before_a_release\nFAILED automation/tests/test_support_matrix.py::SupportMatrixTests::test_the_readme_names_exactly_the_pythons_ci_runs\n5 failed, 3 passed in 0.04s"
         },
         "head": {
           "uv_sync_exit_code": 0,
@@ -1276,8 +1756,55 @@
           "passed": 6,
           "failed": 0,
           "errors": 0,
-          "output_tail": "......                                                                 [100%]\n6 passed, 2 subtests passed in 0.01s"
+          "output_tail": "......                                                                 [100%]\n6 passed, 2 subtests passed in 0.02s"
         }
+      },
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.045,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 196.706,
+            "failures": [],
+            "output_tail": "....................                                            [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n963 passed, 5 skipped, 1077 subtests passed in 187.36s (0:03:07)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 321ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.513,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-af8_3c06/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.71 seconds"
+          }
+        ],
+        "validations_from": "the task's blinded scope"
       },
       "decision": "kept",
       "reasons": [
@@ -1298,8 +1825,10 @@
         "not_documentation_only": true,
         "no_supervisor_owned_paths": true,
         "squash_matches_pull_request": true,
+        "base_patch_applies": true,
         "oracle_fails_at_base": true,
-        "oracle_passes_at_head": false
+        "oracle_passes_at_head": true,
+        "green_base": true
       },
       "oracle": {
         "base": {
@@ -1308,393 +1837,202 @@
           "passed": 6,
           "failed": 12,
           "errors": 0,
-          "output_tail": "SUBFAILED(page='security-model.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nSUBFAILED(page='exit-codes.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nSUBFAILED(page='troubleshooting.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nFAILED automation/tests/test_operator_docs.py::LinkTests::test_relative_links_between_operator_pages_resolve\nFAILED automation/tests/test_operator_docs.py::LinkTests::test_the_readme_and_the_compatibility_policy_link_the_reference\n12 failed, 6 passed in 0.13s"
+          "output_tail": "SUBFAILED(page='security-model.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nSUBFAILED(page='exit-codes.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nSUBFAILED(page='troubleshooting.md') automation/tests/test_operator_docs.py::LinkTests::test_every_operator_page_is_in_the_site_navigation\nFAILED automation/tests/test_operator_docs.py::LinkTests::test_relative_links_between_operator_pages_resolve\nFAILED automation/tests/test_operator_docs.py::LinkTests::test_the_readme_and_the_compatibility_policy_link_the_reference\n12 failed, 6 passed in 0.26s"
         },
         "head": {
           "uv_sync_exit_code": 0,
-          "exit_code": 1,
-          "passed": 13,
-          "failed": 1,
+          "exit_code": 0,
+          "passed": 14,
+          "failed": 0,
           "errors": 0,
-          "output_tail": "=========================== short test summary info ============================\nFAILED automation/tests/test_operator_docs.py::ErrorTableTests::test_the_prompt_errors_match_run_next\n1 failed, 13 passed, 73 subtests passed in 0.24s"
+          "output_tail": "..............                                                          [100%]\n14 passed, 73 subtests passed in 0.42s"
         }
       },
-      "decision": "rejected",
+      "green_base": {
+        "setup": {
+          "patch": {
+            "id": "pr279-outside-handoff-rule",
+            "source_commit": "30ab82bb1854079776e98b1499f2816e49a3d5f4",
+            "path": "automation/supervisor/runner_profile.py",
+            "status": "applied",
+            "verified": {
+              "outside_handoff_is_absolute": true,
+              "outside_handoff_has_no_single_slash_rule": true,
+              "outside_handoff_has_no_git_add": true,
+              "inside_handoff_unchanged": true
+            }
+          }
+        },
+        "green": true,
+        "validations": [
+          {
+            "command": "git diff --check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 0.046,
+            "failures": [],
+            "output_tail": ""
+          },
+          {
+            "command": "UV_PYTHON=3.12 make reusable-check",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 210.643,
+            "failures": [],
+            "output_tail": "..................................................................................................                              [100%]\n=========================== short test summary info ============================\nSKIPPED [1] automation/tests/test_harness.py:257: consumer live queue is not present in this checkout\nSKIPPED [1] automation/tests/test_kanban_writer.py:271: HERMES_AGENT_PYTHON/SOURCE not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:204: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:226: SWARM_WIKI_COMPILER is not set\nSKIPPED [1] automation/tests/test_swarm_wiki.py:241: SWARM_WIKI_COMPILER is not set\n969 passed, 5 skipped, 1085 subtests passed in 201.46s (0:03:21)\nUsing CPython 3.12.16\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 76 packages in 258ms"
+          },
+          {
+            "command": "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
+            "exit_code": 0,
+            "timed_out": false,
+            "passed": true,
+            "wall_seconds": 1.483,
+            "failures": [],
+            "output_tail": "INFO    -  Cleaning site directory\nINFO    -  Building documentation to directory: /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-green-_qrwhx05/base/site\nINFO    -  The following pages exist in the docs directory, but are not included in the \"nav\" configuration:\n  - workflows/repo-automation.md\nINFO    -  Doc file 'workflows/effectiveness-benchmark.md' contains a link '#first-turn-accounting---max-turns', but there is no such anchor on this page.\nINFO    -  Documentation built in 0.70 seconds"
+          }
+        ],
+        "validations_from": "DEFAULT_REQUIRED_VALIDATIONS (no scope yet)"
+      },
+      "decision": "kept",
       "reasons": [
-        "the hidden tests do not pass at head_sha with the overlay"
+        "passes every check"
       ]
     },
     {
       "number": 247,
       "title": "ci(deps): bump MishaKav/pytest-coverage-comment from 1.13.0 to 1.13.1",
       "merged_at": "2026-11-17T09:24:06Z",
-      "base_sha": "e9263da22aaccaedf93c43025bee7e0a0f06dccb",
-      "head_sha": "3ed354e905ede8a53f465a8f7fae5e975920af2f",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": false,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "no automation/tests/test_*.py file in its files"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 249,
       "title": "build(deps): bump pydantic from 2.14.2 to 2.14.3",
       "merged_at": "2026-11-17T09:24:16Z",
-      "base_sha": "3ed354e905ede8a53f465a8f7fae5e975920af2f",
-      "head_sha": "813e112583257dd5a1b05bf77deb21509bca68cd",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": false,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "no automation/tests/test_*.py file in its files"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 248,
       "title": "ci(deps): bump astral-sh/setup-uv from 7.6.0 to 10.3.3",
       "merged_at": "2026-11-17T09:24:47Z",
-      "base_sha": "813e112583257dd5a1b05bf77deb21509bca68cd",
-      "head_sha": "fd8f1108314efd1e180882f47dfdf13d9b5d6ae7",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": false,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "no automation/tests/test_*.py file in its files"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 253,
       "title": "build(deps-dev): bump logfire from 5.4.0 to 5.6.0",
       "merged_at": "2026-11-17T09:54:41Z",
-      "base_sha": "fd8f1108314efd1e180882f47dfdf13d9b5d6ae7",
-      "head_sha": "50df30065ab1145748b3bd6e505156d7f0de143f",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": false,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": false,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "no automation/tests/test_*.py file in its files",
-        "touches automation/supervisor/telemetry.py"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 251,
       "title": "build(deps-dev): bump ty from 0.0.95 to 0.0.102",
       "merged_at": "2026-11-17T09:54:50Z",
-      "base_sha": "50df30065ab1145748b3bd6e505156d7f0de143f",
-      "head_sha": "5b1ad61977ed545405e7cc5ee040fbcc5459b3f5",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": false,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "no automation/tests/test_*.py file in its files"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 250,
       "title": "build(deps-dev): bump ruff from 0.17.4 to 0.17.5",
       "merged_at": "2026-11-17T10:39:26Z",
-      "base_sha": "5b1ad61977ed545405e7cc5ee040fbcc5459b3f5",
-      "head_sha": "37dee8d0cf2850b48472f7eba0e6c09a24991fa0",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": false,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "no automation/tests/test_*.py file in its files"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 252,
       "title": "build(deps-dev): bump mkdocs-material from 9.8.0 to 9.8.1",
       "merged_at": "2026-11-17T10:39:33Z",
-      "base_sha": "37dee8d0cf2850b48472f7eba0e6c09a24991fa0",
-      "head_sha": "d4a76adab59cf0cc1d3453663c14b818a3a81358",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": false,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "no automation/tests/test_*.py file in its files"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 256,
       "title": "fix(supervisor): fail a claimed slice on a Git or evaluation error (SPEC-009 RA-ENT-011)",
       "merged_at": "2026-11-17T14:36:09Z",
-      "base_sha": "d4a76adab59cf0cc1d3453663c14b818a3a81358",
-      "head_sha": "3087416a46fdb3b1a1059df8621bf37fe4904103",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": true,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": false,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "touches automation/supervisor/run_next.py"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 257,
       "title": "docs: add the contribution guide, templates and pre-commit hooks (SPEC-009 RA-ENT-012)",
       "merged_at": "2026-11-17T15:24:23Z",
-      "base_sha": "3087416a46fdb3b1a1059df8621bf37fe4904103",
-      "head_sha": "728c7c14049661b5f42f78373cfd18c75c690cf4",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": true,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true,
-        "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
-      },
-      "oracle": {
-        "base": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 1,
-          "passed": 2,
-          "failed": 14,
-          "errors": 0,
-          "output_tail": "FAILED automation/tests/test_contributing.py::PreCommitTests::test_every_hook_runs_a_command_from_the_gate\nFAILED automation/tests/test_contributing.py::ContributingTests::test_it_carries_the_segregation_of_duties_rules\nFAILED automation/tests/test_contributing.py::ContributingTests::test_relative_links_resolve\nFAILED automation/tests/test_contributing.py::ContributingTests::test_repository_paths_named_in_plain_text_exist\nFAILED automation/tests/test_contributing.py::ContributingTests::test_the_readme_links_the_guide\n14 failed, 2 passed in 0.20s"
-        },
-        "head": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 0,
-          "passed": 15,
-          "failed": 0,
-          "errors": 0,
-          "output_tail": "...............                                                  [100%]\n15 passed, 80 subtests passed in 0.08s"
-        }
-      },
-      "decision": "kept",
+      "decision": "not_examined",
       "reasons": [
-        "passes every check"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 258,
       "title": "fix(supervisor): fail a claimed slice whose handoff can't be read (SPEC-009 RA-ENT-011)",
       "merged_at": "2026-11-17T15:26:38Z",
-      "base_sha": "728c7c14049661b5f42f78373cfd18c75c690cf4",
-      "head_sha": "3937f620b29fdee864e2cf84b98786a4936f2eaf",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": true,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": false,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "touches automation/supervisor/policy.py, automation/supervisor/run_next.py"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 259,
       "title": "docs: say the main ruleset enforces code-owner review",
       "merged_at": "2026-11-17T15:26:45Z",
-      "base_sha": "3937f620b29fdee864e2cf84b98786a4936f2eaf",
-      "head_sha": "b14601b64c026d9bd6659d0361bdcd4748df7235",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": false,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "no automation/tests/test_*.py file in its files"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 260,
       "title": "feat(sync): let a consumer leave out the benchmark (SPEC-009 RA-ENT-013)",
       "merged_at": "2026-11-17T19:18:56Z",
-      "base_sha": "b14601b64c026d9bd6659d0361bdcd4748df7235",
-      "head_sha": "1dd816e10e060febedffe3e75a6ef6a92084d507",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": true,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": false,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "touches automation/supervisor/settings.py"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 261,
       "title": "feat(telemetry): add an example dashboard for the metric catalogue (SPEC-009 RA-ENT-010)",
       "merged_at": "2026-11-17T21:40:07Z",
-      "base_sha": "1dd816e10e060febedffe3e75a6ef6a92084d507",
-      "head_sha": "56b9ee6a441810ed2b82384e9110406f4b3a2354",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": true,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": false,
-        "squash_matches_pull_request": true
-      },
-      "oracle": "not run: a cheaper check already rejected it",
-      "decision": "rejected",
+      "decision": "not_examined",
       "reasons": [
-        "touches automation/supervisor/telemetry.py, automation/supervisor/telemetry_metrics.py"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 262,
       "title": "feat(release): publish an attested CycloneDX SBOM with each release (SPEC-009 RA-ENT-004)",
       "merged_at": "2026-11-18T10:09:27Z",
-      "base_sha": "56b9ee6a441810ed2b82384e9110406f4b3a2354",
-      "head_sha": "ef6bed06b120c2c0b87ca6273fc50f6e34d1d963",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": true,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true,
-        "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
-      },
-      "oracle": {
-        "base": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 2,
-          "passed": 0,
-          "failed": 0,
-          "errors": 1,
-          "output_tail": "    ???\nE   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/trackr-work/trackr-select-u49f5w_0/base/Tools/release_sbom.py'\n=========================== short test summary info ============================\nERROR automation/tests/test_release_sbom.py - FileNotFoundError: [Errno 2] No...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.05s"
-        },
-        "head": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 0,
-          "passed": 46,
-          "failed": 0,
-          "errors": 0,
-          "output_tail": "..............................................                                            [100%]\n46 passed, 55 subtests passed in 0.23s"
-        }
-      },
-      "decision": "kept",
+      "decision": "not_examined",
       "reasons": [
-        "passes every check"
+        "the first 6 tasks were already selected"
       ]
     },
     {
       "number": 263,
       "title": "ci: add CodeQL for Python and the workflows (SPEC-009 RA-ENT-005)",
       "merged_at": "2026-11-18T10:20:24Z",
-      "base_sha": "ef6bed06b120c2c0b87ca6273fc50f6e34d1d963",
-      "head_sha": "a79856ce115feecfc7eca5fea34017f1747c35ba",
-      "checks": {
-        "merge_commit_present": true,
-        "single_parent": true,
-        "has_test_file": true,
-        "files_changed_at_most_15": true,
-        "not_documentation_only": true,
-        "no_supervisor_owned_paths": true,
-        "squash_matches_pull_request": true,
-        "oracle_fails_at_base": true,
-        "oracle_passes_at_head": true
-      },
-      "oracle": {
-        "base": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 1,
-          "passed": 0,
-          "failed": 5,
-          "errors": 0,
-          "output_tail": "FAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_init_and_analyze_are_the_same_pinned_release\nFAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_it_analyzes_python_and_the_workflows\nFAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_it_is_not_a_required_check\nFAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_it_runs_on_pull_requests_main_and_weekly\nFAILED automation/tests/test_code_scanning.py::CodeqlWorkflowTests::test_only_the_analyze_job_can_write_security_events\n5 failed in 0.05s"
-        },
-        "head": {
-          "uv_sync_exit_code": 0,
-          "exit_code": 0,
-          "passed": 5,
-          "failed": 0,
-          "errors": 0,
-          "output_tail": ".....                                                                    [100%]\n5 passed in 0.01s"
-        }
-      },
-      "decision": "kept",
+      "decision": "not_examined",
       "reasons": [
-        "passes every check"
+        "the first 6 tasks were already selected"
       ]
     },
     {
