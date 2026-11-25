@@ -138,6 +138,7 @@ class RunResult:
     duration: float
     timed_out: bool
     log: Path
+    output: str = ""  # the log's tail, kept when the log itself won't outlive the run
 
 
 @dataclass
@@ -266,13 +267,31 @@ def is_git_checkout(root: Path) -> bool:
         return False
 
 
-def provenance(root: Path) -> tuple[str | None, bool]:
-    """The checkout's HEAD commit and whether its working tree differs from it."""
+def provenance(root: Path, exclude: Sequence[str] = ()) -> tuple[str | None, bool, dict[str, str]]:
+    """What a measurement measured: HEAD, whether the working tree differs, and the code's trees.
+
+    ``trees`` maps each top-level directory that holds Python to its Git tree id at HEAD. A
+    squash merge makes a new commit but keeps unchanged trees, so the ids still name the code
+    measured once the branch commit is gone. ``exclude`` lists paths, relative to ``root``,
+    whose changes don't count as dirty: the harness's own reports and baseline.
+    """
     if not is_git_checkout(root):
-        return None, False
+        return None, False, {}
     commit = _git(root, "rev-parse", "HEAD").strip()
-    dirty = bool(_git(root, "status", "--porcelain", "--untracked-files=normal").strip())
-    return commit, dirty
+    pathspec = ["--", ".", *(f":(exclude){path}" for path in exclude)] if exclude else []
+    dirty = bool(_git(root, "status", "--porcelain", "--untracked-files=normal", *pathspec).strip())
+    python_dirs = {
+        name.split("/", 1)[0]
+        for name in _git(root, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+        if "/" in name and name.endswith(".py")
+    }
+    trees = {}
+    for line in _git(root, "ls-tree", "HEAD").splitlines():
+        meta, name = line.split("\t", 1)
+        _mode, kind, object_id = meta.split()
+        if kind == "tree" and name in python_dirs:
+            trees[name] = object_id
+    return commit, dirty, trees
 
 
 def copy_project(root: Path, destination: Path) -> None:

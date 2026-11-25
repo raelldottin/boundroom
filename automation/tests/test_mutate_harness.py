@@ -7,6 +7,7 @@ as a survivor it should have killed or a kill it can't have seen, fails here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -17,7 +18,8 @@ import time
 import unittest
 from pathlib import Path
 
-from Tools.mutate import apply_mutant, generate_mutants
+from Tools.mutate import apply_mutant, cli, report, runner
+from Tools.mutate import generate_mutants
 from Tools.mutate.report import baseline_failures
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -45,6 +47,10 @@ def countdown(n):
 
 def untested(flag):
     return not flag
+
+
+def double(n):
+    return n * 2
 '''
 
 TOY_CLI = '''\
@@ -63,7 +69,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from logic import countdown, floor_at_zero, is_adult
+from logic import countdown, double, floor_at_zero, is_adult
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -91,6 +97,19 @@ def test_floor_at_zero():
 def test_countdown():
     record_processes()
     assert countdown(3) == 0
+
+
+STATE = []
+
+
+def test_a_sets_state():
+    STATE.append(1)
+
+
+def test_b_needs_the_state_test_a_left():
+    # Passes in the whole suite, in file order, and fails when run alone.
+    assert STATE, "depends on test_a_sets_state running first"
+    assert double(2) == 4
 
 
 def test_cli_exit_code():
@@ -129,6 +148,11 @@ EXPECTED = {
     ("cli.py", 5, "comparison", '__name__ != "__main__"'): "killed",  # only ever run as a script
     ("cli.py", 6, "number_increment", "4"): "killed",
     ("cli.py", 6, "number_zero", "0"): "killed",
+    # Only test_b executes line 26, and it fails when run alone, so its failure says nothing.
+    ("logic.py", 26, "delete_statement", "pass"): "unreliable_selection",
+    ("logic.py", 26, "return_none", "return None"): "unreliable_selection",
+    ("logic.py", 26, "number_increment", "3"): "unreliable_selection",
+    ("logic.py", 26, "number_zero", "0"): "unreliable_selection",
 }
 
 EXACT_ENTRY = {
@@ -298,10 +322,11 @@ class ToyProjectTests(unittest.TestCase):
         cls.baseline = base / "baseline.json"
         # logic.py scores 0.75 today, so a baseline of 0.8 is a drop; cli.py holds at 1.0.
         cls.baseline.write_text(json.dumps({"modules": {"logic.py": {"score": 0.8}, "cli.py": {"score": 1.0}}}), encoding="utf-8")
+        cls.baseline_before = cls.baseline.read_bytes()
         cls.before = snapshot(cls.root)
         os.environ["TOY_PID_DIR"] = str(cls.pids)
         try:
-            cls.result = run_harness(cls.root, *cls.options(), "--check-baseline", "logic.py,cli.py")
+            cls.result = run_harness(cls.root, *cls.options(), "--check-baseline", "--update-baseline", "logic.py,cli.py")
         finally:
             del os.environ["TOY_PID_DIR"]
         cls.reports_by_module = {}
@@ -382,13 +407,32 @@ class ToyProjectTests(unittest.TestCase):
 
     def test_the_score_is_killed_and_timeout_over_the_measured_mutants(self) -> None:
         summary = {key: self.report("logic.py")[key] for key in ("total", "killed", "timeout", "survived")}
-        summary.update({key: self.report("logic.py")[key] for key in ("no_coverage", "allowlisted", "error")})
+        keys = ("no_coverage", "allowlisted", "error", "unreliable_selection")
+        summary.update({key: self.report("logic.py")[key] for key in keys})
         self.assertEqual(
-            {"total": 21, "killed": 14, "timeout": 1, "survived": 2, "no_coverage": 3, "allowlisted": 1, "error": 0}, summary
+            {
+                "total": 25,
+                "killed": 14,
+                "timeout": 1,
+                "survived": 2,
+                "no_coverage": 3,
+                "allowlisted": 1,
+                "error": 0,
+                "unreliable_selection": 4,
+            },
+            summary,
         )
-        self.assertEqual(0.75, self.report("logic.py")["score"])  # (14 + 1) / (21 - 1 - 0)
+        self.assertEqual(0.75, self.report("logic.py")["score"])  # (14 + 1) / (25 - 1 - 0 - 4)
         self.assertEqual(1.0, self.report("cli.py")["score"])
-        self.assertRegex(self.result.stdout, r"logic\.py\s+21\s+14\s+1\s+2\s+3\s+1\s+0\s+75\.0%")
+        self.assertRegex(self.result.stdout, r"logic\.py\s+25\s+14\s+1\s+2\s+3\s+1\s+0\s+4\s+75\.0%")
+
+    def test_a_selection_that_fails_without_a_mutant_never_kills(self) -> None:
+        line_26 = {key[2]: status for key, status in self.statuses().items() if key[:2] == ("logic.py", 26)}
+        self.assertEqual({"unreliable_selection"}, set(line_26.values()))
+        (selection,) = self.report("logic.py")["unreliable_selections"]
+        self.assertEqual(["tests/test_toy.py::test_b_needs_the_state_test_a_left"], selection["tests"])
+        self.assertEqual(1, selection["returncode"])
+        self.assertIn("1 test selection fails without any mutant", self.result.stderr)
 
     def test_an_endless_loop_is_a_timeout_within_the_bound_and_leaves_no_process(self) -> None:
         (looping,) = [m for m in self.report("logic.py")["mutants"] if m["line"] == 17 and m["operator"] == "number_zero"]
@@ -427,7 +471,108 @@ class ToyProjectTests(unittest.TestCase):
     def test_check_baseline_passes_when_no_score_drops(self) -> None:
         held = run_harness(self.root, *self.options(), "--check-baseline", "cli.py")
         self.assertEqual(0, held.returncode, held.stdout + held.stderr)
-        self.assertRegex(held.stdout, r"cli\.py\s+3\s+3\s+0\s+0\s+0\s+0\s+0\s+100\.0%")
+        self.assertRegex(held.stdout, r"cli\.py\s+3\s+3\s+0\s+0\s+0\s+0\s+0\s+0\s+100\.0%")
+
+    def test_an_update_that_fails_its_check_writes_no_baseline(self) -> None:
+        # The main run passed --update-baseline with --check-baseline, and logic.py dropped.
+        self.assertEqual(self.baseline_before, self.baseline.read_bytes())
+
+    def test_an_update_records_what_was_measured(self) -> None:
+        baseline = self.root.parent / "baseline-update.json"
+        baseline.write_text(json.dumps({"modules": {"cli.py": {"score": 0.5}}}), encoding="utf-8")
+        options = [*self.options()[:-1], str(baseline)]
+        updated = run_harness(self.root, *options, "--check-baseline", "--update-baseline", "cli.py")
+        self.assertEqual(0, updated.returncode, updated.stdout + updated.stderr)
+        entry = json.loads(baseline.read_text(encoding="utf-8"))["modules"]["cli.py"]
+        self.assertEqual(1.0, entry["score"])  # raised from 0.5
+        data = TOY_CLI.encode("utf-8")
+        self.assertEqual(hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest(), entry["module_blob"])
+        self.assertEqual((None, False, {}), (entry["commit"], entry["dirty"], entry["trees"]))  # the toy isn't a Git checkout
+
+
+class OutcomeTests(unittest.TestCase):
+    def test_only_failed_tests_or_a_timeout_kill_a_mutant(self) -> None:
+        table = {
+            (0, False): "survived",
+            (1, False): "killed",  # tests failed
+            (2, False): "error",  # interrupted
+            (3, False): "error",  # internal error
+            (4, False): "error",  # usage error, such as a node id that no longer exists
+            (5, False): "error",  # no tests collected
+            (-9, False): "error",  # pytest itself died on a signal
+            (None, True): "timeout",
+        }
+        for (returncode, timed_out), expected in table.items():
+            with self.subTest(returncode=returncode, timed_out=timed_out):
+                self.assertEqual(expected, report.outcome_status(returncode, timed_out))
+
+
+class BaselineUpdateTests(unittest.TestCase):
+    @staticmethod
+    def measured(score: float) -> dict:
+        counts = {key: 0 for key in ("total", *report.STATUSES)}
+        return {"module": "m.py", "score": score, **counts, "commit": "c", "dirty": False, "trees": {}, "module_blob": "b"}
+
+    def test_an_update_raises_a_score_and_never_lowers_one(self) -> None:
+        baseline = {"modules": {"m.py": {"score": 0.8}}}
+        self.assertEqual(0.8, report.updated_baseline(baseline, [self.measured(0.75)])["modules"]["m.py"]["score"])
+        self.assertEqual(0.9, report.updated_baseline(baseline, [self.measured(0.9)])["modules"]["m.py"]["score"])
+        self.assertEqual(0.6, report.updated_baseline({"modules": {}}, [self.measured(0.6)])["modules"]["m.py"]["score"])
+
+    def test_lowering_a_score_names_the_module_and_records_the_reason(self) -> None:
+        baseline = {"modules": {"m.py": {"score": 0.8}}}
+        updated = report.updated_baseline(baseline, [self.measured(0.75)], lower={"m.py": "removed a flaky test"})
+        self.assertEqual(0.75, updated["modules"]["m.py"]["score"])
+        self.assertEqual(
+            [{"module": "m.py", "from": 0.8, "to": 0.75, "reason": "removed a flaky test", "commit": "c"}],
+            updated["lowered"],
+        )
+
+    def test_lower_baseline_needs_a_reason(self) -> None:
+        with self.assertRaises(SystemExit), open(os.devnull, "w") as quiet:
+            stderr, sys.stderr = sys.stderr, quiet
+            try:
+                cli.parse_args(["--lower-baseline", "m.py", "m.py"])
+            finally:
+                sys.stderr = stderr
+        args = cli.parse_args(["--lower-baseline", "m.py", "--reason", "removed a flaky test", "m.py"])
+        self.assertEqual({"m.py": "removed a flaky test"}, args.lower)
+
+
+class ProvenanceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        (self.root / "pkg").mkdir()
+        (self.root / "pkg" / "mod.py").write_text("X = 1\n", encoding="utf-8")
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "note.md").write_text("note\n", encoding="utf-8")
+        self.git("init", "-q", "-b", "main")
+        self.git("add", "-A")
+        self.git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def git(self, *args: str) -> str:
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
+
+    def test_it_records_the_python_trees_and_ignores_the_report_directory(self) -> None:
+        commit, dirty, trees = runner.provenance(self.root, exclude=["quality"])
+        self.assertEqual((self.git("rev-parse", "HEAD"), False), (commit, dirty))
+        self.assertEqual({"pkg": self.git("rev-parse", "HEAD:pkg")}, trees)  # docs holds no Python
+        (self.root / "quality").mkdir()
+        (self.root / "quality" / "mutation-report-pkg.mod.json").write_text("{}", encoding="utf-8")
+        self.assertFalse(runner.provenance(self.root, exclude=["quality"])[1])
+        (self.root / "pkg" / "mod.py").write_text("X = 2\n", encoding="utf-8")
+        self.assertTrue(runner.provenance(self.root, exclude=["quality"])[1])
+
+    def test_an_update_from_a_dirty_tree_is_refused_before_measuring(self) -> None:
+        (self.root / "pkg" / "mod.py").write_text("X = 2\n", encoding="utf-8")
+        refused = run_harness(self.root, "--update-baseline", "pkg/mod.py", timeout=60)
+        self.assertEqual(2, refused.returncode, refused.stdout + refused.stderr)
+        self.assertIn("refusing to update the baseline from a working tree with changes", refused.stderr)
+        self.assertNotIn("coverage run", refused.stderr)
 
 
 if __name__ == "__main__":

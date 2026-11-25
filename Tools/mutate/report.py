@@ -7,6 +7,7 @@ is the only place that does I/O.
 from __future__ import annotations
 
 import difflib
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,7 +20,13 @@ SURVIVED = "survived"
 NO_COVERAGE = "no_coverage"
 ALLOWLISTED = "allowlisted"
 ERROR = "error"
-STATUSES = (KILLED, TIMEOUT, SURVIVED, NO_COVERAGE, ALLOWLISTED, ERROR)
+# The tests that would judge the mutant don't pass without it, run alone as the mutant's run
+# would be, so their failure under the mutant says nothing about it.
+UNRELIABLE = "unreliable_selection"
+STATUSES = (KILLED, TIMEOUT, SURVIVED, NO_COVERAGE, ALLOWLISTED, ERROR, UNRELIABLE)
+
+# pytest's exit code when tests ran and at least one failed.
+PYTEST_TESTS_FAILED = 1
 
 ALLOWLIST_FIELDS: dict[str, type] = {
     "module": str,
@@ -47,15 +54,41 @@ class Outcome:
     timeout: float | None = None
 
 
+# What a baseline entry records for each module.
+BASELINE_KEYS = ("score", "total", *STATUSES, "commit", "dirty", "trees", "module_blob")
+
+
+def git_blob_hash(text: str) -> str:
+    """The Git blob id of ``text``: the module's identity, whatever commit carries it."""
+    data = text.encode("utf-8")
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
 def report_name(module: str) -> str:
     """The report's file stem: ``automation/supervisor/policy.py`` -> ``automation.supervisor.policy``."""
     stem = module[:-3] if module.endswith(".py") else module
     return stem.replace("/", ".")
 
 
+def outcome_status(returncode: int | None, timed_out: bool) -> str:
+    """What one pytest run under a mutant says about it.
+
+    Only failed tests (exit 1) or a timeout kill a mutant. Exit 2 to 5 (interrupted, internal
+    error, usage error, no tests collected) and death by a signal say pytest couldn't judge
+    the mutant, so they are errors.
+    """
+    if timed_out:
+        return TIMEOUT
+    if returncode == 0:
+        return SURVIVED
+    if returncode == PYTEST_TESTS_FAILED:
+        return KILLED
+    return ERROR
+
+
 def score(counts: dict[str, int]) -> float | None:
-    """(killed + timeout) / (total - allowlisted - error), rounded to 4 places; None with nothing to measure."""
-    measured = counts["total"] - counts[ALLOWLISTED] - counts[ERROR]
+    """(killed + timeout) / (total - allowlisted - error - unreliable_selection), to 4 places; None with nothing to measure."""
+    measured = counts["total"] - counts[ALLOWLISTED] - counts[ERROR] - counts[UNRELIABLE]
     if measured <= 0:
         return None
     return round((counts[KILLED] + counts[TIMEOUT]) / measured, 4)
@@ -139,7 +172,9 @@ def module_report(
     *,
     commit: str | None = None,
     dirty: bool = False,
+    trees: dict[str, str] | None = None,
     excluded_tests: list[str],
+    unreliable_selections: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     counts = count(outcomes)
     survivors = [
@@ -159,11 +194,14 @@ def module_report(
         "module": module,
         "commit": commit,
         "dirty": dirty,
+        "trees": trees or {},
+        "module_blob": git_blob_hash(source),
         **counts,
         "score": score(counts),
         "survivors": survivors,
         "stale_allowlist": stale,
         "excluded_tests": excluded_tests,
+        "unreliable_selections": unreliable_selections or [],
         "mutants": [
             {
                 "line": outcome.mutant.line,
@@ -198,20 +236,43 @@ def baseline_failures(reports: list[dict[str, Any]], baseline: dict[str, Any]) -
     return failures
 
 
-def updated_baseline(baseline: dict[str, Any], reports: list[dict[str, Any]]) -> dict[str, Any]:
-    """``baseline`` with each reported module's numbers replaced by this run's."""
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def updated_baseline(
+    baseline: dict[str, Any], reports: list[dict[str, Any]], lower: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """``baseline`` with this run's numbers for each module whose score held or rose.
+
+    The ratchet only goes up. A lower score replaces a recorded one only for a module named in
+    ``lower``, mapped to the reason, and the change is kept in the file's ``lowered`` list.
+    """
+    lower = lower or {}
     updated = dict(baseline)
     modules = dict(updated.get("modules", {}))
+    lowered = list(updated.get("lowered", []))
     for report in reports:
-        modules[report["module"]] = {key: report[key] for key in ("score", "total", *STATUSES, "commit", "dirty")}
+        name = report["module"]
+        entry = {key: report.get(key) for key in BASELINE_KEYS}
+        recorded = modules.get(name)
+        floor = recorded.get("score") if isinstance(recorded, dict) else None
+        current = report["score"]
+        if not _number(floor) or (current is not None and current >= floor):
+            modules[name] = entry
+        elif name in lower:
+            modules[name] = entry
+            lowered.append({"module": name, "from": floor, "to": current, "reason": lower[name], "commit": report.get("commit")})
     updated["modules"] = dict(sorted(modules.items()))
+    if lowered:
+        updated["lowered"] = lowered
     if isinstance(updated.get("not_yet_measured"), list):
         updated["not_yet_measured"] = [module for module in updated["not_yet_measured"] if module not in modules]
     return updated
 
 
 def render_table(reports: list[dict[str, Any]]) -> str:
-    headers = ["module", "total", "killed", "timeout", "survived", "no_cov", "allowlisted", "error", "score"]
+    headers = ["module", "total", "killed", "timeout", "survived", "no_cov", "allowlisted", "error", "unreliable", "score"]
     rows = [
         [
             report["module"],

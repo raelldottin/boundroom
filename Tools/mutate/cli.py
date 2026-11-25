@@ -2,8 +2,8 @@
 
 Exit codes: 0 when the run finished (and, with ``--check-baseline``, no score dropped);
 1 when ``--check-baseline`` found a score below its baseline, or a module with a baseline
-that couldn't be scored; 2 on a usage error or when the harness could not measure, such as
-a coverage run that failed; 130 when interrupted.
+that couldn't be scored; 2 on a usage error, an update from a tree with changes, or when
+the harness could not measure, such as a coverage run that failed; 130 when interrupted.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import sys
 import tempfile
 import threading
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -47,7 +47,17 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--allowlist", type=Path, default=Path(DEFAULT_ALLOWLIST))
     parser.add_argument("--baseline", type=Path, default=Path(DEFAULT_BASELINE))
     parser.add_argument("--check-baseline", action="store_true", help="exit 1 if a score is below its baseline")
-    parser.add_argument("--update-baseline", action="store_true", help="write this run's scores into the baseline")
+    parser.add_argument(
+        "--update-baseline", action="store_true", help="record scores that held or rose; refused from a tree with changes"
+    )
+    parser.add_argument(
+        "--lower-baseline",
+        action="append",
+        default=[],
+        metavar="MODULE",
+        help="allow this module's recorded score to go down (repeatable); needs --reason; implies --update-baseline",
+    )
+    parser.add_argument("--reason", default="", help="why the --lower-baseline modules' scores may go down")
     parser.add_argument("--workdir", type=Path, default=None, help="where temporary copies go (default: system temp)")
     parser.add_argument("--show-survivors", type=int, default=20, help="survivors printed per module (all are in the report)")
     args = parser.parse_args(argv)
@@ -57,6 +67,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         args.pytest_args = shlex.split(args.pytest_args)
     except ValueError as error:
         parser.error(f"--pytest-args: {error}")
+    if args.lower_baseline and not args.reason.strip():
+        parser.error("--lower-baseline needs --reason, which is recorded in the baseline file")
+    args.lower = {module: args.reason.strip() for module in args.lower_baseline}
+    if args.lower:
+        args.update_baseline = True
     return args
 
 
@@ -107,18 +122,23 @@ class Measurement:
         modules: list[str],
         allowlist: list[dict[str, Any]],
         on_report: Callable[[dict[str, Any]], None],
+        not_code: Sequence[str] = (),
     ) -> None:
         self.args = args
         self.root = root
         self.modules = modules
         self.allowlist = allowlist
         self.on_report = on_report
+        self.not_code = not_code
+        self.trees: dict[str, str] = {}
         self.print_lock = threading.Lock()
         self.commit: str | None = None
         self.dirty = False
+        # Each distinct test selection's unmutated run, shared by every mutant that selects it.
+        self.selections: dict[tuple[str, ...], runner.RunResult] = {}
 
     def run(self, state: Path) -> list[dict[str, Any]]:
-        self.commit, self.dirty = runner.provenance(self.root)
+        self.commit, self.dirty, self.trees = runner.provenance(self.root, self.not_code)
         copy = state / "coverage-copy"
         copy_project(self.root, copy)
         # The text measured is the coverage copy's, read once, so edits made to the working tree
@@ -157,7 +177,6 @@ class Measurement:
         self, module: str, source: str, mutants: list[Mutant], mapping: CoverageMap, copies: CopyPool, state: Path
     ) -> dict[str, Any]:
         excluded, stale = report.match_allowlist(module, mutants, self.allowlist)
-        self._check_tests_pass(module, mapping, copies, state)
         outcomes: list[report.Outcome | None] = [None] * len(mutants)
         pending = []
         for index, mutant in enumerate(mutants):
@@ -169,6 +188,14 @@ class Measurement:
                 outcomes[index] = report.Outcome(mutant, report.NO_COVERAGE)
                 continue
             pending.append((index, mutant, order_tests(module, tests, mapping.durations)))
+        unreliable = self._check_selections(module, [tests for _, _, tests in pending], mapping, copies, state)
+        reliable = []
+        for index, mutant, tests in pending:
+            if tuple(tests) in unreliable:
+                outcomes[index] = report.Outcome(mutant, report.UNRELIABLE, tests=len(tests))
+            else:
+                reliable.append((index, mutant, tests))
+        pending = reliable
         self._say(f"{module}: {len(mutants)} mutants, {len(pending)} to run with {self.args.jobs} jobs")
         done = [0]
 
@@ -181,18 +208,31 @@ class Measurement:
                 if done[0] % step == 0 or done[0] == len(pending):
                     print(f"  {module}: {done[0]}/{len(pending)}", file=sys.stderr, flush=True)
 
+        self._parallel(work, pending)
+        finished = [outcome for outcome in outcomes if outcome is not None]
+        return report.module_report(
+            module,
+            source,
+            finished,
+            stale,
+            commit=self.commit,
+            dirty=self.dirty,
+            trees=self.trees,
+            excluded_tests=sorted(mapping.failed),
+            unreliable_selections=[
+                {"tests": list(tests), "returncode": self.selections[tests].returncode} for tests in sorted(unreliable)
+            ],
+        )
+
+    def _parallel(self, work: Callable[[Any], None], items: list[Any]) -> None:
         pool = ThreadPoolExecutor(max_workers=self.args.jobs)
         try:
-            list(pool.map(work, pending))
+            list(pool.map(work, items))
         except BaseException:
             runner.kill_all()  # an interrupt, or a failed run: stop the others now rather than wait for them
             pool.shutdown(wait=True, cancel_futures=True)
             raise
         pool.shutdown()
-        finished = [outcome for outcome in outcomes if outcome is not None]
-        return report.module_report(
-            module, source, finished, stale, commit=self.commit, dirty=self.dirty, excluded_tests=sorted(mapping.failed)
-        )
 
     @staticmethod
     def _lines(mutant: Mutant) -> set[int]:
@@ -202,24 +242,48 @@ class Measurement:
         baseline = sum(mapping.durations.get(test, 0.0) for test in tests)
         return round(max(self.args.min_timeout, self.args.timeout_factor * baseline), 1)
 
-    def _check_tests_pass(self, module: str, mapping: CoverageMap, copies: CopyPool, state: Path) -> None:
-        """The module's tests must pass, unmutated, in a copy, or every mutant would look killed.
+    def _check_selections(
+        self, module: str, selections: list[list[str]], mapping: CoverageMap, copies: CopyPool, state: Path
+    ) -> set[tuple[str, ...]]:
+        """Run each distinct test selection once without a mutant, exactly as its mutants will run.
 
-        This also proves the node ids select, so a pytest usage error under a mutant is the
-        mutant's doing.
+        Same tests, same order, same ``-x`` and options, alone in a copy. A selection that
+        doesn't pass that way (a test that needs another test to run first, or a node id that
+        collects nothing alone) would "kill" every mutant it judges, so its mutants are marked
+        ``unreliable_selection`` instead. Results are kept for the whole run. Returns the
+        selections that don't pass.
         """
-        tests = order_tests(module, mapping.module_tests(module), mapping.durations)
-        if not tests:
-            return
-        copy = copies.get()
-        log = state / f"{report.report_name(module)}.unmutated.log"
-        try:
-            result = run_tests(copy, tests, timeout=self._timeout(tests, mapping), log=log, pytest_args=self.args.pytest_args)
-        finally:
-            copies.put(copy)
-        if result.returncode != 0:
-            detail = "timed out" if result.timed_out else f"exit {result.returncode}"
-            raise HarnessError(f"{module}: its tests fail without any mutant ({detail}):\n{tail(log, 30)}")
+        distinct = list(dict.fromkeys(tuple(tests) for tests in selections))
+        new = [tests for tests in distinct if tests not in self.selections]
+
+        def check(tests: tuple[str, ...]) -> None:
+            copy = copies.get()
+            try:
+                log = state / f"{copy.name}.unmutated.log"
+                result = run_tests(
+                    copy, list(tests), timeout=self._timeout(list(tests), mapping), log=log, pytest_args=self.args.pytest_args
+                )
+            finally:
+                copies.put(copy)
+            if result.returncode != 0:
+                result.output = tail(log, 30)
+            self.selections[tests] = result
+
+        self._parallel(check, new)
+        failing = {tests for tests in distinct if self.selections[tests].returncode != 0}
+        if distinct and len(failing) == len(distinct):
+            sample = self.selections[next(iter(failing))]
+            raise HarnessError(
+                f"{module}: none of its test selections passes without a mutant; "
+                f"the first failed with exit {sample.returncode}:\n{sample.output}"
+            )
+        if failing:
+            noun = "selection fails" if len(failing) == 1 else "selections fail"
+            self._say(
+                f"warning: {module}: {len(failing)} test {noun} without any mutant; "
+                "their mutants are unreliable_selection (listed in the report)"
+            )
+        return failing
 
     def _run_one(
         self,
@@ -245,15 +309,7 @@ class Measurement:
         finally:
             write_mutant(copy, module, source)
             copies.put(copy)
-        if result.timed_out:
-            status = report.TIMEOUT
-        elif result.returncode == 0:
-            status = report.SURVIVED
-        else:
-            # Any failure is a kill, including pytest's usage error (4) or no tests (5): the
-            # unmutated run proved these tests select and pass, so the mutant broke them, for
-            # example by failing an import in conftest.py or changing a parametrized test's id.
-            status = report.KILLED
+        status = report.outcome_status(result.returncode, result.timed_out)
         return report.Outcome(mutant, status, tests=len(tests), duration=result.duration, timeout=timeout)
 
     def _say(self, message: str) -> None:
@@ -292,6 +348,21 @@ def main(argv: list[str] | None = None) -> int:
         baseline = _read_json(baseline_path, {})
         allowlist = report.validate_allowlist(_read_json(_resolve(root, args.allowlist), {"entries": []}))
         modules = _modules(args, root, baseline)
+        unmeasured = sorted(set(args.lower) - set(modules))
+        if unmeasured:
+            raise HarnessError(f"--lower-baseline names a module this run doesn't measure: {', '.join(unmeasured)}")
+        report_dir = _resolve(root, args.report_dir)
+        # The harness's own output doesn't make the tree dirty; everything else, the allowlist included, does.
+        not_code = [
+            path.resolve().relative_to(root).as_posix()
+            for path in (report_dir, baseline_path)
+            if path.resolve().is_relative_to(root)
+        ]
+        if args.update_baseline and runner.provenance(root, not_code)[1]:
+            raise HarnessError(
+                "refusing to update the baseline from a working tree with changes; commit them first, "
+                "so the recorded commit and trees name the code measured"
+            )
         workdir = args.workdir.resolve() if args.workdir else None
         state = Path(tempfile.mkdtemp(prefix="mutate-", dir=workdir)).resolve()
     except (HarnessError, report.AllowlistError, ValueError, OSError) as error:
@@ -299,7 +370,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.nice:
         os.nice(10)
-    report_dir = _resolve(root, args.report_dir)
 
     def write_report(module_report: dict[str, Any]) -> None:
         # Each module's report lands as soon as it is measured, so a cancelled run keeps them.
@@ -310,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
     runner.reset()
     signal.signal(signal.SIGTERM, _interrupt)  # a cancelled CI job: clean up as for Ctrl-C
     try:
-        reports = Measurement(args, root, modules, allowlist, write_report).run(state)
+        reports = Measurement(args, root, modules, allowlist, write_report, not_code).run(state)
     except HarnessError as error:
         print(f"mutate: {error}", file=sys.stderr)
         return 2
@@ -325,12 +395,25 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         shutil.rmtree(state, ignore_errors=True)
     print_results(reports, args.show_survivors)
-    if args.update_baseline:
-        baseline_path.write_text(json.dumps(report.updated_baseline(baseline, reports), indent=2) + "\n", encoding="utf-8")
+    # The check comes first, against the baseline as it was, and a run that fails it records nothing.
     if args.check_baseline:
-        failures = report.baseline_failures(reports, baseline)
+        checked = {**baseline, "modules": {k: v for k, v in baseline.get("modules", {}).items() if k not in args.lower}}
+        failures = report.baseline_failures(reports, checked)
         for failure in failures:
             print(failure)
         if failures:
+            if args.update_baseline:
+                print("baseline not updated: the check failed", file=sys.stderr)
             return 1
+    if args.update_baseline:
+        updated = report.updated_baseline(baseline, reports, args.lower)
+        for module_report in reports:
+            kept = updated["modules"].get(module_report["module"], {}).get("score")
+            if kept != module_report["score"]:
+                print(
+                    f"baseline kept for {module_report['module']}: {kept} (this run {module_report['score']}); "
+                    "lower it only with --lower-baseline and --reason",
+                    file=sys.stderr,
+                )
+        baseline_path.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
     return 0
