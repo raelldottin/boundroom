@@ -191,6 +191,7 @@ def module_report(
     trees: dict[str, str] | None = None,
     excluded_tests: list[str],
     unreliable_selections: list[dict[str, Any]] | None = None,
+    copies: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     counts = count(outcomes)
     survivors = [
@@ -217,6 +218,7 @@ def module_report(
         "survivors": survivors,
         "stale_allowlist": stale,
         "excluded_tests": excluded_tests,
+        "copies": copies or {"credited": 0, "ignored": []},
         "unreliable_selections": unreliable_selections or [],
         "mutants": [
             {

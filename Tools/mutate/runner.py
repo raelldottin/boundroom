@@ -179,6 +179,8 @@ class CoverageMap:
     """For each module, the test node ids that execute each line, plus each test's duration."""
 
     lines: dict[str, dict[int, set[str]]] = field(default_factory=dict)
+    # Per module: copies run from other paths that were credited, and same-named files that weren't.
+    copies: dict[str, dict[str, Any]] = field(default_factory=dict)
     durations: dict[str, float] = field(default_factory=dict)
     failed: set[str] = field(default_factory=set)
     _module_tests: dict[str, frozenset[str]] = field(default_factory=dict, repr=False)
@@ -438,6 +440,7 @@ class CoverageMapper:
         self.config_file = state / "coveragerc"
         self.hash_dir = state / "copies"
         self.copies_credited: dict[str, int] = {}
+        self.copies_ignored: dict[str, list[dict[str, str]]] = {}
 
     def build(self, *, pytest_args: Sequence[str], timeout: float) -> CoverageMap:
         if _PATTERN_CHARACTERS.search(str(self.copy)):
@@ -455,6 +458,11 @@ class CoverageMapper:
         results = json.loads(self.results_file.read_text(encoding="utf-8"))
         mapping = CoverageMap(durations=dict(results["durations"]), failed=set(results["failed"]))
         mapping.lines = self._read_contexts()
+        for module in self.modules:
+            mapping.copies[module] = {
+                "credited": self.copies_credited.get(module, 0),
+                "ignored": self.copies_ignored.get(module, []),
+            }
         return mapping
 
     def _make_venv(self) -> Path:
@@ -527,10 +535,17 @@ class CoverageMapper:
             merged: dict[int, set[str]] = {}
             for name in data.measured_files():
                 real = os.path.realpath(name)
-                # A copy elsewhere counts only if its content is the module's, byte for byte.
-                if Path(real) == target or (real.endswith(f"/{module}") and copies.get(real) == digest):
-                    if Path(real) != target:
+                credited = Path(real) == target
+                if not credited and real.endswith(f"/{module}"):
+                    # A copy elsewhere counts only if its content is the module's, byte for byte.
+                    recorded = copies.get(real)
+                    credited = recorded == digest
+                    if credited:
                         self.copies_credited[module] = self.copies_credited.get(module, 0) + 1
+                    else:
+                        reason = "no content hash recorded" if recorded is None else "content differs"
+                        self.copies_ignored.setdefault(module, []).append({"path": real, "reason": reason})
+                if credited:
                     for line, contexts in data.contexts_by_lineno(name).items():
                         merged.setdefault(line, set()).update(contexts)
             if merged:

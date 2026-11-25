@@ -221,6 +221,7 @@ class Measurement:
             dirty=self.dirty,
             trees=self.trees,
             excluded_tests=sorted(mapping.failed),
+            copies=mapping.copies.get(module),
             unreliable_selections=[
                 {"tests": list(tests), "returncode": self.selections[tests].returncode} for tests in sorted(unreliable)
             ],

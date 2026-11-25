@@ -544,7 +544,11 @@ class ToyProjectTests(unittest.TestCase):
 
     def test_a_module_a_test_copies_and_runs_elsewhere_is_still_mapped(self) -> None:
         tool = {key: status for key, status in self.statuses().items() if key[0] == "tool.py"}
-        self.assertEqual({key: status for key, status in EXPECTED.items() if key[0] == "tool.py"}, tool)
+        copies = self.report("tool.py")["copies"]
+        self.assertEqual({key: status for key, status in EXPECTED.items() if key[0] == "tool.py"}, tool, copies)
+        self.assertEqual(1, copies["credited"], copies)
+        # The unrelated tool.py elsewhere is seen, and refused for its content.
+        self.assertEqual(["content differs"], [ignored["reason"] for ignored in copies["ignored"]], copies)
         selected = {mutant["tests"] for mutant in self.report("tool.py")["mutants"]}
         self.assertEqual({1}, selected)  # the copying test, and only it
 
