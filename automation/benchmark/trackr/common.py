@@ -1,8 +1,10 @@
 """What the Track R selection, driver, oracle and pilot share: clones, commands and the environment.
 
-Every clone made here is disposable, lives outside any repository and has no remote. A
-session's clone also holds no object from after its base commit, so the human solution can't
-be found with ``git log --all`` or ``git cat-file``.
+Track R v2 runs against an external target, python-semver, with Boundroom v0.5.3 synced beside its
+code. Every clone made here is disposable, lives outside any repository and has no remote. A
+session's clone holds no object from after its base commit, so the human solution can't be found
+with ``git log --all`` or ``git cat-file``. Every git command the driver runs disables hooks and
+fsmonitor, so nothing an agent planted under ``.git`` runs with the driver's network access.
 """
 
 from __future__ import annotations
@@ -20,23 +22,38 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-TASKS_FILE = Path(__file__).with_name("tasks.pilot.json")
-UPSTREAM = "https://github.com/raelldottin/boundroom.git"
-UPSTREAM_REPOSITORY = "raelldottin/boundroom"
+HERE = Path(__file__).resolve().parent
+TASKS_FILE = HERE / "tasks.v2.json"
+SOLUTIONS_FILE = HERE / "solutions.v2.json"
+V1_TASKS_FILE = HERE / "tasks.pilot.json"  # void; kept as the record of v1
+
+# The target: python-semver (BSD-3-Clause), chosen by the owner on 2026-11-25.
+TARGET_UPSTREAM = "https://github.com/python-semver/python-semver.git"
+TARGET_REPOSITORY = "python-semver/python-semver"
+TARGET_MIRROR = "python-semver.git"
+# The supervisor beside it: Boundroom's v0.5.3 release commit, synced by its own sync script.
+SUPERVISOR_UPSTREAM = "https://github.com/raelldottin/boundroom.git"
+SUPERVISOR_MIRROR = "boundroom.git"
+SUPERVISOR_RELEASE = "b193297829c68d2243e5e32d1517cf0b51568813"
+MODEL = "claude-opus-5-5"
 
 TIMEOUT_RETURNCODE = 124  # timeout(1)'s code, as the benchmark and run_next read it
 TERMINATION_GRACE_SECONDS = 5
 
-# The fields a blinded scope writer fills in from the pull request's description alone, without its diff.
+# The fields a blinded scope writer fills in from the linked issue or the pull request's title alone.
 SCOPE_FIELDS = ("task_statement", "allowed_paths", "required_validations", "max_files_changed")
-# The example queue's supervisor-owned paths. Both arms are scored against the same list.
+# The example queue's supervisor-owned paths, used only in arm S's queue policy. The oracle exempts none.
 SUPERVISOR_OWNED_PATHS = ("automation/queue/slices.json", "automation/handoffs/")
 
-UV_SYNC = ("uv", "sync", "--frozen")
-# The preregistered hidden-test command. ``no:cacheprovider`` only keeps .pytest_cache out of the tree.
-PYTEST = ("uv", "run", "--frozen", "python", "-m", "pytest", "-q", "-p", "no:cacheprovider")
+# The hidden-test command, inside the sandbox, with the clone's own offline venv.
+PYTEST = (".venv/bin/python", "-m", "pytest", "-q", "-p", "no:cacheprovider")
+TEST_FILE = re.compile(r"^tests/test_[^/]*\.py$")
+# The checks a candidate's base must pass when it has no blinded scope yet: the commands the
+# target's own CI runs, in the clone's venv. A blinded scope's own required_validations replace them.
+DEFAULT_REQUIRED_VALIDATIONS = ("git diff --check", ".venv/bin/python -m pytest -q")
 
-TEST_FILE = re.compile(r"^automation/tests/test_[^/]*\.py$")
+# Every git command the driver runs: no hooks, no fsmonitor, so a planted .git/config or hook runs nothing.
+SAFE_GIT = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
 
 # Removed from every environment a session, the oracle or the selection inherits. Credentials
 # that could reach GitHub, interpreter state that would point uv at another project, Claude Code's
@@ -230,18 +247,29 @@ def recorded_env_names(env: Mapping[str, str]) -> list[str]:
     return sorted(name for name in env if name.startswith(RECORDED_ENV_PREFIXES))
 
 
-# --- git ------------------------------------------------------------------------------------------
+# --- git ---------------------------------------------------------------------------------------
 
 
 def git(args: Sequence[str], cwd: Path, env: Optional[Mapping[str, str]] = None, check: bool = True) -> str:
-    result = subprocess.run(["git", *args], cwd=cwd, env=None if env is None else dict(env), capture_output=True, text=True)
+    """One git command with hooks and fsmonitor off (``SAFE_GIT``)."""
+    result = subprocess.run(
+        ["git", *SAFE_GIT, *args], cwd=cwd, env=None if env is None else dict(env), capture_output=True, text=True
+    )
     if check and result.returncode != 0:
         raise TrackRError(f"git {' '.join(args)} failed in {cwd}: {result.stderr.strip() or result.stdout.strip()}")
     return result.stdout
 
 
+def git_bytes(args: Sequence[str], cwd: Path, env: Optional[Mapping[str, str]] = None) -> bytes:
+    result = subprocess.run(["git", *SAFE_GIT, *args], cwd=cwd, env=None if env is None else dict(env), capture_output=True)
+    if result.returncode != 0:
+        raise TrackRError(f"git {' '.join(args)} failed in {cwd}: {result.stderr.decode(errors='replace').strip()}")
+    return result.stdout
+
+
 def has_object(repo: Path, sha: str, env: Optional[Mapping[str, str]] = None) -> bool:
-    return subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=repo, env=env, capture_output=True).returncode == 0
+    result = subprocess.run(["git", *SAFE_GIT, "cat-file", "-e", f"{sha}^{{commit}}"], cwd=repo, env=env, capture_output=True)
+    return result.returncode == 0
 
 
 def inside_repository(path: Path) -> Optional[Path]:
@@ -258,10 +286,10 @@ def require_outside_repository(path: Path, what: str) -> None:
         raise TrackRError(f"{what} {path} is inside the repository {enclosing}; choose a directory outside any repository")
 
 
-def ensure_mirror(source: str, cache_dir: Path, env: Mapping[str, str]) -> Path:
+def ensure_mirror(source: str, cache_dir: Path, env: Mapping[str, str], name: str = TARGET_MIRROR) -> Path:
     """A bare mirror of ``source`` under ``cache_dir``, fetched once and refreshed after (read-only)."""
     require_outside_repository(cache_dir, "the clone cache")
-    mirror = cache_dir / "boundroom.git"
+    mirror = cache_dir / name
     if mirror.exists():
         git(["fetch", "--quiet", "--prune", "origin"], mirror, env)
     else:
@@ -291,166 +319,14 @@ def clone_at(source: Path, sha: str, dest: Path, env: Mapping[str, str], *, hist
     return dest
 
 
-@dataclass(frozen=True)
-class BasePatch:
-    """A minimal fix applied to every clone's base, in both arms, so the supervisor can run at all.
-
-    ``run_next.py`` judges its own checkout, so each session runs the supervisor its task's base
-    shipped with. Before #279, that supervisor gave a handoff outside the repository the rule
-    ``Edit(/abs/path)``, which Claude Code reads as relative to the settings file, so the runner
-    could never write its handoff. The patch is #279's runner_profile.py change and nothing else: no
-    test, no changelog, no other supervisor code. That keeps each base's own tests consistent with
-    its own supervisor (a full v0.5.3 overlay did not, see the README's amendments).
-    """
-
-    id: str
-    source_commit: str
-    path: str
-
-    def record(self) -> dict[str, Any]:
-        return {"id": self.id, "source_commit": self.source_commit, "path": self.path}
-
-    @classmethod
-    def from_record(cls, data: Optional[Mapping[str, Any]]) -> Optional["BasePatch"]:
-        return cls(str(data["id"]), str(data["source_commit"]), str(data["path"])) if data else None
-
-
-# #279's merge commit: "let a bounded runner write a handoff outside the repository".
-BASE_PATCH = BasePatch(
-    "pr279-outside-handoff-rule", "30ab82bb1854079776e98b1499f2816e49a3d5f4", "automation/supervisor/runner_profile.py"
-)
-
-_UNPATCHED_RULE = 'allow.append(f"Edit({handoff})")'
-_PATCHED_RULE = 'allow.append(f"Edit(/{handoff})" if os.path.isabs(handoff) else f"Edit({handoff})")'
-_FIXED_MARKER = 'f"Edit(/{handoff})"'
-
-
-class PatchError(TrackRError):
-    """The base patch could not be applied to a base, or did not take."""
-
-
-def patch_runner_profile(text: str) -> tuple[str, str]:
-    """#279's handoff-rule fix applied to one base's runner_profile.py. Returns (text, status).
-
-    Deterministic and minimal: the one rule-building line is rewritten so an absolute handoff gets
-    ``Edit(//abs)``. #279's other half, no ``git add`` rule for an outside handoff, needs no edit:
-    a base either has no ``git add`` rule for the handoff at all or already guards it against an
-    absolute path. ``verify_patch`` checks both halves by calling the patched code.
-    """
-    if _FIXED_MARKER in text:
-        return text, "already present"
-    if text.count(_UNPATCHED_RULE) != 1:
-        raise PatchError(
-            f"#279's handoff rule: expected one {_UNPATCHED_RULE!r} in runner_profile.py, found {text.count(_UNPATCHED_RULE)}"
-        )
-    if not re.search(r"^import os$", text, re.M):
-        raise PatchError("#279's handoff rule needs os.path.isabs, but runner_profile.py does not import os")
-    return text.replace(_UNPATCHED_RULE, _PATCHED_RULE), "applied"
-
-
-# Run in the clone after uv sync: what the patched slice_settings gives a handoff inside and outside.
-VERIFY_SCRIPT = r"""
-import inspect, json, os, sys
-from pathlib import Path
-sys.path.insert(0, os.getcwd())
-from automation.supervisor import runner_profile as rp
-profile = rp.choose({"runner_profile": "bounded"}, {})
-record = {"allowed_paths": ["src/"], "required_validations": ["true"]}
-policy = {"supervisor_owned_paths": ["automation/queue/slices.json", "automation/handoffs/"]}
-out = {}
-for name, handoff in (("outside", "/trackr-verify/handoffs/x.json"), ("inside", "automation/handoffs/x.json")):
-    kwargs = {"handoff": handoff}
-    if "repo_root" in inspect.signature(rp.slice_settings).parameters:
-        kwargs["repo_root"] = Path(os.getcwd())
-    out[name] = rp.slice_settings(record, policy, profile, **kwargs)["permissions"]["allow"]
-print(json.dumps(out))
-"""
-VERIFY_ARGV = ("uv", "run", "--frozen", "python", "-c", VERIFY_SCRIPT)
-
-
-def verify_patch(clone: Path, env: Mapping[str, str], runner: CommandRunner) -> dict[str, Any]:
-    """Check the patch took, by calling the clone's own slice_settings. Raises PatchError if not."""
-    # No bytecode: the check must leave the setup tree exactly as the patch left it.
-    completed = runner(list(VERIFY_ARGV), clone, {**env, "PYTHONDONTWRITEBYTECODE": "1"}, 120)
-    try:
-        rules = json.loads(completed.stdout.strip().splitlines()[-1])
-    except (IndexError, json.JSONDecodeError) as error:
-        raise PatchError(f"could not check #279's handoff rule: {tail(completed.stdout + completed.stderr, 8)}") from error
-    outside, inside = "/trackr-verify/handoffs/x.json", "automation/handoffs/x.json"
-    checks = {
-        "outside_handoff_is_absolute": f"Edit(/{outside})" in rules["outside"],
-        "outside_handoff_has_no_single_slash_rule": f"Edit({outside})" not in rules["outside"],
-        "outside_handoff_has_no_git_add": f"Bash(git add {outside})" not in rules["outside"],
-        "inside_handoff_unchanged": f"Edit({inside})" in rules["inside"],
-    }
-    if not all(checks.values()):
-        raise PatchError("#279's handoff rule did not take: " + ", ".join(name for name, ok in checks.items() if not ok))
-    return checks
-
-
-def apply_base_patch(clone: Path, patch: BasePatch, env: Mapping[str, str]) -> str:
-    """Rewrite the patched file in the working tree and stage it. Returns the patch status."""
-    target = clone / patch.path
-    if not target.is_file():
-        raise PatchError(f"{patch.path} is missing at this base, so #279's handoff fix cannot be applied")
-    text, status = patch_runner_profile(target.read_text(encoding="utf-8"))
-    target.write_text(text, encoding="utf-8")
-    git(["add", "--", patch.path], clone, env)
-    return status
-
-
-# The validations every blinded scope written so far chose. The green-base check uses a task's own
-# required_validations once a blinded scope exists, and these for a candidate that has none yet.
-DEFAULT_REQUIRED_VALIDATIONS = (
-    "git diff --check",
-    "UV_PYTHON=3.12 make reusable-check",
-    "NO_MKDOCS_2_WARNING=1 uv run mkdocs build --strict",
-)
-VALIDATION_TIMEOUT_SECONDS = 1800
-
-
-def prepare_setup(clone: Path, patch: Optional[BasePatch], env: Mapping[str, str], runner: CommandRunner) -> dict[str, Any]:
-    """Apply the base patch, check it took, and stage it. Needs ``uv sync`` first.
-
-    Every clone a session, the oracle check or the green-base check starts from is made this way, so
-    they all start from the same tree. Nothing is regenerated: the patch touches no file any other
-    file is generated from. Returns what was done, for the record.
-    """
-    if patch is None:
-        return {"patch": None, "staged": git(["diff", "--cached", "--name-only"], clone, env).split()}
-    status = apply_base_patch(clone, patch, env)
-    checks = verify_patch(clone, env, runner)
-    return {
-        "patch": {**patch.record(), "status": status, "verified": checks},
-        "staged": git(["diff", "--cached", "--name-only"], clone, env).split(),
-    }
-
-
-def run_validations(commands: Sequence[str], clone: Path, env: Mapping[str, str], runner: CommandRunner) -> dict[str, Any]:
-    """Run each command at the clone's committed setup, with nothing else changed. Starts no model."""
-    results = []
-    for command in commands:
-        completed = runner(["/bin/sh", "-c", command], clone, env, VALIDATION_TIMEOUT_SECONDS)
-        output = completed.stdout + completed.stderr
-        results.append(
-            {
-                "command": command,
-                "exit_code": completed.returncode,
-                "timed_out": completed.timed_out,
-                "passed": completed.returncode == 0,
-                "wall_seconds": completed.wall_seconds,
-                "failures": [line for line in output.splitlines() if line.startswith(("FAILED", "ERROR"))][:30],
-                "output_tail": tail(output, 12),
-            }
-        )
-    return {"green": all(item["passed"] for item in results), "validations": results}
-
-
 def numstat(repo: Path, base: str, head: str, env: Optional[Mapping[str, str]] = None) -> list[dict[str, Any]]:
-    """``git diff --numstat base head``, with renames shown as their new path and binaries as 0 lines."""
+    """``git diff -z --numstat base head``: every path verbatim, binaries as 0 lines, no rename pairing."""
+    fields = git_bytes(["diff", "-z", "--numstat", "--no-renames", base, head], repo, env).decode("utf-8", "surrogateescape")
     rows = []
-    for line in git(["diff", "--numstat", "--no-renames", base, head], repo, env).splitlines():
-        added, deleted, path = line.split("\t", 2)
+    for record in fields.split("\0"):
+        if not record:
+            continue
+        added, deleted, path = record.split("\t", 2)
         rows.append(
             {"path": path, "added": int(added) if added.isdigit() else 0, "deleted": int(deleted) if deleted.isdigit() else 0}
         )
@@ -458,11 +334,32 @@ def numstat(repo: Path, base: str, head: str, env: Optional[Mapping[str, str]] =
 
 
 def name_status(repo: Path, base: str, head: str, env: Optional[Mapping[str, str]] = None) -> list[tuple[str, str]]:
+    """``git diff -z --name-status base head``: (status letter, path) with every path verbatim."""
+    fields = git_bytes(["diff", "-z", "--name-status", "--no-renames", base, head], repo, env).decode("utf-8", "surrogateescape")
+    parts = [part for part in fields.split("\0")]
     rows = []
-    for line in git(["diff", "--name-status", "--no-renames", base, head], repo, env).splitlines():
-        status, path = line.split("\t", 1)
-        rows.append((status[0], path))
+    index = 0
+    while index + 1 < len(parts) and parts[index]:
+        rows.append((parts[index][0], parts[index + 1]))
+        index += 2
     return rows
+
+
+def status_paths(repo: Path, env: Optional[Mapping[str, str]] = None) -> list[str]:
+    """``git status -z --porcelain --untracked-files=all``: every dirty path verbatim."""
+    fields = git_bytes(["status", "-z", "--porcelain", "--untracked-files=all"], repo, env).decode("utf-8", "surrogateescape")
+    paths = []
+    records = fields.split("\0")
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        paths.append(record[3:])
+        if record[0] in "RC":  # a rename or copy is followed by its old path
+            index += 1
+    return paths
 
 
 # --- pytest ---------------------------------------------------------------------------------------
@@ -512,25 +409,7 @@ def install_hidden_tests(
     for path in [*support, *paths]:
         target = clone / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(
-            subprocess.run(
-                ["git", "show", f"{head_sha}:{path}"], cwd=mirror, env=dict(env), capture_output=True, check=True
-            ).stdout
-        )
-
-
-def run_hidden_tests(
-    runner: CommandRunner,
-    mirror: Path,
-    head_sha: str,
-    paths: Sequence[str],
-    clone: Path,
-    env: Mapping[str, str],
-    timeout: float,
-    support: Sequence[str] = (),
-) -> dict[str, Any]:
-    install_hidden_tests(mirror, head_sha, paths, clone, env, support)
-    return hidden_test_result(runner([*PYTEST, *paths], clone, env, timeout))
+        target.write_bytes(git_bytes(["show", f"{head_sha}:{path}"], mirror, env))
 
 
 # --- files ----------------------------------------------------------------------------------------
@@ -582,8 +461,8 @@ def provenance_errors(provenance: Any) -> list[str]:
     if unknown:
         errors.append("scope_provenance has unknown keys: " + ", ".join(unknown))
     inputs = str(provenance.get("inputs") or "").lower()
-    if inputs and not re.search(r"\bno (repository, )?diff\b|without (its |the )?diff|title and body only", inputs):
-        errors.append("scope_provenance.inputs must say the scope was written from the title and body only, without the diff")
+    if inputs and not re.search(r"\bno (repository, )?diff\b|without (its |the )?diff", inputs):
+        errors.append("scope_provenance.inputs must say the scope was written without the diff (for example: no diff)")
     if re.search(r"\b(saw|seen|read|looked at|used) (the |its )?(diff|files changed|changed files)\b", inputs) and not re.search(
         r"\bno(t)? .{0,20}(diff|files)", inputs
     ):

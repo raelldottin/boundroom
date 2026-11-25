@@ -1,0 +1,243 @@
+{
+  "schema": "boundroom.trackr.tasks/2",
+  "spec": "SPEC-012 Track R, pilot v2",
+  "status": "frozen design, awaiting blinded scopes and the owner's approval; no session may start before both",
+  "selection_rule": {
+    "task_set": "v2: python-semver pull requests merged after the model's training cutoff",
+    "candidates": [
+      516,
+      508,
+      507,
+      489,
+      485,
+      469
+    ],
+    "candidates_chosen_by": "the owner, from a research agent's list (2026-11-25); the rule does not widen the pool",
+    "order": "mergedAt, then number",
+    "keep_if": [
+      "files include at least one tests/test_*.py",
+      "15 or fewer files changed",
+      "not documentation only (some file is neither under docs/ nor a .rst/.md file nor under changelog.d/)",
+      "the merge commit's diff from its first parent is exactly the pull request's file list",
+      "under sandbox-exec, with the setup applied and the harness restored: hidden tests fail or error at base+setup and pass at head+setup",
+      "under sandbox-exec: every required check passes at the setup commit (green base)"
+    ],
+    "setup": "Boundroom b193297829c68d2243e5e32d1517cf0b51568813 (v0.5.3) synced in by its own Tools/boundroom-sync.sh (--omit benchmark), plus an offline .venv from wheelhouse.v2.json",
+    "base_sha": "the first parent of the squash merge commit",
+    "head_sha": "the squash merge commit",
+    "hidden_tests": "tests/test_*.py files the pull request added or changed; other files it changed under tests/ are installed with them as support files",
+    "oracle": "copy the hidden tests and support files from head_sha into the clone, restore the harness, then, under sandbox-exec: .venv/bin/python -m pytest -q -p no:cacheprovider <hidden tests>. Fails at base: pytest exits 1 or 2. Passes at head: pytest exits 0 having run at least one test.",
+    "green_base_checks_without_a_scope": [
+      "git diff --check",
+      ".venv/bin/python -m pytest -q"
+    ],
+    "count": 6
+  },
+  "arms": {
+    "U+": "the task statement plus the allowed paths, required checks and file budget in S's exact words; arm U's settings; no gates",
+    "S": "the supervisor (run_next.py --single-slice, bounded profile)"
+  },
+  "model": "claude-opus-5-5",
+  "provenance": {
+    "target": "https://github.com/python-semver/python-semver.git",
+    "target_license": "BSD-3-Clause",
+    "candidates_sha256": "108fcb99a04a40f26e2376426a7d8e5a16ddc99590296201d4a62b600183d1fd",
+    "selected_at": "2026-11-25T11:31:46Z",
+    "selected_by": "automation/benchmark/trackr/select.py",
+    "selector_commit": "da61a67eddf85e94eeb1bc421b077ad0ac9e825b",
+    "sync": {
+      "release": "b193297829c68d2243e5e32d1517cf0b51568813",
+      "script": "Tools/boundroom-sync.sh",
+      "omit": [
+        "benchmark"
+      ],
+      "files": 58,
+      "sha256": "384d2de11733ac81878bdadcf222095307c60a2a1e25ccded7ae069318e13ada"
+    },
+    "model": "claude-opus-5-5",
+    "python": "3.12.16",
+    "uv": "uv 0.13.9 (Homebrew 2026-11-17 aarch64-apple-darwin)",
+    "platform": "Darwin arm64",
+    "containment": "/usr/bin/sandbox-exec (see sandbox.py)",
+    "model_sessions": 0
+  },
+  "scope_instructions": "Scopes are written by blinded agents, one per task, by the owner's decision (2026-11-25), not by a person. Each reads only the task's linked issue, or the pull request's title where no issue is linked, never the solution or solutions.v2.json, and fills in task_statement, allowed_paths, required_validations and max_files_changed. The checks available in the target are: git diff --check; .venv/bin/python -m pytest -q. The writer records by, when, inputs (saying no diff was seen) and leakage_ignored in scope_provenance.",
+  "tasks": [
+    {
+      "id": "pr469",
+      "number": 469,
+      "pr_title": "fix: next_version should bump version for build-only versions",
+      "linked_issue": null,
+      "scope_source": "the pull request's title only",
+      "base_sha": "a8bb4f89fc010b367d0925dc4da72c883d2d15d3",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "",
+      "allowed_paths": [],
+      "required_validations": [],
+      "max_files_changed": null,
+      "scope_provenance": {
+        "by": "",
+        "when": "",
+        "inputs": "",
+        "leakage_ignored": ""
+      }
+    },
+    {
+      "id": "pr485",
+      "number": 485,
+      "pr_title": "Fix #484: Increment old-style prerelease with dot",
+      "linked_issue": {
+        "number": 484,
+        "title": "New prerelease bump behaviour breaks consistency with old RC numbering",
+        "body": "### Which version of Python is the problem with?\n\n3.12\n\n### What semver version are you using?\n\n3.1.0\n\n### What OS are you using? (Add more in the Environment section)\n\nLinux\n\n### Situation\n\n#462 introduced a change to how prerelease versions are incremented. However, for existing automations using semver, this change can cause issues by reverting the prerelease version to an earlier number.\n\nAs an example adapted from a real situation found in production, we have a version string created from the previous semver release (version 3.0.4) which looks something like \"0.1.2-rc3\". \n```Pycon\n>>> import semver\n>>> v = semver.Version.parse(\"0.1.2-rc3\")\n>>> v.next_version(\"prerelease\")\nVersion(major=0, minor=1, patch=2, prerelease='rc.1', build=None)\n```\n\nThe example above sets the RC version backwards from version 3 to version 1, which can break existing CI automations which expect strictly increasing RC numbers.\n\n### How to reproduce\n\nExample snippet:\n\n```Pycon\n>>> import semver\n>>> v = semver.Version.parse(\"0.1.2-rc3\")\n>>> v.next_version(\"prerelease\")\nVersion(major=0, minor=1, patch=2, prerelease='rc.1', build=None)\n```\n\n### Expected behavior\n\nRC numbers created with the default settings should not ever decrease due to an internal API change. The expected output would be either \"0.1.2-rc4\" or \"0.1.2-rc.4\".\n\n### Environment\n\n_No response_",
+        "url": "https://github.com/python-semver/python-semver/issues/484",
+        "link": "the pull request's title"
+      },
+      "scope_source": "the linked issue",
+      "base_sha": "f53d13d13814a180a464763d6363bacb8a9f6c7f",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "",
+      "allowed_paths": [],
+      "required_validations": [],
+      "max_files_changed": null,
+      "scope_provenance": {
+        "by": "",
+        "when": "",
+        "inputs": "",
+        "leakage_ignored": ""
+      }
+    },
+    {
+      "id": "pr489",
+      "number": 489,
+      "pr_title": "fix: validate and match prerelease token prefixes",
+      "linked_issue": null,
+      "scope_source": "the pull request's title only",
+      "base_sha": "1d515915d50b31f23fd1fb0f572ef608453e80e3",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "",
+      "allowed_paths": [],
+      "required_validations": [],
+      "max_files_changed": null,
+      "scope_provenance": {
+        "by": "",
+        "when": "",
+        "inputs": "",
+        "leakage_ignored": ""
+      }
+    },
+    {
+      "id": "pr508",
+      "number": 508,
+      "pr_title": "Use the integer index protocol for Version subscripts",
+      "linked_issue": null,
+      "scope_source": "the pull request's title only",
+      "base_sha": "f3c7138120d7f49e190bd7c555c6e7eb155b482d",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "",
+      "allowed_paths": [],
+      "required_validations": [],
+      "max_files_changed": null,
+      "scope_provenance": {
+        "by": "",
+        "when": "",
+        "inputs": "",
+        "leakage_ignored": ""
+      }
+    },
+    {
+      "id": "pr507",
+      "number": 507,
+      "pr_title": "Deprecate cross-type Version equality in semver 3",
+      "linked_issue": {
+        "number": 506,
+        "title": "Version equality with strings and tuples violates the hash contract",
+        "body": "### Which version of Python is the problem with?\n\n3.14\n\n### What semver version are you using?\n\n3.1.0 (main source)\n\n### What OS are you using? (Add more in the Environment section)\n\nWindows\n\n### Situation\n\n`Version.parse(\"1.2.3\")` compares equal to both the string `\"1.2.3\"` and tuple `(1, 2, 3)`, but its hash differs from theirs. Looking up an equal string or tuple in a set/dict keyed by the `Version` fails. String equality is documented in `docs/usage/determine-version-equality.rst`; `Version` is also documented as usable as a dict key.\n\n### How to reproduce\n\n```python\nfrom semver import Version\nv = Version.parse(\"1.2.3\")\nprint(v == \"1.2.3\", \"1.2.3\" in {v}, {v: \"hit\"}.get(\"1.2.3\"))\nprint(v == (1, 2, 3), (1, 2, 3) in {v})\n```\n\nOutput on `main` commit `f3c7138120d7f49e190bd7c555c6e7eb155b482d`:\n\n```text\nTrue False None\nTrue False\n```\n\n### Expected behavior\n\nPython requires equal hashable objects to have equal hashes. Either an equal string/tuple should find the `Version` key, or cross-type equality should be reconsidered so the equality/hash contract holds. `Version.__hash__` currently hashes its version-parts tuple, which cannot match both the equal string and tuple hashes.\n\n### Environment\n\nPython 3.14.8 on Windows/amd64; reproduced from the current repository source at `f3c7138120d7f49e190bd7c555c6e7eb155b482d`.",
+        "url": "https://github.com/python-semver/python-semver/issues/506",
+        "link": "'Relates to' in the pull request's body"
+      },
+      "scope_source": "the linked issue",
+      "base_sha": "b6e83e3e40d3a7570386e8d694ae8011477a55c1",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "",
+      "allowed_paths": [],
+      "required_validations": [],
+      "max_files_changed": null,
+      "scope_provenance": {
+        "by": "",
+        "when": "",
+        "inputs": "",
+        "leakage_ignored": ""
+      }
+    },
+    {
+      "id": "pr516",
+      "number": 516,
+      "pr_title": "Fix hash contract: equal Versions must hash equal (#515)",
+      "linked_issue": {
+        "number": 515,
+        "title": "Equal Version objects can have different hashes (zero-padded prerelease)",
+        "body": "### Which version of Python is the problem with?\r\n\r\n3.13\r\n\r\n### What semver version are you using?\r\n\r\n3.1.2 (also reproduced on `master`)\r\n\r\n### What OS are you using? (Add more in the Environment section)\r\n\r\nWindows (platform-independent)\r\n\r\n### Situation\r\n\r\nTwo `Version` objects that compare equal can have different hashes when a numeric\r\nprerelease identifier is zero-padded. This violates Python's requirement that\r\n`a == b` implies `hash(a) == hash(b)`, breaking `set`/`dict` behavior even when\r\nonly `Version` objects are involved.\r\n\r\nThis is related to #506 (cross-type hash contract), but is a distinct, same-type\r\nviolation: no `str`/`tuple` comparison is involved, so it can be fixed without\r\ntouching documented cross-type equality.\r\n\r\n### How to reproduce\r\n\r\n```python\r\nfrom semver import Version\r\n\r\na = Version(1, 2, 3, prerelease=\"007\")\r\nb = Version(1, 2, 3, prerelease=\"7\")\r\n\r\nprint(a == b)              # True\r\nprint(hash(a) == hash(b))  # False  <-- inconsistent\r\n\r\nprint({a, b})              # {1.2.3-007, 1.2.3-7}: two \"equal\" items in one set\r\nprint(b in {a})            # False, despite a == b\r\nprint({a: \"x\"}.get(b))     # None\r\n```\r\n\r\nOutput:\r\n\r\n```text\r\nTrue\r\nFalse\r\n{Version(major=1, minor=2, patch=3, prerelease='007', build=None),\r\n Version(major=1, minor=2, patch=3, prerelease='7', build=None)}\r\nFalse\r\nNone\r\n```\r\n\r\nRoot cause: `__eq__` -> `compare()` -> `_nat_cmp` normalizes leading zeros\r\n(`identifier.lstrip(\"0\") or \"0\"`), so `\"007\"` and `\"7\"` get the same comparison\r\nkey `(0, 1, \"7\")`. `__hash__` hashes `self.to_tuple()[:4]`, which keeps the raw\r\nprerelease string, so the hashes differ.\r\n\r\nThe state is only reachable because `Version.__init__` accepts\r\n`prerelease=\"007\"` unvalidated, while `Version.parse(\"1.2.3-007\")` correctly\r\nraises `ValueError` (SemVer 2.0.0 spec section 9 forbids leading zeros in\r\nnumeric identifiers).\r\n\r\n### Expected behavior\r\n\r\n`hash(a) == hash(b)` whenever `a == b`; `{a, b}` has length 1; dict lookups hit.\r\n\r\nPossible fixes, either resolves it:\r\n\r\n1. Normalize the prerelease inside `__hash__` using the same `prerelease_key`\r\n   logic as `_nat_cmp`.\r\n2. Reject leading-zero numeric prerelease identifiers in `__init__`, matching\r\n   `parse`'s strictness (breaking change).\r\n\r\n### Environment\r\n\r\nsemver 3.1.2 from PyPI, CPython 3.13 on Windows/amd64; `__hash__` and\r\n`_nat_cmp` are identical on current `master`.\r\n",
+        "url": "https://github.com/python-semver/python-semver/issues/515",
+        "link": "GitHub closing reference"
+      },
+      "scope_source": "the linked issue",
+      "base_sha": "49a14e0872c877ae20fdcaa207a25975173ad14b",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "",
+      "allowed_paths": [],
+      "required_validations": [],
+      "max_files_changed": null,
+      "scope_provenance": {
+        "by": "",
+        "when": "",
+        "inputs": "",
+        "leakage_ignored": ""
+      }
+    }
+  ],
+  "audit": [
+    {
+      "number": 469,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 485,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 489,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 508,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 507,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 516,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    }
+  ]
+}

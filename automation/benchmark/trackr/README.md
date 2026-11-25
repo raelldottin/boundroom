@@ -1,145 +1,208 @@
 # Track R pilot (SPEC-012)
 
-Track R compares an unbounded Claude Code run (arm U) with a supervised slice (arm S) on the same
-brownfield tasks. An independent oracle scores both arms. This directory holds phase R0: the frozen
-task set, the driver, the oracle and the pilot runner. R0 runs no model and spends nothing.
+Track R compares one coding agent run two ways on the same brownfield tasks, scored by an
+independent oracle: **U+**, unbounded but told the scope, and **S**, supervised by Boundroom. This
+directory holds the frozen task set, the driver, the oracle, the containment and the pilot runner.
+Building and checking the task set runs no model and spends nothing.
 
-> **This task set is void (2026-11-25).** An adversarial review found a floor effect with no
-> signal. The hidden tests assert literal documentation and YAML text that the blinded scopes
-> deliberately left out, and sessions run with the network off, so neither arm can pass them.
-> R1 pilot v1 is void, and no real session may start from `tasks.pilot.json`. The pilot and the
-> driver refuse it except in a dry run. Three real sessions were made from it before that: two
-> complete and one interrupted, about $3.90, all discarded. `provenance.model_sessions` records
-> them. A v2 design follows: behavioural tasks, a contained checker, U+ against S, and a pinned
-> model. The driver, oracle and pilot code here carry into v2.
-
-| Module | What it does |
+| File | What it is |
 |---|---|
-| `select.py` | Freezes the task set by the preregistered R-b rule and writes `tasks.pilot.json`, including an audit of every candidate. |
+| `tasks.v2.json` | The v2 task set: what a blinded scope writer may read, plus the scopes once written, and the audit. |
+| `solutions.v2.json` | The human solutions, hidden tests and oracle results. Scope writers never see it. |
+| `wheelhouse.v2.json` | Every package installed anywhere, with its version and sha256. |
+| `select.py` | Freezes the task set and runs the sandboxed oracle and green-base checks. |
 | `driver.py` | Runs one (task, arm) session in a disposable clone. |
 | `oracle.py` | Scores a session's final commit with no agent present. |
-| `pilot.py` | Runs R1: 6 tasks × 2 arms, the budget stop, the summary and the blind-review export. |
+| `sandbox.py` | The `sandbox-exec` profile every checked command runs under. |
+| `target.py` | The sync, the offline venvs and the test-harness restoration. |
+| `wheelhouse.py` | Builds and checks the offline wheelhouse. |
+| `pilot.py` | Runs the pilot: 6 tasks × 2 arms, the budget stop, the summary and the blind-review export. |
+| `tasks.pilot.json` | **v1, void.** Kept as the record (see the end of this file). |
 
 Run each one as a module, for example `python -m automation.benchmark.trackr.pilot --help`. Don't
 run them as scripts: run as a script, `select.py` would shadow the standard library's `select`.
 
+## v2 design (owner decisions, 2026-11-25)
+
+- **Target: python-semver** (github.com/python-semver/python-semver, BSD-3-Clause). The candidates
+  are six pull requests merged after the model's training cutoff, found by a research agent and
+  chosen by the owner: #516 (issue #515), #508, #507, #489, #485 and #469. The selection rule
+  checks them and doesn't widen the pool.
+- **Arms: U+ against S**, one session each per task: 12 sessions.
+  - **U+** gets the task statement plus the allowed paths, required checks and file budget, in
+    exactly the words the supervisor's slice prompt gives S. The driver takes those lines from the
+    synced `automation/prompts/slice.md` and fills them with the supervisor's own
+    `run_next.format_value_list`; a test renders S's real prompt and checks each segment appears in
+    it word for word. U+ runs with arm U's settings (Claude Code's Bash sandbox, fail-closed,
+    `acceptEdits`) and no gates.
+  - **S** runs `run_next.py --single-slice` with its default `bounded` profile. Its per-slice
+    settings (`dontAsk`) allow edits only inside the slice's `allowed_paths` and its handoff, so
+    tool-level edits outside them are denied, not asked about. Each S session records those rules
+    (`supervised.edit_rules`).
+- **Scopes** are written by blinded agents, by the owner's decision, from the linked issue or, where
+  none is linked, the pull request's title only. They are empty until the writers run.
+- **The model is pinned:** both arms run with `--model claude-opus-5-5`. Each record keeps the model
+  it was configured with and the model in the argv that actually ran (`observed_model`).
+
+## Setup: the same in both arms but for S's queue
+
+1. A fresh clone of python-semver at the task's `base_sha`, outside any repository, with no remote,
+   and with every object after the base pruned, so the human solution can't be found in it.
+2. The clone's own `.venv`, installed offline from the wheelhouse (below), excluded from Git through
+   `.git/info/exclude`.
+3. **Boundroom v0.5.3 beside semver's code.** Boundroom's own `Tools/boundroom-sync.sh --sync` runs
+   once per pilot or selection, from a clean checkout of the release commit
+   `b193297829c68d2243e5e32d1517cf0b51568813`, into a staging directory, with `--pin`,
+   `--expect-remote` and the source's quality gate (`make reusable-check`). The staged files are
+   copied into each clone, and the script's own `--check` confirms the clone matches the manifest.
+   The optional `benchmark` component is left out (`--omit benchmark`). v0.5.3 already has #279's
+   fix for a handoff outside the repository, so no patch is applied.
+4. Arm S only: `automation/queue/slices.json`, one queued slice built from the task's scope.
+5. One setup commit holds all of it. The sync and the queue are the only difference between the arms.
+
+**A green base.** Before any model session, every required check runs at the setup commit, under
+`sandbox-exec`. If one fails, the session is recorded as `base_not_green`, no model starts, and it
+costs nothing. Selection applies the same check, so a task whose base is red is never selected.
+
+## The offline wheelhouse
+
+PyPI is reached once, by `wheelhouse.py build`, outside any sandbox. After that, every install is
+`uv pip install --offline --no-index --find-links <wheelhouse> --require-hashes`. The hashes below
+are the ones in semver's `uv.lock` at the tasks' bases and in Boundroom's `uv.lock` at b193297; a
+test checks `wheelhouse.v2.json` pins exactly these.
+
+| Group | Package | Version | Wheel | sha256 |
+|---|---|---|---|---|
+| target | pytest | 9.1.1 | `pytest-9.1.1-py3-none-any.whl` | `37a86b45efb9a47a…` |
+| target | pytest-cov | 7.1.0 | `pytest_cov-7.1.0-py3-none-any.whl` | `a0461110b7865f9a…` |
+| target | coverage | 7.14.3 | `coverage-7.14.3-cp312-cp312-macosx_11_0_arm64.whl` | `96150a9cf3468ea2…` |
+| target | packaging | 26.3 | `packaging-26.3-py3-none-any.whl` | `d7193f7c8e4e93f4…` |
+| target | pluggy | 1.6.0 | `pluggy-1.6.0-py3-none-any.whl` | `e920276dd6813095…` |
+| target | iniconfig | 2.3.0 | `iniconfig-2.3.0-py3-none-any.whl` | `f631c04d2c48c52b…` |
+| target | pygments | 2.20.0 | `pygments-2.20.0-py3-none-any.whl` | `81a9e26dd42fd28a…` |
+| supervisor | pydantic | 2.14.3 | `pydantic-2.14.3-py3-none-any.whl` | `3f7b347782ab7e4c…` |
+| supervisor | pydantic-core | 2.50.4 | `pydantic_core-2.50.4-cp312-cp312-macosx_11_0_arm64.whl` | `1e20cbde2b6deb33…` |
+| supervisor | typing-extensions | 4.16.0 | `typing_extensions-4.16.0-py3-none-any.whl` | `481caa481374e813…` |
+| supervisor | annotated-types | 0.8.0 | `annotated_types-0.8.0-py3-none-any.whl` | `f072f4d804ea359e…` |
+| supervisor | typing-inspection | 0.4.4 | `typing_inspection-0.4.4-py3-none-any.whl` | `65b8397ba37ccbce…` |
+
+The full hashes are in `wheelhouse.v2.json`. The **target** group is what semver's test
+configuration needs: `.pytest.ini` adds `--cov`, and `tests/conftest.py` imports `packaging`. On
+CPython 3.12, pytest needs neither `exceptiongroup` nor `tomli`. The **supervisor** group is
+Boundroom's runtime dependency, installed into one interpreter outside every clone.
+
+## Containment
+
+The checker and the green-base check run every command under `/usr/bin/sandbox-exec` with this
+profile (`sandbox.PROFILE`; the parameters are the session's own directories):
+
+```scheme
+(version 1)
+(deny default)
+(allow process-fork process-exec)
+(allow signal (target same-sandbox))
+(allow sysctl-read)
+(allow mach-lookup)
+(allow ipc-posix-shm)
+(allow file-ioctl)
+(allow file-read*)
+(deny file-read*
+  (subpath (string-append (param "REAL_HOME") "/.ssh"))
+  (subpath (string-append (param "REAL_HOME") "/.aws"))
+  (subpath (string-append (param "REAL_HOME") "/.config/gh")))
+(allow file-write*
+  (subpath (param "CLONE"))      ; the session's clone
+  (subpath (param "TMP"))        ; its private TMPDIR, outside the clone
+  (subpath (param "HOME"))       ; its temporary HOME, outside the clone
+  (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom")
+  (literal "/dev/dtracehelper") (regex #"^/dev/tty") (regex #"^/dev/fd/"))
+(deny network*)
+```
+
+- Writes are denied by default and allowed only to the session's own directories. `/private/tmp` and
+  `/var/folders` are therefore writable only where the session's own directories sit inside them.
+- The command runs under `env -i` with an allowlist: a fixed `PATH` (the clone's `.venv/bin`, then
+  the system), the temporary `HOME` and `TMPDIR`, `LANG` and `LC_ALL`, and Git pointed at an empty
+  config. No credential or token variable reaches it.
+- Tests run the real profile on toy commands (macOS only). They check that the network is blocked,
+  writes to HOME and to the rest of the temporary directory are blocked, the clone and the private
+  TMPDIR are writable, and only the allowlisted variables arrive.
+- The model's own session is contained by Claude Code's sandbox, not by this profile. This profile
+  is for the code that runs with no agent present.
+
+## What the checker won't trust
+
+- **The test harness.** Before running any check or hidden test, the oracle restores every
+  `conftest.py`, `pytest.ini`, `.pytest.ini`, `setup.cfg`, `tox.ini`, `noxfile.py`, `.coveragerc`
+  and pyproject's `[tool.pytest]` tables to the setup commit's version. Where the human pull request
+  changed one, it uses the head version instead. Only then are the hidden tests and their support
+  files copied in. Whether the session changed any harness file is recorded
+  (`harness_changed_by_session`), and such a change counts as out of scope even inside
+  `allowed_paths`.
+- **`.git`.** `git add` and `git commit` run outside Claude Code's sandbox, so a session that planted
+  a hook or `core.fsmonitor` could run code with the network. To stop that:
+  - both arms' settings deny edits under `.git/`;
+  - every git command the driver runs uses `-c core.hooksPath=/dev/null -c core.fsmonitor=false`;
+  - after the session, `.git/config`, `.git/hooks` and `.git/info` are compared with their state at
+    setup. A change is recorded as an `escape_attempt`, and the oracle never runs that session's code.
+- **The configured cap.** `run_next` always asks for its own default of $5. In arm S, a wrapper
+  (`BOUNDROOM_CLAUDE_BIN`) replaces it with the driver's cap, adds the model pin, and writes the exact
+  argv it runs to `runner-argv.json` just before it starts Claude Code. Each S record keeps the
+  observed cap and model from that argv (`observed_cap_usd`, `observed_model`) and the value it
+  replaced (`supervisor_budget_args`). The wrapper also drops `--no-session-persistence`, so S
+  leaves a transcript as U+ does.
+- **The gate's name.** `gate_of` names what stopped an S session by matching the wording of
+  `run_next`'s reason. Each record keeps the raw reason beside it (`supervised.raw_reason`). The name
+  depends on that wording, because `run_next` has no `stop_code` yet.
+- **Paths.** numstat, name-status and status are read with `-z`, so quoted, spaced and renamed paths
+  parse.
+
+## Blinding, failures and cleanup
+
+- When a session ends, its change gets a random review id and its normalized diff is held in a
+  private staging directory. `mapping.json` is rewritten after every session, and each results row
+  records its review id. The reviewer's `review/` directory is written once at the end, in a
+  shuffled batch, with every file time set to the epoch.
+- A session, oracle or export error is recorded against its session, and the session is charged
+  what it cost: the full cap if the cost is unknown, or nothing if it stopped before the model
+  started. The pilot then goes on to the next session. Each session's clone is removed in a
+  `finally`, and the mapping and summary are always written.
+- On SIGTERM, SIGINT or SIGHUP, the running session's process group is killed and the session is
+  recorded as `interrupted`. `subprocess_runner` writes output to files and waits on the process, so
+  a background child holding a pipe doesn't turn a finished command into a timeout.
+
 ## Before a real run
 
-A real run starts model sessions, which is spending. It needs a person's approval and `--yes`.
-Before that:
+1. The blinded scope writers fill in each task's `task_statement`, `allowed_paths`,
+   `required_validations` and `max_files_changed`. Each records `by`, `when`, `inputs` (saying no
+   diff was seen) and `leakage_ignored` in `scope_provenance`. The pilot refuses to start without
+   them. Then rerun `select.py` so the green-base check uses the written `required_validations`.
+2. The owner approves the frozen design and the spending.
+3. The dry run passes:
+   `python -m automation.benchmark.trackr.pilot --dry-run --out <dir> --cache-dir <dir> --wheelhouse <dir>`.
+4. The pilot is started from a plain terminal, where both Claude Code's sandbox and `sandbox-exec`
+   can start.
 
-1. **A blinded scope writer fills in each task's scope** (`task_statement`, `allowed_paths`,
-   `required_validations`, `max_files_changed`) from the pull request's title and body only, without
-   looking at its diff or files. By the owner's decision (2026-11-24), the v1 scopes were written by
-   blinded subagents, one per task, not by a person. The writer records `by`, `when`, `inputs` and
-   `leakage_ignored` in `scope_provenance`. The pilot
-   refuses to start until every task has a scope. `provenance.task_changes.need_blinded_scope` lists
-   the tasks still waiting for one.
-2. **The dry run passes:** `python -m automation.benchmark.trackr.pilot --dry-run --out <dir> --cache-dir <dir>`.
-   A fake Claude Code applies each human solution. Everything else runs for real.
-3. **The pilot is started from a plain terminal**, not from inside a sandboxed shell. Claude Code's
-   sandbox must be able to start, because both arms run it fail-closed.
+## Known limits
 
-## What the setup holds constant
+- **Untested against a real `claude`:** the sandbox keys, `--setting-sources`, `--strict-mcp-config`,
+  `--model`, how a budget stop is reported, and finding the transcripts. Before a real run, the
+  pilot checks that `claude --help` lists every flag the arms use.
+- **Six tasks with one repeat** measure cost, censoring and blinding, not effectiveness.
+- **One machine:** the wheelhouse is for CPython 3.12 on macOS arm64.
 
-- **The base patch.** `run_next.py` judges its own checkout, so each session runs the supervisor
-  its task's base shipped with. Before #279, that supervisor gave a handoff outside the repository the
-  rule `Edit(/abs)`, which Claude Code reads as relative to the settings file, so arm S could never
-  write its handoff. Every clone, in both arms, therefore gets #279's fix to
-  `automation/supervisor/runner_profile.py` and nothing else:
-  - the one line that builds the handoff rule is rewritten, so an outside handoff gets `Edit(//abs)`;
-  - #279's tests and changelog are not applied.
+## v1: void
 
-  The patch is then checked by calling the clone's own `slice_settings`. An outside handoff must get
-  the absolute rule and no `git add` rule, and an inside handoff must be unchanged. A base that
-  already has the fix is left as it is. A base the rewrite doesn't fit, or where the check fails, is
-  dropped at selection, and a session there stops as `patch_failed` before any model starts.
-  `tasks.pilot.json` (`base_patch`) and every session record (`base_patch`) record the patch.
-- **A green base.** Before any model session, each session runs every one of the task's
-  `required_validations` at its setup commit. If one fails, the session is recorded as
-  `base_not_green`, no model starts, and it costs nothing. Every record keeps these results under
-  `setup_validations`. Selection applies the same check, so a task whose base is red is never
-  selected.
-- **Interrupts.** Each session runs in its own process group. On SIGTERM, SIGINT or SIGHUP, the
-  pilot kills that group (SIGTERM, then SIGKILL after five seconds), records the session as
-  `interrupted` with whatever cost its transcript shows, writes the summary, and exits with
-  128 plus the signal number.
-- **The cap.** Both arms get the same `--max-budget-usd`, 4.50 by default. `run_next` always asks for
-  its own default of $5, whatever the caller exports. In arm S, a wrapper (`BOUNDROOM_CLAUDE_BIN`)
-  replaces that value with the driver's cap. Each session record keeps the value it replaced, under
-  `supervised.supervisor_budget_args`.
-- **The environment.** Both arms share one inherited environment. GitHub credentials, the SSH agent,
-  Claude Code's markers and every `BOUNDROOM_*` and `GIT_*` variable are removed from it, and no
-  `BOUNDROOM_*` variable is added back. Both arms load only project settings and no MCP server.
-  Managed settings still load, in both arms alike.
-- **The clone.** Each clone holds no Git object from after the task's base, so the human solution
-  can't be found in it.
+The v1 task set (`tasks.pilot.json`, Boundroom's own pull requests) is void. Its hidden tests assert
+literal documentation and YAML text that the blinded scopes left out, and the sessions ran with the
+network off, so neither arm could pass: a floor effect with no signal. Three real sessions were made
+from it, two complete and one interrupted, about $3.90, and all were discarded. The pilot and the
+driver refuse a void task set except in a dry run.
 
-## Scoring, blinding and failures
+The v1 record also holds its amendments, each made after real sessions had run, so none was
+preregistered:
+- a v0.5.3 overlay;
+- a green-base check;
+- replacing the overlay with a patch of only #279's fix.
 
-- **The oracle exempts no path.** An agent's edit to the supervisor's queue or handoff directory
-  counts as out of scope, in either arm, and the reviewer sees it. Arm S's queue file is in the setup
-  commit, so it shows up in a diff only if the agent changed it. Only `.claude/` is left out of the
-  reviewer's diff.
-- **The hidden tests' support files** (helpers and fixtures under `automation/tests/` that the pull
-  request added or changed) are installed with the hidden tests, at selection and in the oracle.
-- **Review directories are written in one batch** after every session has finished, in a shuffled
-  order, with every file's modification time set to the epoch. Neither creation order nor file times
-  can then give an arm away.
-- **A failure is recorded and the pilot goes on.** A session, oracle or export that raises is
-  recorded against its session, and the session is charged what it cost: the full cap if the cost is
-  unknown, or nothing if it stopped before the model started. The reviews, `mapping.json` and the
-  summary are always written, even when a run stops early.
-- **The driver CLI** checks `claude --help` for every flag the arms use before a real session, and it
-  scores the session with the oracle before removing the clone.
-- **A scope counts only with its provenance:** `scope_provenance` must carry `by`, `when`, `inputs`
-  and `leakage_ignored`, plus `owner_decision` optionally. A scope whose `inputs` don't say it came
-  from the title and body only, or say the diff was seen, is refused.
-
-## Amendments
-
-`tasks.pilot.json` records each amendment under `provenance.amendments`, the earlier selections
-under `provenance.earlier_selections`, and the tasks dropped, added and needing a scope under
-`provenance.task_changes`.
-
-0. **The overlay (2026-11-24, after the R0 dry run, before any model session).** The dry run showed
-   that the bases' own pre-#279 supervisor denies arm S's handoff. Every clone got
-   `automation/supervisor/`, `automation/schemas/` and `automation/context/` replaced by their
-   v0.5.3 contents, and the oracle check was redone with that overlay. Superseded by amendment 2.
-1. **A green base (2026-11-25, after the first 2 real R1 sessions).** This was made after the R1
-   pilot had run 2 sessions and part of a third, about $3.90. Those results are discarded.
-   - **What went wrong:** with the overlay, the base was red before the agent changed anything.
-     `UV_PYTHON=3.12 make reusable-check` failed at base+overlay, first at
-     `settings_view.py --docs --check`. Arm S's agent saw a required validation fail at baseline and
-     honestly stopped as `blocked`, with no commit. Every task would have hit the same failure,
-     biasing the experiment against S.
-   - **The change:** a new check, described above. It was added after real sessions had run, so it
-     is not preregistered. Tasks that still qualify keep
-     their blinded scopes unchanged, and no task's `required_validations` was changed.
-   - **New candidates:** a candidate with no blinded scope yet is checked against the validations
-     every blinded scope so far chose (`DEFAULT_REQUIRED_VALIDATIONS`).
-   - **A second cause, fixed at the same time:** the driver had set `BOUNDROOM_TELEMETRY=off` in
-     every environment it built. That kill switch breaks the repository's own telemetry tests inside
-     `make reusable-check`, for the agent, the green-base check and the oracle alike.
-2. **The base patch instead of the overlay (2026-11-25, also after those 2 sessions, by the owner's
-   decision).**
-   - **Why:** even with regeneration, the overlay left every base's own tests disagreeing with the
-     overlaid v0.5.3 supervisor. Those tests cover the legacy-variable removal version, `run_next`'s
-     warnings and prompt errors, and the telemetry exporter. As a result, only one task in the window
-     had a green base.
-   - **The change:** the overlay is dropped in favour of the base patch above. Selection was rerun
-     over the same window, in the same merge order, with the oracle check and the green-base check
-     made on base+patch.
-
-## Known limits of the task set
-
-- **Docs-heavy tasks.** The R-b rule keeps any pull request that touches a test file. Several of the
-  selected tasks are mostly documentation, release or CI changes whose hidden tests check exact
-  wording or file layout. A correct change in different words fails those tests, in both arms alike.
-  So hidden-test pass rates will be low in both arms, and the rule is kept as preregistered. Read
-  the pass rates alongside the blinded reviewer's verdicts, not on their own.
-- **Small set.** Six tasks with one repeat measure cost, censoring and blinding, not effectiveness.
-- **Untested against a real `claude`.** The sandbox keys, `--setting-sources`,
-  `--strict-mcp-config`, how a budget stop is reported, and finding the transcripts under
-  `~/.claude/projects/` were checked only with a fake. Before a real run, the pilot checks that
-  `claude --help` lists every flag the arms use, and refuses if one is missing.
+The v1 scopes were written by blinded subagents, by the owner's decision, not by a person.

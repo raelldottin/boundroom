@@ -1,0 +1,83 @@
+{
+  "python": "3.12",
+  "platform": "macosx_11_0_arm64",
+  "source": "https://pypi.org/simple",
+  "groups": {
+    "target": [
+      {
+        "name": "pytest",
+        "version": "9.1.1",
+        "file": "pytest-9.1.1-py3-none-any.whl",
+        "sha256": "37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c"
+      },
+      {
+        "name": "pytest-cov",
+        "version": "7.1.0",
+        "file": "pytest_cov-7.1.0-py3-none-any.whl",
+        "sha256": "a0461110b7865f9a271aa1b51e516c9a95de9d696734a2f71e3e78f46e1d4678"
+      },
+      {
+        "name": "coverage",
+        "version": "7.14.3",
+        "file": "coverage-7.14.3-cp312-cp312-macosx_11_0_arm64.whl",
+        "sha256": "96150a9cf3468ea20f0bc5d0e21b3df8972c31480ef90fa7614b773cc6429665"
+      },
+      {
+        "name": "packaging",
+        "version": "26.3",
+        "file": "packaging-26.3-py3-none-any.whl",
+        "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c"
+      },
+      {
+        "name": "pluggy",
+        "version": "1.6.0",
+        "file": "pluggy-1.6.0-py3-none-any.whl",
+        "sha256": "e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746"
+      },
+      {
+        "name": "iniconfig",
+        "version": "2.3.0",
+        "file": "iniconfig-2.3.0-py3-none-any.whl",
+        "sha256": "f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12"
+      },
+      {
+        "name": "pygments",
+        "version": "2.20.0",
+        "file": "pygments-2.20.0-py3-none-any.whl",
+        "sha256": "81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176"
+      }
+    ],
+    "supervisor": [
+      {
+        "name": "pydantic",
+        "version": "2.14.3",
+        "file": "pydantic-2.14.3-py3-none-any.whl",
+        "sha256": "3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8"
+      },
+      {
+        "name": "pydantic-core",
+        "version": "2.50.4",
+        "file": "pydantic_core-2.50.4-cp312-cp312-macosx_11_0_arm64.whl",
+        "sha256": "1e20cbde2b6deb33a51d08cd168454dd9044ec7d4474056f4d98d63f51578783"
+      },
+      {
+        "name": "typing-extensions",
+        "version": "4.16.0",
+        "file": "typing_extensions-4.16.0-py3-none-any.whl",
+        "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+      },
+      {
+        "name": "annotated-types",
+        "version": "0.8.0",
+        "file": "annotated_types-0.8.0-py3-none-any.whl",
+        "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
+      },
+      {
+        "name": "typing-inspection",
+        "version": "0.4.4",
+        "file": "typing_inspection-0.4.4-py3-none-any.whl",
+        "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147"
+      }
+    ]
+  }
+}
