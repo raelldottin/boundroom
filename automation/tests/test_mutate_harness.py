@@ -73,7 +73,8 @@ supervisor's own tests do with automation/supervisor."""
 import sys
 
 if __name__ == "__main__":
-    sys.exit(7)
+    # Finishes normally, without sys.exit: by then CPython has dropped __main__.__file__.
+    sys.stdout.write(str(7))
 '''
 
 TOY_TESTS = '''\
@@ -143,19 +144,21 @@ def test_cli_exit_code():
     assert subprocess.run([sys.executable, str(ROOT / "cli.py")]).returncode == 3
 
 
-def test_a_copy_of_the_tool_exits_7():
+def test_a_copy_of_the_tool_prints_7():
     with tempfile.TemporaryDirectory() as scratch:
         copied = Path(scratch, "tool.py")
         shutil.copy(ROOT / "tool.py", copied)
-        assert subprocess.run([sys.executable, str(copied)]).returncode == 7
+        run = subprocess.run([sys.executable, str(copied)], capture_output=True, text=True)
+        assert run.stdout == "7"
 
 
 def test_an_unrelated_tool_py_elsewhere():
     # Same name and layout, other content: it must not be credited to tool.py.
     with tempfile.TemporaryDirectory() as scratch:
         other = Path(scratch, "tool.py")
-        other.write_text((ROOT / "tool.py").read_text().replace("sys.exit(7)", "sys.exit(0)"))
-        assert subprocess.run([sys.executable, str(other)]).returncode == 0
+        other.write_text((ROOT / "tool.py").read_text().replace("str(7)", "str(0)"))
+        run = subprocess.run([sys.executable, str(other)], capture_output=True, text=True)
+        assert run.stdout == "0"
 '''
 
 TOY_PYPROJECT = """\
@@ -192,8 +195,8 @@ EXPECTED = {
     ("cli.py", 6, "number_zero", "0"): "killed",
     # Only ever run from a copy in a temporary directory, yet the copy carries the mutant.
     ("tool.py", 6, "comparison", '__name__ != "__main__"'): "killed",
-    ("tool.py", 7, "number_increment", "8"): "killed",
-    ("tool.py", 7, "number_zero", "0"): "killed",
+    ("tool.py", 8, "number_increment", "8"): "killed",
+    ("tool.py", 8, "number_zero", "0"): "killed",
     # Only test_b executes line 26, and it fails when run alone, so its failure says nothing.
     ("logic.py", 26, "delete_statement", "pass"): "unreliable_selection",
     ("logic.py", 26, "return_none", "return None"): "unreliable_selection",

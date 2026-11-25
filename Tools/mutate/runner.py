@@ -49,15 +49,26 @@ for _directory in SITE_DIRS:
     site.addsitedir(_directory)
 
 
+_COVERAGE = None
+
+
 def _record_copies():
     # Tests copy modules to temporary directories and run them there. Coverage records those
     # copies under their own paths, and the directories are gone by the time the map is read,
-    # so note each loaded copy's content now, while it still exists.
-    found = {{}}
+    # so note each copy's content now, while it still exists. The names come from what coverage
+    # measured in this process: a script run as __main__ may have lost its __file__ by now.
+    names = set()
+    if _COVERAGE is not None:
+        try:
+            names.update(_COVERAGE.get_data().measured_files())
+        except Exception:
+            pass
     for module in list(sys.modules.values()):
         name = getattr(module, "__file__", None)
-        if not isinstance(name, str):
-            continue
+        if isinstance(name, str):
+            names.add(name)
+    found = {{}}
+    for name in names:
         real = os.path.realpath(name)
         if real.endswith({targets!r}):
             try:
@@ -69,9 +80,6 @@ def _record_copies():
         path = os.path.join({hash_dir!r}, "%d-%s.json" % (os.getpid(), uuid.uuid4().hex))
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(found, handle)
-
-
-atexit.register(_record_copies)
 
 
 def _start():
@@ -91,6 +99,10 @@ def _start():
     cov._warn_unimported_source = False
     cov._warn_preimported_source = False
     cov.start()
+    global _COVERAGE
+    _COVERAGE = cov
+    # Registered after coverage's own exit handler, so it runs first, while the data is live.
+    atexit.register(_record_copies)
 
 
 _start()
