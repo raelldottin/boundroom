@@ -331,14 +331,21 @@ def generate_mutants(source: str) -> list[Mutant]:
     generator = _Generator(source)
     generator.visit_body(tree.body, tree)
     order = {name: index for index, name in enumerate(OPERATORS)}
-    ordered = sorted(generator.found, key=lambda m: (m.start, -m.end, order[m.operator], m.mutant))
-    # Two nodes can yield the same program (`not not a` loses either `not`); count it once.
+    return dedupe(sorted(generator.found, key=lambda m: (m.start, -m.end, order[m.operator], m.mutant)))
+
+
+def dedupe(mutants: list[Mutant]) -> list[Mutant]:
+    """``mutants`` without repeats of the same edit (start, end, replacement), first kept.
+
+    An edit fixes the mutated program, so this drops exact duplicates without holding a copy
+    of the program for each mutant.
+    """
     unique: list[Mutant] = []
-    seen: set[str] = set()
-    for mutant in ordered:
-        program = apply_mutant(source, mutant)
-        if program not in seen:
-            seen.add(program)
+    seen: set[tuple[int, int, str]] = set()
+    for mutant in mutants:
+        edit = (mutant.start, mutant.end, mutant.replacement)
+        if edit not in seen:
+            seen.add(edit)
             unique.append(mutant)
     return unique
 

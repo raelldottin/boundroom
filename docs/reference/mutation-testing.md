@@ -27,18 +27,20 @@ Options worth knowing:
 | `--lower-baseline MODULE` | none | Lets that module's recorded score go down (repeatable). Needs `--reason`, which is recorded in the baseline file. Implies `--update-baseline`. |
 | `--baseline-modules` | off | Measures every module the baseline file lists. |
 | `--show-survivors N` | 20 | Survivors printed per module. The report has all of them. |
+| `--report-dir DIR` | `quality/reports` | Where the per-mutant reports go. Git ignores the default directory. |
 
 Exit codes: 0 when the run finished and, with `--check-baseline`, no score dropped; 1 when a score dropped below its baseline, or a module with a baseline couldn't be scored at all; 2 on a usage error, an `--update-baseline` from a working tree with changes, or when the harness couldn't measure, for example because none of a module's test selections passes without a mutant; 130 when interrupted with Ctrl-C or SIGTERM. Each module's report is written as soon as that module is measured, so an interrupted run keeps the modules it finished.
 
 ## How it works
 
-1. **One coverage run.** The harness copies the repository to a temporary directory and runs the whole suite there once, under `coverage`, with one coverage context per test. Many tests run `run_next.py` and `evaluate_handoff.py` as scripts, so the run also measures subprocesses: the suite runs under a throwaway virtual environment whose `.pth` file starts coverage in every Python process, labelled with the test that was running. The result maps each line of the target modules to the tests that execute it, and records how long each test took. Nothing is installed in the repository or in its `.venv`.
+1. **One coverage run.** The harness copies the repository to a temporary directory and runs the whole suite there once, under `coverage`, with one coverage context per test. Many tests run `run_next.py` and `evaluate_handoff.py` as scripts, so the run also measures subprocesses: the suite runs under a throwaway virtual environment whose `.pth` file starts coverage in every Python process, labelled with the test that was running. Many tests also copy `automation/supervisor` into a temporary Git repository and run the copy. Coverage records a copy under its own path, so each process notes, as it exits, the content hash of every loaded file whose path ends in a target module's path. A copy at any path is credited to the module when its content matches the module byte for byte. The result maps each line of the target modules to the tests that execute it, and records how long each test took. Nothing is installed in the repository or in its `.venv`.
 2. **Mutants.** The harness parses the module and makes one mutant per change below. Each mutant changes one AST node, and is written by replacing that node's exact span in the source text, so comments and formatting elsewhere stay as they are and the diff is a line or two.
-3. **Runs.** For each mutant it writes the mutated file into one of `--jobs` disposable copies of the repository (a Git clone that shares the original's objects, plus the working tree's files) and runs only the tests that execute the mutated line, fastest first, with `python -m pytest -x`. Because the mutant is on disk, scripts the tests start as subprocesses load it too.
-4. **Timeouts.** A run that passes its time limit is killed with its whole process group, so no test process or child is left behind.
-5. **Clean-up.** Every copy, the throwaway environment and every log live under one temporary directory, which is removed at the end, including after Ctrl-C or SIGTERM, which also kill every running test. The repository itself changes only in the report files below.
+3. **Runs.** For each mutant it writes the mutated file into one of `--jobs` disposable copies of the repository (a Git clone that shares the original's objects, plus the working tree's files) and runs only the tests that execute the mutated line, the module's own test files first, then fastest first, with `python -m pytest -x`. Because the mutant is on disk, scripts the tests start as subprocesses load it too, and so do copies a test makes of the module's directory.
+4. **A failure is checked before it counts.** When the run under a mutant fails or times out, the same tests run again at once without the mutant. Only if they pass is the mutant `killed` (or `timeout`); if they fail too, the failure belongs to a flaky test, and the mutant is `unreliable`, which counts as survived.
+5. **Timeouts.** A run that passes its time limit is killed with its whole process group, so no test process or child is left behind.
+6. **Clean-up.** Every copy, the throwaway environment and every log live under one temporary directory, which is removed at the end, including after Ctrl-C or SIGTERM, which also kill every running test. The repository itself changes only in the files the run writes: the reports, which Git ignores, and the baseline with `--update-baseline`.
 
-Before running any mutant, the harness takes each distinct set of tests that some mutant will run and runs it once without a mutant, exactly as the mutants will run it: the same tests, in the same order, with `-x` and the same options, alone in a copy. A set that doesn't pass that way, such as a test that only passes after another test has run, or a node id that collects nothing on its own, would fail under every mutant whatever the mutant did. Its mutants are marked `unreliable_selection`, never killed, and the report lists each such set with its exit code under `unreliable_selections`. If no set passes, the harness stops with exit 2. Each set is checked once per run, however many mutants share it. Tests that fail in the coverage run are left out of every selection and listed in the report as `excluded_tests`.
+Before running any mutant, the harness takes each distinct set of tests that some mutant will run and runs it once without a mutant, exactly as the mutants will run it: the same tests, in the same order, with `-x` and the same options, alone in a copy. A set that doesn't pass that way, such as a test that only passes after another test has run, or a node id that collects nothing on its own, would fail under every mutant whatever the mutant did. Its mutants are marked `unreliable_selection`, which counts as survived, and the report lists each such set with its exit code under `unreliable_selections`. If no set passes, the harness stops with exit 2. Each set is checked once per run, however many mutants share it. Tests that fail in the coverage run are left out of every selection and listed in the report as `excluded_tests`.
 
 The module text measured is the one copied for the coverage run, so editing the working tree during a run doesn't change what is measured. `--pytest-args` (shell-quoted) goes to the coverage run and to every test run.
 
@@ -64,23 +66,24 @@ The harness doesn't mutate docstrings, type annotations, `__all__`, calls to `pr
 The table has one row per module:
 
 ```text
-module                                   total  killed  timeout  survived  no_cov  allowlisted  error  unreliable  score
----------------------------------------  -----  ------  -------  --------  ------  -----------  -----  ----------  -----
+module                                   total  killed  timeout  survived  no_cov  allowlisted  error  unreliable_sel  unreliable  score
+---------------------------------------  -----  ------  -------  --------  ------  -----------  -----  --------------  ----------  -----
 automation/supervisor/runner_profile.py  ...
 ```
 
 | Column | Meaning |
 | --- | --- |
-| `killed` | A test failed: pytest exited 1. |
-| `timeout` | The tests ran past the time limit, usually an endless loop. It counts as killed. |
+| `killed` | The tests failed under the mutant, whatever the exit code: failed tests, or a broken import or collection (exit 2) and the like, and passed again without it. |
+| `timeout` | The tests ran past the time limit, usually an endless loop, and passed again without the mutant. It counts as killed. |
 | `survived` | Every test that executes the line passed. |
 | `no_cov` | No test executes the line at all. A survivor, flagged separately because the fix is a test that reaches the line. |
 | `allowlisted` | Excluded by an exact entry in the allowlist, below. |
-| `error` | The mutant didn't compile, or pytest couldn't judge it: exit 2 (interrupted), 3 (internal error), 4 (usage error, such as a node id that no longer exists), 5 (no tests collected), or death by a signal. Not counted either way. |
-| `unreliable` | `unreliable_selection`: the tests that would judge the mutant don't pass without it when run alone, so their failure says nothing. Not counted either way; fix the order dependence and measure again. |
-| `score` | (killed + timeout) / (total - allowlisted - error - unreliable_selection) |
+| `error` | The mutant didn't compile. The only status left out of the score, with `allowlisted`. |
+| `unreliable_sel` | `unreliable_selection`: the tests that would judge the mutant don't pass without it when run alone. Counted as survived, so an order-dependent test lowers the score. |
+| `unreliable` | The tests failed under the mutant and failed again without it: a flaky test. Counted as survived, so a flaky test lowers the score. |
+| `score` | (killed + timeout) / (total - allowlisted - error) |
 
-Each survivor is printed as `file:line operator` and a unified diff. The full result is in `quality/mutation-report-<module>.json`, where `<module>` is the path with dots for slashes, such as `mutation-report-automation.supervisor.policy.json`. It lists every mutant with its status, the number of tests run, the time taken and the time limit, then the survivors with their diffs.
+Each survivor, meaning any measured mutant that wasn't killed, is printed as `file:line operator` and a unified diff. The full result is in `quality/reports/mutation-report-<module>.json`, where `<module>` is the path with dots for slashes, such as `mutation-report-automation.supervisor.policy.json`. Git ignores that directory: the reports are large and change on every run, so only the baseline is committed, and the workflow uploads the reports as an artifact. A report lists every mutant with its status, the number of tests run, the time taken and the time limit, then the survivors with their diffs.
 
 A survivor means one of three things:
 
@@ -96,7 +99,7 @@ The ratchet only goes up:
 
 - Raise a module's baseline when its tests improve, by running with `--update-baseline` and committing the result in the pull request that improved them. An update records a module's numbers only when its score held or rose.
 - With `--check-baseline` too, the check runs first, against the baseline as it was, and a run that fails it records nothing.
-- Lowering a score takes `--lower-baseline <module> --reason "<why>"`. The file keeps each lowering in its `lowered` list, with the old and new score, the reason and the commit, so a reviewer sees it in the diff.
+- Lowering a score takes `--lower-baseline <module> --reason "<why>"`. The file keeps each lowering in its `lowered` list, with the old and new score, the reason and the commit, so a reviewer sees it in the diff. A lowering counts only once a person commits it: `--check-baseline` and `--update-baseline` stop with exit 2 if the commit that first holds a `lowered` record was authored by the agent or any other bot, or if no commit holds it yet. So a lowering reaches `main` only in a pull request the owner approves.
 
 Each entry says what was measured, so anyone can reproduce it:
 
@@ -107,17 +110,17 @@ Each entry says what was measured, so anyone can reproduce it:
 
 A baseline measured on a branch describes that branch's code. It describes `main` only once the trees it records are the trees on `main`, or once it has been measured again there after the merge.
 
-The advisory workflow `.github/workflows/mutation.yml` runs the harness weekly and on demand, over every module in the baseline. It is not a required check, so it doesn't block a merge.
+The advisory workflow `.github/workflows/mutation.yml` runs the harness over every module in the baseline, or the modules given, when a person starts it (`workflow_dispatch`). It has no schedule: a schedule needs the owner's approval as its own recorded action, and is added only once the owner approves one. It is not a required check, so it doesn't block a merge.
 
 ## The allowlist
 
-`quality/mutation-allowlist.json` holds equivalent mutants. Each entry names the `module`, `line`, `operator`, the node's `original` text and its `mutant` text, copied from the report, plus a `reason` and `reviewed_by`. An entry excludes a mutant only when all five of the first fields match exactly, so an entry can't hide a different mutant on the same line. When the code changes and an entry matches nothing, the harness prints it as a stale entry; remove or update it.
+`quality/mutation-allowlist.json` holds equivalent mutants. Each entry names the `module`, `line`, `operator`, the node's `original` text and its `mutant` text, copied from the report, plus a `reason`. Any other field is refused. An entry excludes a mutant only when all five of the first fields match exactly, so an entry can't hide a different mutant on the same line. When the code changes and an entry matches nothing, the harness prints it as a stale entry; remove or update it.
 
-Each entry is a claim that a bug can't exist, so a person other than the change's author checks the reason before it merges, and names themselves in `reviewed_by`.
+Each entry is a claim that a bug can't exist, so the harness accepts it only from a person. It reads the file's Git history, finds the first commit that holds the entry exactly, and stops with exit 2 if that commit's author is the agent or any other bot (a name ending in `[bot]`, or the agent's GitHub user id `354874784`), if no commit holds the entry yet, or if the file isn't in a Git repository. So an entry reaches `main` only in a commit a person authored, through a pull request the owner approves. A proposed `CODEOWNERS` line, `/quality/ @raelldottin`, would make that review explicit; adding it is the owner's change.
 
 ## Limits
 
-- **Selection depends on coverage.** A mutant only runs against tests that execute its line. A subprocess the test starts with an environment that drops `PATH`, or with an interpreter other than the one running the suite, isn't measured, so a line only it executes reads as `no_cov`. Code that runs at import time (module level, class bodies, default values, decorators) runs once per process, under whichever test imported the module first, so its mutants run against every test that covers the module.
+- **Selection depends on coverage.** A mutant only runs against tests that execute its line. A subprocess the test starts with an environment that drops `PATH`, or with an interpreter other than the one running the suite, isn't measured, and neither is a copy whose content differs from the module or a process that exits without running its exit handlers. A line only such a run executes reads as `no_cov`. Code that runs at import time (module level, class bodies, default values, decorators) runs once per process, under whichever test imported the module first, so its mutants run against every test that covers the module.
 - **Equivalent mutants are counted as survivors** until someone allowlists them, so a score below 100% doesn't by itself mean a test is missing.
-- **It is slow by nature.** Each surviving mutant reruns every test that executes its line.
-- **Timeouts assume a steady machine.** A timeout is counted as a kill, so a machine that is heavily loaded, or sleeps and wakes, during a run can turn slow tests into false kills. A run of `timeout` results on code that can't loop is the sign; measure that module again on a quiet machine before recording its baseline.
+- **It is slow by nature.** Each mutant reruns every test that executes its line, and each failing run is repeated once without the mutant.
+- **Timeouts assume a steady machine.** A heavily loaded machine, or one that sleeps and wakes, slows tests. The recheck without the mutant keeps such a slowdown from counting as a kill, but it turns it into `unreliable` instead, which lowers the score. Measure on a quiet machine before recording a baseline.

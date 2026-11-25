@@ -29,7 +29,8 @@ from .runner import CopyPool, CoverageMap, CoverageMapper, HarnessError, copy_pr
 
 DEFAULT_BASELINE = "quality/mutation-baseline.json"
 DEFAULT_ALLOWLIST = "quality/mutation-allowlist.json"
-DEFAULT_REPORT_DIR = "quality"
+# Per-mutant reports are large and change on every run, so they stay out of Git (.gitignore).
+DEFAULT_REPORT_DIR = "quality/reports"
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -164,9 +165,10 @@ class Measurement:
 
     def _coverage_map(self, state: Path, copy: Path) -> CoverageMap:
         self._say(f"coverage run: the whole suite once, measuring {', '.join(self.modules)}")
-        mapping = CoverageMapper(state, copy, self.modules).build(
-            pytest_args=self.args.pytest_args, timeout=self.args.coverage_timeout
-        )
+        mapper = CoverageMapper(state, copy, self.modules)
+        mapping = mapper.build(pytest_args=self.args.pytest_args, timeout=self.args.coverage_timeout)
+        for module, count in sorted(mapper.copies_credited.items()):
+            self._say(f"coverage run: {module}: credited {count} copies that tests ran from other paths")
         if mapping.failed:
             self._say(f"warning: {len(mapping.failed)} tests failed in the coverage run and are not used:")
             for test in sorted(mapping.failed):
@@ -192,7 +194,7 @@ class Measurement:
         reliable = []
         for index, mutant, tests in pending:
             if tuple(tests) in unreliable:
-                outcomes[index] = report.Outcome(mutant, report.UNRELIABLE, tests=len(tests))
+                outcomes[index] = report.Outcome(mutant, report.UNRELIABLE_SELECTION, tests=len(tests))
             else:
                 reliable.append((index, mutant, tests))
         pending = reliable
@@ -302,19 +304,32 @@ class Measurement:
             return report.Outcome(mutant, report.ERROR)
         timeout = self._timeout(tests, mapping)
         copy = copies.get()
+        unmutated_passes = None
         try:
             write_mutant(copy, module, mutated)
             log = state / f"{copy.name}.log"
             result = run_tests(copy, tests, timeout=timeout, log=log, pytest_args=self.args.pytest_args)
+            write_mutant(copy, module, source)
+            if result.timed_out or result.returncode != 0:
+                # Trust the kill only if the same tests pass without the mutant right now.
+                again = run_tests(copy, tests, timeout=timeout, log=log, pytest_args=self.args.pytest_args)
+                unmutated_passes = not again.timed_out and again.returncode == 0
         finally:
             write_mutant(copy, module, source)
             copies.put(copy)
-        status = report.outcome_status(result.returncode, result.timed_out)
+        status = report.outcome_status(result.returncode, result.timed_out, unmutated_passes)
         return report.Outcome(mutant, status, tests=len(tests), duration=result.duration, timeout=timeout)
 
     def _say(self, message: str) -> None:
         with self.print_lock:
             print(message, file=sys.stderr, flush=True)
+
+
+SURVIVOR_FLAGS = {
+    report.NO_COVERAGE: " [no test executes this line]",
+    report.UNRELIABLE_SELECTION: " [its tests fail without the mutant when run alone]",
+    report.UNRELIABLE: " [flaky: its tests failed again without the mutant]",
+}
 
 
 def print_results(reports: list[dict[str, Any]], show: int, out: Callable[[str], None] = print) -> None:
@@ -324,7 +339,7 @@ def print_results(reports: list[dict[str, Any]], show: int, out: Callable[[str],
         if survivors:
             out(f"\nsurvivors in {module_report['module']} ({len(survivors)}):")
             for survivor in survivors[:show]:
-                flag = " [no test executes this line]" if survivor["status"] == report.NO_COVERAGE else ""
+                flag = SURVIVOR_FLAGS.get(survivor["status"], "")
                 out(f"{survivor['location']} {survivor['operator']}{flag}")
                 out(survivor["diff"].rstrip("\n"))
             if len(survivors) > show:
@@ -334,6 +349,24 @@ def print_results(reports: list[dict[str, Any]], show: int, out: Callable[[str],
                 f"stale allowlist entry: {entry['module']}:{entry['line']} {entry['operator']} "
                 f"{entry['original']!r} -> {entry['mutant']!r} matches no mutant"
             )
+
+
+def _refuse_agent_entries(path: Path, entries: list[Any], select: Callable[[Any], Any], verb: str) -> None:
+    """Refuse entries a person didn't commit: an allowlist entry, or a lowered baseline score.
+
+    Each one weakens the measurement, so it counts only when the commit that first holds it
+    is authored by someone other than the agent (or any bot), and so reaches main through a
+    pull request a person approves.
+    """
+    entries = [entry for entry in entries if isinstance(entry, dict)]
+    if not entries:
+        return
+    for entry, author in zip(entries, runner.entry_authors(path, entries, select)):
+        where = f"{path.name}: {entry.get('module')}:{entry.get('line', '')}".rstrip(":")
+        if author is None:
+            raise HarnessError(f"{where} is not committed; an entry counts only once a person commits it")
+        if report.is_agent(*author):
+            raise HarnessError(f"{where} was {verb} by {author[0]}; only a person's commit can do that")
 
 
 def _interrupt(signum: int, frame: object) -> None:
@@ -346,7 +379,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         baseline_path = _resolve(root, args.baseline)
         baseline = _read_json(baseline_path, {})
-        allowlist = report.validate_allowlist(_read_json(_resolve(root, args.allowlist), {"entries": []}))
+        allowlist_path = _resolve(root, args.allowlist)
+        allowlist = report.validate_allowlist(_read_json(allowlist_path, {"entries": []}))
+        _refuse_agent_entries(allowlist_path, allowlist, lambda document: document.get("entries"), "added")
+        if args.check_baseline or args.update_baseline:
+            lowered = baseline.get("lowered", []) if isinstance(baseline, dict) else []
+            _refuse_agent_entries(baseline_path, lowered, lambda document: document.get("lowered"), "lowered")
         modules = _modules(args, root, baseline)
         unmeasured = sorted(set(args.lower) - set(modules))
         if unmeasured:

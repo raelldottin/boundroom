@@ -7,6 +7,7 @@ that is removed at the end.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
@@ -19,9 +20,10 @@ import sys
 import sysconfig
 import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 # Environment variables from an outer coverage run that must not leak into ours.
 SCRUBBED_PREFIXES = ("COVERAGE_", "COV_CORE_")
@@ -34,11 +36,42 @@ _PATTERN_CHARACTERS = re.compile(r"[,\[\]*?\n]")
 
 _BOOT = '''\
 """Started by a .pth file in the mutation harness's throwaway venv: measure this process."""
+import atexit
+import hashlib
+import json
+import os
 import site
+import sys
+import uuid
 
 SITE_DIRS = {site_dirs!r}
 for _directory in SITE_DIRS:
     site.addsitedir(_directory)
+
+
+def _record_copies():
+    # Tests copy modules to temporary directories and run them there. Coverage records those
+    # copies under their own paths, and the directories are gone by the time the map is read,
+    # so note each loaded copy's content now, while it still exists.
+    found = {{}}
+    for module in list(sys.modules.values()):
+        name = getattr(module, "__file__", None)
+        if not isinstance(name, str):
+            continue
+        real = os.path.realpath(name)
+        if real.endswith({targets!r}):
+            try:
+                with open(real, "rb") as handle:
+                    found[real] = hashlib.sha256(handle.read()).hexdigest()
+            except OSError:
+                pass
+    if found:
+        path = os.path.join({hash_dir!r}, "%d-%s.json" % (os.getpid(), uuid.uuid4().hex))
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(found, handle)
+
+
+atexit.register(_record_copies)
 
 
 def _start():
@@ -294,6 +327,37 @@ def provenance(root: Path, exclude: Sequence[str] = ()) -> tuple[str | None, boo
     return commit, dirty, trees
 
 
+def entry_authors(path: Path, entries: list[dict[str, Any]], select: Callable[[Any], Any]) -> list[tuple[str, str] | None]:
+    """For each entry, the (name, email) of the author of the first commit whose ``path`` holds it.
+
+    ``select`` picks the entries out of a parsed version of the file. An entry no commit holds
+    exactly, such as one added or edited in the working tree, gets None.
+    """
+    directory = path.resolve().parent
+    try:
+        top = Path(_git(directory, "rev-parse", "--show-toplevel").strip()).resolve()
+    except (subprocess.CalledProcessError, FileNotFoundError, NotADirectoryError) as error:
+        raise HarnessError(f"{path} isn't in a Git repository, so who added its entries can't be checked") from error
+    relative = path.resolve().relative_to(top).as_posix()
+    wanted: dict[str, list[int]] = {}
+    for index, entry in enumerate(entries):
+        wanted.setdefault(json.dumps(entry, sort_keys=True), []).append(index)
+    authors: list[tuple[str, str] | None] = [None] * len(entries)
+    for line in _git(top, "log", "--reverse", "--format=%H%x09%an%x09%ae", "--", relative).splitlines():
+        sha, name, email = line.split("\t", 2)
+        try:
+            version = json.loads(_git(top, "show", f"{sha}:{relative}"))
+        except (subprocess.CalledProcessError, ValueError):
+            continue  # deleted, or not JSON, at that commit
+        held = {json.dumps(item, sort_keys=True) for item in (select(version) or []) if isinstance(item, dict)}
+        for key, indexes in wanted.items():
+            if key in held:
+                for index in indexes:
+                    if authors[index] is None:
+                        authors[index] = (name, email)
+    return authors
+
+
 def copy_project(root: Path, destination: Path) -> None:
     """A disposable copy of ``root``'s working tree at ``destination``.
 
@@ -372,6 +436,8 @@ class CoverageMapper:
         self.context_file = state / "context"
         self.results_file = state / "results.json"
         self.config_file = state / "coveragerc"
+        self.hash_dir = state / "copies"
+        self.copies_credited: dict[str, int] = {}
 
     def build(self, *, pytest_args: Sequence[str], timeout: float) -> CoverageMap:
         if _PATTERN_CHARACTERS.search(str(self.copy)):
@@ -409,7 +475,9 @@ class CoverageMapper:
             # The boot file must only ever land in the throwaway venv, never in a shared install.
             raise HarnessError(f"the throwaway venv's site-packages is outside it: {site_packages}")
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        include = "\n".join(f"    {self.copy / module}" for module in self.modules)
+        self.hash_dir.mkdir(parents=True, exist_ok=True)
+        # The copy's own module, and any copy of it a test makes elsewhere (credited by content below).
+        include = "\n".join(f"    {pattern}" for module in self.modules for pattern in (self.copy / module, f"*/{module}"))
         self.config_file.write_text(
             "[run]\n"
             f"data_file = {self.data_dir / '.coverage'}\n"
@@ -421,7 +489,13 @@ class CoverageMapper:
             encoding="utf-8",
         )
         (site_packages / "_mutate_boot.py").write_text(
-            _BOOT.format(site_dirs=_real_site_dirs(), context_file=str(self.context_file), config_file=str(self.config_file)),
+            _BOOT.format(
+                site_dirs=_real_site_dirs(),
+                context_file=str(self.context_file),
+                config_file=str(self.config_file),
+                targets=tuple(f"/{module}" for module in self.modules),
+                hash_dir=str(self.hash_dir),
+            ),
             encoding="utf-8",
         )
         (site_packages / "_mutate_plugin.py").write_text(
@@ -440,13 +514,27 @@ class CoverageMapper:
         except NoDataError:
             return {}
         data = combined.get_data()
-        measured = {Path(name).resolve(): name for name in data.measured_files()}
+        copies: dict[str, str] = {}
+        for record in self.hash_dir.glob("*.json"):
+            try:
+                copies.update(json.loads(record.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
         lines: dict[str, dict[int, set[str]]] = {}
         for module in self.modules:
-            name = measured.get((self.copy / module).resolve())
-            if name is None:
-                continue
-            lines[module] = {line: set(contexts) for line, contexts in data.contexts_by_lineno(name).items()}
+            target = (self.copy / module).resolve()
+            digest = hashlib.sha256(target.read_bytes()).hexdigest()
+            merged: dict[int, set[str]] = {}
+            for name in data.measured_files():
+                real = os.path.realpath(name)
+                # A copy elsewhere counts only if its content is the module's, byte for byte.
+                if Path(real) == target or (real.endswith(f"/{module}") and copies.get(real) == digest):
+                    if Path(real) != target:
+                        self.copies_credited[module] = self.copies_credited.get(module, 0) + 1
+                    for line, contexts in data.contexts_by_lineno(name).items():
+                        merged.setdefault(line, set()).update(contexts)
+            if merged:
+                lines[module] = merged
         return lines
 
 

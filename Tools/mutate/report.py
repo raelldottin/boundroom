@@ -21,12 +21,17 @@ NO_COVERAGE = "no_coverage"
 ALLOWLISTED = "allowlisted"
 ERROR = "error"
 # The tests that would judge the mutant don't pass without it, run alone as the mutant's run
-# would be, so their failure under the mutant says nothing about it.
-UNRELIABLE = "unreliable_selection"
-STATUSES = (KILLED, TIMEOUT, SURVIVED, NO_COVERAGE, ALLOWLISTED, ERROR, UNRELIABLE)
+# would be, so their failure under the mutant says nothing about it. Counted as survived.
+UNRELIABLE_SELECTION = "unreliable_selection"
+# The tests failed under the mutant, and failed again when rerun without it: a flaky test, not
+# a kill. Counted as survived.
+UNRELIABLE = "unreliable"
+STATUSES = (KILLED, TIMEOUT, SURVIVED, NO_COVERAGE, ALLOWLISTED, ERROR, UNRELIABLE_SELECTION, UNRELIABLE)
+# Measured, and not killed: what a reader should look at.
+NOT_KILLED = (SURVIVED, NO_COVERAGE, UNRELIABLE_SELECTION, UNRELIABLE)
 
-# pytest's exit code when tests ran and at least one failed.
-PYTEST_TESTS_FAILED = 1
+# The agent's GitHub App bot user id; a rename changes its login but not this.
+AGENT_USER_ID = "354874784"
 
 ALLOWLIST_FIELDS: dict[str, type] = {
     "module": str,
@@ -35,7 +40,6 @@ ALLOWLIST_FIELDS: dict[str, type] = {
     "original": str,
     "mutant": str,
     "reason": str,
-    "reviewed_by": str,
 }
 
 
@@ -70,25 +74,34 @@ def report_name(module: str) -> str:
     return stem.replace("/", ".")
 
 
-def outcome_status(returncode: int | None, timed_out: bool) -> str:
+def outcome_status(returncode: int | None, timed_out: bool, unmutated_passes: bool | None) -> str:
     """What one pytest run under a mutant says about it.
 
-    Only failed tests (exit 1) or a timeout kill a mutant. Exit 2 to 5 (interrupted, internal
-    error, usage error, no tests collected) and death by a signal say pytest couldn't judge
-    the mutant, so they are errors.
+    A run that fails, whatever the exit code (failed tests, a broken import or collection, a
+    usage error, no tests), or that times out, is a kill only when the same tests, rerun at
+    once without the mutant, pass. If they fail too, the failure is a flaky test's, and the
+    mutant is ``unreliable``, which counts as survived. ``unmutated_passes`` is that rerun's
+    result; it isn't consulted for a run that passed.
     """
-    if timed_out:
-        return TIMEOUT
-    if returncode == 0:
+    if not timed_out and returncode == 0:
         return SURVIVED
-    if returncode == PYTEST_TESTS_FAILED:
-        return KILLED
-    return ERROR
+    if not unmutated_passes:
+        return UNRELIABLE
+    return TIMEOUT if timed_out else KILLED
+
+
+def is_agent(name: str, email: str) -> bool:
+    """Whether a Git author is the agent, or any bot, under whatever name it had."""
+    return name.strip().endswith("[bot]") or "[bot]@" in email or email.strip().startswith(f"{AGENT_USER_ID}+")
 
 
 def score(counts: dict[str, int]) -> float | None:
-    """(killed + timeout) / (total - allowlisted - error - unreliable_selection), to 4 places; None with nothing to measure."""
-    measured = counts["total"] - counts[ALLOWLISTED] - counts[ERROR] - counts[UNRELIABLE]
+    """(killed + timeout) / (total - allowlisted - error), to 4 places; None with nothing to measure.
+
+    Only a mutant that doesn't compile (error) or an allowlisted one is left out. Unreliable
+    mutants stay in, uncounted as kills, so a flaky or order-dependent test lowers the score.
+    """
+    measured = counts["total"] - counts[ALLOWLISTED] - counts[ERROR]
     if measured <= 0:
         return None
     return round((counts[KILLED] + counts[TIMEOUT]) / measured, 4)
@@ -112,15 +125,18 @@ def validate_allowlist(document: Any) -> list[dict[str, Any]]:
         missing = [key for key in ALLOWLIST_FIELDS if key not in entry]
         if missing:
             raise AllowlistError(f"allowlist entry {index} lacks {', '.join(missing)}")
+        unknown = sorted(set(entry) - set(ALLOWLIST_FIELDS))
+        if unknown:
+            # Who reviewed an entry comes from Git, not from a field anyone can type.
+            raise AllowlistError(f"allowlist entry {index} has unknown fields: {', '.join(unknown)}")
         for key, kind in ALLOWLIST_FIELDS.items():
             value = entry[key]
             if not isinstance(value, kind) or isinstance(value, bool):
                 raise AllowlistError(f"allowlist entry {index}: {key} must be a {kind.__name__}")
         if entry["operator"] not in OPERATORS:
             raise AllowlistError(f"allowlist entry {index}: unknown operator {entry['operator']!r}")
-        for key in ("reason", "reviewed_by"):
-            if not entry[key].strip():
-                raise AllowlistError(f"allowlist entry {index}: {key} is empty")
+        if not entry["reason"].strip():
+            raise AllowlistError(f"allowlist entry {index}: reason is empty")
         entries.append(entry)
     return entries
 
@@ -188,7 +204,7 @@ def module_report(
             "diff": unified_diff(module, source, outcome.mutant),
         }
         for outcome in outcomes
-        if outcome.status in (SURVIVED, NO_COVERAGE)
+        if outcome.status in NOT_KILLED
     ]
     return {
         "module": module,
@@ -272,7 +288,8 @@ def updated_baseline(
 
 
 def render_table(reports: list[dict[str, Any]]) -> str:
-    headers = ["module", "total", "killed", "timeout", "survived", "no_cov", "allowlisted", "error", "unreliable", "score"]
+    headers = ["module", "total", "killed", "timeout", "survived", "no_cov", "allowlisted", "error"]
+    headers += ["unreliable_sel", "unreliable", "score"]
     rows = [
         [
             report["module"],

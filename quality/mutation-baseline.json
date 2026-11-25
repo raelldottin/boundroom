@@ -1,5 +1,5 @@
 {
-  "description": "Each module's mutation score, measured at the commit and code trees recorded with it (not main's until measured again there after the merge): (killed + timeout) / (total - allowlisted - error - unreliable_selection). `python -m Tools.mutate --check-baseline` fails when a module scores below its number here. --update-baseline only raises a number, from a clean tree; lowering one takes --lower-baseline with --reason, recorded under lowered. See docs/reference/mutation-testing.md.",
+  "description": "Each module's mutation score, measured at the commit and code trees recorded with it (not main's until measured again there after the merge): (killed + timeout) / (total - allowlisted - error); unreliable mutants count as survived. `python -m Tools.mutate --check-baseline` fails when a module scores below its number here. --update-baseline only raises a number, from a clean tree; lowering one takes --lower-baseline with --reason, recorded under lowered, and counts only once a person commits it. See docs/reference/mutation-testing.md.",
   "modules": {},
   "not_yet_measured": [
     "Tools/changelog_section.py",

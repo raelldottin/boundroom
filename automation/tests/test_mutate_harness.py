@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 
 from Tools.mutate import apply_mutant, cli, report, runner
-from Tools.mutate import generate_mutants
+from Tools.mutate import Mutant, generate_mutants
 from Tools.mutate.report import baseline_failures
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -51,6 +51,10 @@ def untested(flag):
 
 def double(n):
     return n * 2
+
+
+def triple(n):
+    return n * 3
 '''
 
 TOY_CLI = '''\
@@ -62,14 +66,26 @@ if __name__ == "__main__":
     sys.exit(3)
 '''
 
+TOY_TOOL = '''\
+"""Toy script that its test copies to a temporary directory and runs from there, as the
+supervisor's own tests do with automation/supervisor."""
+
+import sys
+
+if __name__ == "__main__":
+    sys.exit(7)
+'''
+
 TOY_TESTS = '''\
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
-from logic import countdown, double, floor_at_zero, is_adult
+from logic import countdown, double, floor_at_zero, is_adult, triple
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -112,8 +128,34 @@ def test_b_needs_the_state_test_a_left():
     assert double(2) == 4
 
 
+def test_c_flaky():
+    # Passes its first two runs (the coverage run and the selection check), then always fails.
+    counter = os.environ.get("TOY_FLAKY_FILE")
+    if counter:
+        handle = os.open(counter, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+        os.write(handle, b"x")
+        os.close(handle)
+        assert os.path.getsize(counter) <= 2, "flaky: fails from its third run on"
+    assert triple(2) == 6
+
+
 def test_cli_exit_code():
     assert subprocess.run([sys.executable, str(ROOT / "cli.py")]).returncode == 3
+
+
+def test_a_copy_of_the_tool_exits_7():
+    with tempfile.TemporaryDirectory() as scratch:
+        copied = Path(scratch, "tool.py")
+        shutil.copy(ROOT / "tool.py", copied)
+        assert subprocess.run([sys.executable, str(copied)]).returncode == 7
+
+
+def test_an_unrelated_tool_py_elsewhere():
+    # Same name and layout, other content: it must not be credited to tool.py.
+    with tempfile.TemporaryDirectory() as scratch:
+        other = Path(scratch, "tool.py")
+        other.write_text((ROOT / "tool.py").read_text().replace("sys.exit(7)", "sys.exit(0)"))
+        assert subprocess.run([sys.executable, str(other)]).returncode == 0
 '''
 
 TOY_PYPROJECT = """\
@@ -148,11 +190,20 @@ EXPECTED = {
     ("cli.py", 5, "comparison", '__name__ != "__main__"'): "killed",  # only ever run as a script
     ("cli.py", 6, "number_increment", "4"): "killed",
     ("cli.py", 6, "number_zero", "0"): "killed",
+    # Only ever run from a copy in a temporary directory, yet the copy carries the mutant.
+    ("tool.py", 6, "comparison", '__name__ != "__main__"'): "killed",
+    ("tool.py", 7, "number_increment", "8"): "killed",
+    ("tool.py", 7, "number_zero", "0"): "killed",
     # Only test_b executes line 26, and it fails when run alone, so its failure says nothing.
     ("logic.py", 26, "delete_statement", "pass"): "unreliable_selection",
     ("logic.py", 26, "return_none", "return None"): "unreliable_selection",
     ("logic.py", 26, "number_increment", "3"): "unreliable_selection",
     ("logic.py", 26, "number_zero", "0"): "unreliable_selection",
+    # test_c_flaky fails under each mutant, and again when rerun without it, so no kill is trusted.
+    ("logic.py", 30, "delete_statement", "pass"): "unreliable",
+    ("logic.py", 30, "return_none", "return None"): "unreliable",
+    ("logic.py", 30, "number_increment", "4"): "unreliable",
+    ("logic.py", 30, "number_zero", "0"): "unreliable",
 }
 
 EXACT_ENTRY = {
@@ -162,13 +213,29 @@ EXACT_ENTRY = {
     "original": "n < 0",
     "mutant": "n <= 0",
     "reason": "At n == 0 both branches return 0.",
-    "reviewed_by": "toy-reviewer",
 }
 # Near misses: right mutant on the wrong line, and the right line with other mutated text.
 WRONG_TEXT = {**EXACT_ENTRY, "line": 6, "original": "age >= 18", "mutant": "age > 17", "reason": "near miss"}
 WRONG_LINE = {**EXACT_ENTRY, "line": 7, "original": "age >= 18", "mutant": "age > 18", "reason": "wrong line"}
 
-MIN_TIMEOUT = 2.0
+MIN_TIMEOUT = 5.0  # long enough for the unmutated recheck on a busy machine
+
+
+PERSON = ("Toy Reviewer", "reviewer@example.com")
+AGENT = ("boundroom-agent[bot]", "354874784+boundroom-agent[bot]@users.noreply.github.com")
+
+
+def commit_file(path: Path, document: dict, author: tuple[str, str]) -> None:
+    """Write ``document`` to ``path`` and commit it as ``author``, making the repository if needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not (path.parent / ".git").exists():
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=path.parent, check=True)
+    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    name, email = author
+    identity = {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email, "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email}
+    env = {**os.environ, **identity}
+    subprocess.run(["git", "add", path.name], cwd=path.parent, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", "update"], cwd=path.parent, check=True, env=env)
 
 
 def snapshot(root: Path) -> dict[str, bytes]:
@@ -272,11 +339,21 @@ class OperatorTests(unittest.TestCase):
             "x: Literal[1] = y": [],
             "x = f'{a < b}'": [],
             "log.append(a < b)": [(1, "comparison", "a < b", "a <= b")],  # a list called log isn't logging
-            "x = not not a": [(1, "remove_not", "not not a", "not a")],  # either `not` gives the same program
+            # Two nodes, two edits, though both give `x = not a`: duplicates are found by edit, not by program.
+            "x = not not a": [(1, "remove_not", "not not a", "not a"), (1, "remove_not", "not a", "a")],
         }
         for source, expected in table.items():
             with self.subTest(source=source):
                 self.assertEqual(sorted(expected), mutant_keys(source + "\n"))
+
+    def test_the_same_edit_from_two_operators_is_one_mutant(self) -> None:
+        from Tools.mutate.operators import dedupe
+
+        def mutant(operator: str, replacement: str) -> Mutant:
+            return Mutant(1, operator, "True", replacement, start=4, end=8, replacement=replacement, end_line=1, statement_line=1)
+
+        first, second, other = mutant("boolean_constant", "False"), mutant("number_zero", "False"), mutant("x", "None")
+        self.assertEqual([first, other], dedupe([first, second, other]))
 
     def test_code_that_runs_at_import_is_marked_so(self) -> None:
         source = "X = 1\n\n\nclass C:\n    Y = 2\n\n    def f(self, a=3):\n        return 4\n"
@@ -310,6 +387,7 @@ class ToyProjectTests(unittest.TestCase):
         (cls.root / "tests").mkdir(parents=True)
         (cls.root / "logic.py").write_text(TOY_LOGIC, encoding="utf-8")
         (cls.root / "cli.py").write_text(TOY_CLI, encoding="utf-8")
+        (cls.root / "tool.py").write_text(TOY_TOOL, encoding="utf-8")
         (cls.root / "tests" / "test_toy.py").write_text(TOY_TESTS, encoding="utf-8")
         (cls.root / "pyproject.toml").write_text(TOY_PYPROJECT, encoding="utf-8")
         cls.pids = base / "pids"
@@ -317,20 +395,24 @@ class ToyProjectTests(unittest.TestCase):
         cls.work = base / "work"
         cls.work.mkdir()
         cls.reports = base / "quality"
-        cls.allowlist = base / "allowlist.json"
-        cls.allowlist.write_text(json.dumps({"entries": [EXACT_ENTRY, WRONG_TEXT, WRONG_LINE]}), encoding="utf-8")
+        # The allowlist lives in a Git repository, added in a commit a person authored.
+        cls.allowlist = base / "review" / "allowlist.json"
+        commit_file(cls.allowlist, {"entries": [EXACT_ENTRY, WRONG_TEXT, WRONG_LINE]}, PERSON)
+        cls.flaky = base / "flaky-count"
         cls.baseline = base / "baseline.json"
         # logic.py scores 0.75 today, so a baseline of 0.8 is a drop; cli.py holds at 1.0.
         cls.baseline.write_text(json.dumps({"modules": {"logic.py": {"score": 0.8}, "cli.py": {"score": 1.0}}}), encoding="utf-8")
         cls.baseline_before = cls.baseline.read_bytes()
         cls.before = snapshot(cls.root)
         os.environ["TOY_PID_DIR"] = str(cls.pids)
+        os.environ["TOY_FLAKY_FILE"] = str(cls.flaky)
         try:
-            cls.result = run_harness(cls.root, *cls.options(), "--check-baseline", "--update-baseline", "logic.py,cli.py")
+            cls.result = run_harness(cls.root, *cls.options(), "--check-baseline", "--update-baseline", "logic.py,cli.py,tool.py")
         finally:
             del os.environ["TOY_PID_DIR"]
+            del os.environ["TOY_FLAKY_FILE"]
         cls.reports_by_module = {}
-        for module, name in (("logic.py", "logic"), ("cli.py", "cli")):
+        for module, name in (("logic.py", "logic"), ("cli.py", "cli"), ("tool.py", "tool")):
             path = cls.reports / f"mutation-report-{name}.json"
             if path.exists():
                 cls.reports_by_module[module] = json.loads(path.read_text(encoding="utf-8"))
@@ -362,7 +444,7 @@ class ToyProjectTests(unittest.TestCase):
 
     def statuses(self) -> dict[tuple[str, int, str, str], str]:
         found = {}
-        for module in ("logic.py", "cli.py"):
+        for module in ("logic.py", "cli.py", "tool.py"):
             for mutant in self.report(module)["mutants"]:
                 found[(module, mutant["line"], mutant["operator"], mutant["mutant"])] = mutant["status"]
         return found
@@ -379,6 +461,14 @@ class ToyProjectTests(unittest.TestCase):
                 (22, "delete_statement", "pass", "no_coverage"),
                 (22, "return_none", "return None", "no_coverage"),
                 (22, "remove_not", "flag", "no_coverage"),
+                (26, "delete_statement", "pass", "unreliable_selection"),
+                (26, "return_none", "return None", "unreliable_selection"),
+                (26, "number_increment", "3", "unreliable_selection"),
+                (26, "number_zero", "0", "unreliable_selection"),
+                (30, "delete_statement", "pass", "unreliable"),
+                (30, "return_none", "return None", "unreliable"),
+                (30, "number_increment", "4", "unreliable"),
+                (30, "number_zero", "0", "unreliable"),
             },
             survivors,
         )
@@ -407,11 +497,11 @@ class ToyProjectTests(unittest.TestCase):
 
     def test_the_score_is_killed_and_timeout_over_the_measured_mutants(self) -> None:
         summary = {key: self.report("logic.py")[key] for key in ("total", "killed", "timeout", "survived")}
-        keys = ("no_coverage", "allowlisted", "error", "unreliable_selection")
+        keys = ("no_coverage", "allowlisted", "error", "unreliable_selection", "unreliable")
         summary.update({key: self.report("logic.py")[key] for key in keys})
         self.assertEqual(
             {
-                "total": 25,
+                "total": 29,
                 "killed": 14,
                 "timeout": 1,
                 "survived": 2,
@@ -419,12 +509,18 @@ class ToyProjectTests(unittest.TestCase):
                 "allowlisted": 1,
                 "error": 0,
                 "unreliable_selection": 4,
+                "unreliable": 4,
             },
             summary,
         )
-        self.assertEqual(0.75, self.report("logic.py")["score"])  # (14 + 1) / (25 - 1 - 0 - 4)
+        # Unreliable mutants count against the score, so a flaky or order-dependent test lowers it.
+        self.assertEqual(0.5357, self.report("logic.py")["score"])  # (14 + 1) / (29 - 1 - 0)
         self.assertEqual(1.0, self.report("cli.py")["score"])
-        self.assertRegex(self.result.stdout, r"logic\.py\s+25\s+14\s+1\s+2\s+3\s+1\s+0\s+4\s+75\.0%")
+        self.assertRegex(self.result.stdout, r"logic\.py\s+29\s+14\s+1\s+2\s+3\s+1\s+0\s+4\s+4\s+53\.6%")
+
+    def test_a_kill_the_unmutated_tree_also_fails_is_not_trusted(self) -> None:
+        line_30 = {key[2]: status for key, status in self.statuses().items() if key[:2] == ("logic.py", 30)}
+        self.assertEqual({"unreliable"}, set(line_30.values()))
 
     def test_a_selection_that_fails_without_a_mutant_never_kills(self) -> None:
         line_26 = {key[2]: status for key, status in self.statuses().items() if key[:2] == ("logic.py", 26)}
@@ -446,6 +542,12 @@ class ToyProjectTests(unittest.TestCase):
             time.sleep(0.1)
         self.assertEqual([], [pid for pid in pids if alive(pid)])
 
+    def test_a_module_a_test_copies_and_runs_elsewhere_is_still_mapped(self) -> None:
+        tool = {key: status for key, status in self.statuses().items() if key[0] == "tool.py"}
+        self.assertEqual({key: status for key, status in EXPECTED.items() if key[0] == "tool.py"}, tool)
+        selected = {mutant["tests"] for mutant in self.report("tool.py")["mutants"]}
+        self.assertEqual({1}, selected)  # the copying test, and only it
+
     def test_a_script_its_test_runs_as_a_subprocess_is_still_mutated(self) -> None:
         cli = {key: status for key, status in self.statuses().items() if key[0] == "cli.py"}
         self.assertEqual({key: status for key, status in EXPECTED.items() if key[0] == "cli.py"}, cli)
@@ -457,7 +559,7 @@ class ToyProjectTests(unittest.TestCase):
 
     def test_check_baseline_exits_1_when_a_score_drops(self) -> None:
         self.assertEqual(1, self.result.returncode, self.result.stdout + self.result.stderr)
-        self.assertIn("logic.py: score 75.0% is below the baseline 80.0%", self.result.stdout)
+        self.assertIn("logic.py: score 53.6% is below the baseline 80.0%", self.result.stdout)
         self.assertNotIn("cli.py: score", self.result.stdout)
 
     def test_check_baseline_fails_a_module_with_a_baseline_that_could_not_be_scored(self) -> None:
@@ -471,7 +573,7 @@ class ToyProjectTests(unittest.TestCase):
     def test_check_baseline_passes_when_no_score_drops(self) -> None:
         held = run_harness(self.root, *self.options(), "--check-baseline", "cli.py")
         self.assertEqual(0, held.returncode, held.stdout + held.stderr)
-        self.assertRegex(held.stdout, r"cli\.py\s+3\s+3\s+0\s+0\s+0\s+0\s+0\s+0\s+100\.0%")
+        self.assertRegex(held.stdout, r"cli\.py\s+3\s+3\s+0\s+0\s+0\s+0\s+0\s+0\s+0\s+100\.0%")
 
     def test_an_update_that_fails_its_check_writes_no_baseline(self) -> None:
         # The main run passed --update-baseline with --check-baseline, and logic.py dropped.
@@ -491,20 +593,29 @@ class ToyProjectTests(unittest.TestCase):
 
 
 class OutcomeTests(unittest.TestCase):
-    def test_only_failed_tests_or_a_timeout_kill_a_mutant(self) -> None:
+    def test_a_failure_is_a_kill_only_when_the_unmutated_tree_passes(self) -> None:
         table = {
-            (0, False): "survived",
-            (1, False): "killed",  # tests failed
-            (2, False): "error",  # interrupted
-            (3, False): "error",  # internal error
-            (4, False): "error",  # usage error, such as a node id that no longer exists
-            (5, False): "error",  # no tests collected
-            (-9, False): "error",  # pytest itself died on a signal
-            (None, True): "timeout",
+            # (exit code, timed out, the same tests on the unmutated tree pass) -> status
+            (0, False, None): "survived",
+            (1, False, True): "killed",  # tests failed
+            (2, False, True): "killed",  # the mutant broke import or collection: the suite caught it
+            (3, False, True): "killed",
+            (4, False, True): "killed",
+            (5, False, True): "killed",
+            (-9, False, True): "killed",
+            (None, True, True): "timeout",
+            (1, False, False): "unreliable",  # the unmutated tree fails too: a flaky test, not a kill
+            (2, False, False): "unreliable",
+            (None, True, False): "unreliable",
         }
-        for (returncode, timed_out), expected in table.items():
-            with self.subTest(returncode=returncode, timed_out=timed_out):
-                self.assertEqual(expected, report.outcome_status(returncode, timed_out))
+        for (returncode, timed_out, unmutated), expected in table.items():
+            with self.subTest(returncode=returncode, timed_out=timed_out, unmutated=unmutated):
+                self.assertEqual(expected, report.outcome_status(returncode, timed_out, unmutated))
+
+    def test_only_a_mutant_that_does_not_compile_is_left_out_of_the_score(self) -> None:
+        counts = {"total": 10, "killed": 4, "timeout": 1, "survived": 1, "no_coverage": 1, "allowlisted": 1, "error": 1}
+        counts.update({"unreliable_selection": 1, "unreliable": 0})
+        self.assertEqual(0.625, report.score(counts))  # (4 + 1) / (10 - 1 allowlisted - 1 error)
 
 
 class BaselineUpdateTests(unittest.TestCase):
@@ -537,6 +648,85 @@ class BaselineUpdateTests(unittest.TestCase):
                 sys.stderr = stderr
         args = cli.parse_args(["--lower-baseline", "m.py", "--reason", "removed a flaky test", "m.py"])
         self.assertEqual({"m.py": "removed a flaky test"}, args.lower)
+
+
+class AllowlistAuthorshipTests(unittest.TestCase):
+    """An allowlist entry counts only when a person, not the agent, committed it."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name).resolve()
+        self.project = base / "project"
+        self.project.mkdir()
+        (self.project / "mod.py").write_text("X = 1\n", encoding="utf-8")
+        self.allowlist = base / "review" / "allowlist.json"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def refused(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        return run_harness(self.project, "--allowlist", str(self.allowlist), *extra, "mod.py", timeout=60)
+
+    def test_an_entry_the_agent_committed_is_refused(self) -> None:
+        commit_file(self.allowlist, {"entries": [EXACT_ENTRY]}, AGENT)
+        result = self.refused()
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertIn("added by boundroom-agent[bot]", result.stderr)
+        self.assertNotIn("coverage run", result.stderr)
+
+    def test_an_uncommitted_entry_is_refused(self) -> None:
+        commit_file(self.allowlist, {"entries": []}, PERSON)
+        self.allowlist.write_text(json.dumps({"entries": [EXACT_ENTRY]}), encoding="utf-8")
+        result = self.refused()
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertIn("not committed", result.stderr)
+
+    def test_an_allowlist_outside_git_with_entries_is_refused(self) -> None:
+        self.allowlist.parent.mkdir(parents=True)
+        self.allowlist.write_text(json.dumps({"entries": [EXACT_ENTRY]}), encoding="utf-8")
+        result = self.refused()
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertIn("isn't in a Git repository", result.stderr)
+
+    def test_a_free_text_reviewer_field_is_refused(self) -> None:
+        with self.assertRaises(report.AllowlistError):
+            report.validate_allowlist({"entries": [{**EXACT_ENTRY, "reviewed_by": "someone"}]})
+
+    def test_a_lowered_score_the_agent_committed_is_refused(self) -> None:
+        baseline = self.project.parent / "review" / "baseline.json"
+        lowered = {"module": "mod.py", "from": 0.9, "to": 0.5, "reason": "r", "commit": "c"}
+        commit_file(baseline, {"modules": {"mod.py": {"score": 0.5}}, "lowered": [lowered]}, AGENT)
+        result = run_harness(self.project, "--baseline", str(baseline), "--check-baseline", "mod.py", timeout=60)
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertIn("lowered by boundroom-agent[bot]", result.stderr)
+
+    def test_the_agent_is_recognised_under_any_of_its_names(self) -> None:
+        self.assertTrue(report.is_agent("boundroom-agent[bot]", "354874784+boundroom-agent[bot]@users.noreply.github.com"))
+        self.assertTrue(report.is_agent("repo-automation-agent[bot]", "x@example.com"))  # an earlier name
+        self.assertTrue(report.is_agent("Someone", "354874784+renamed@users.noreply.github.com"))  # the bot's user id
+        self.assertFalse(report.is_agent("Raell Dottin", "owner@example.com"))
+
+
+class RepositoryLayoutTests(unittest.TestCase):
+    def test_the_workflow_runs_only_when_a_person_starts_it(self) -> None:
+        # A schedule needs the owner's approval as its own recorded action (AGENTS.md).
+        workflow = (REPO_ROOT / ".github/workflows/mutation.yml").read_text(encoding="utf-8")
+        triggers = workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("workflow_dispatch:", triggers)
+        self.assertNotIn("schedule:", triggers)
+        self.assertNotIn("cron", triggers)
+
+    def test_only_the_baseline_and_the_allowlist_are_committed_under_quality(self) -> None:
+        tracked = subprocess.run(["git", "ls-files", "quality"], cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+        self.assertEqual(["quality/mutation-allowlist.json", "quality/mutation-baseline.json"], tracked.stdout.split())
+
+    def test_the_default_report_directory_is_ignored_and_ci_uploads_it(self) -> None:
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", f"{cli.DEFAULT_REPORT_DIR}/mutation-report-x.json"], cwd=REPO_ROOT, check=False
+        )
+        self.assertEqual(0, ignored.returncode)
+        workflow = (REPO_ROOT / ".github/workflows/mutation.yml").read_text(encoding="utf-8")
+        self.assertIn(f"path: {cli.DEFAULT_REPORT_DIR}/mutation-report-*.json", workflow)
 
 
 class ProvenanceTests(unittest.TestCase):
