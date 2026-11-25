@@ -56,6 +56,8 @@ class DemoRejectTests(unittest.TestCase):
         self.assertIn("decision           reject", text)
         self.assertIn("exit code          1", text)
         self.assertIn("Rejected as expected", text)
+        # The demo must not claim the supervisor compares the handoff's claims with the diff.
+        self.assertIn("doesn't compare files_touched", text)
 
     def test_command_exits_zero_and_cleans_up(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:

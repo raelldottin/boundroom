@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Watch the Boundroom supervisor reject a handoff that its git diff contradicts.
+"""Watch the Boundroom supervisor reject a handoff from the diff, not from what the handoff claims.
 
 The demo needs no agent and no API key. In a temporary git repository it queues one slice
 that may change one file under ``docs/workflows/``, then makes a scripted "agent" commit that
 changes three files, one of them ``README.md``. The handoff it writes claims the slice is done
-and that it touched one file. The supervisor's ``evaluate_handoff.py --dry-run`` compares that
-claim with the diff it computes itself, and rejects it.
+and that it touched one file. The supervisor's ``evaluate_handoff.py --dry-run`` computes the
+diff itself and rejects the slice, because the diff touches ``README.md``, outside the slice's
+``allowed_paths``.
+
+What it shows, precisely: the verdict comes from the diff. The supervisor doesn't compare the
+handoff's ``files_touched`` with the diff, so it would reject a handoff that listed all three
+files the same way, and it would not notice a handoff that understated a diff that stayed in
+scope and within the file budget.
 
 Run it from the repository root::
 
@@ -80,6 +86,10 @@ AGENT_FILES = {
 }
 
 CLAIMED_FILES = ["docs/workflows/guide.md"]
+
+
+# The supervisor finishes in about a second; this only stops a hang from hanging the test suite.
+SUPERVISOR_TIMEOUT_SECONDS = 120
 
 
 class DemoError(Exception):
@@ -198,7 +208,12 @@ def run_demo(workdir: Path, source_root: Path = SOURCE_ROOT) -> DemoResult:
         "--dry-run",
         "--no-telemetry",
     ]
-    completed = subprocess.run(command, cwd=repo, env=isolated_env(), capture_output=True, text=True)
+    try:
+        completed = subprocess.run(
+            command, cwd=repo, env=isolated_env(), capture_output=True, text=True, timeout=SUPERVISOR_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired:
+        raise DemoError(f"evaluate_handoff.py did not finish within {SUPERVISOR_TIMEOUT_SECONDS} seconds.") from None
     try:
         report = json.loads(completed.stdout)
     except ValueError:
@@ -230,7 +245,7 @@ def render(result: DemoResult) -> str:
         return f"  {label:<15}{left:<{left_width}}{right}".rstrip()
 
     lines = [
-        "Boundroom demo: does the handoff match the diff?",
+        "Boundroom demo: the supervisor judges the diff, not the handoff's claims",
         "",
         f"Slice {SLICE_ID}",
         f"  allowed_paths      {', '.join(SLICE['allowed_paths'])}",
@@ -256,6 +271,8 @@ def render(result: DemoResult) -> str:
     ]
     if rejected_as_expected(result):
         lines.append("Rejected as expected: the diff touches README.md, outside allowed_paths. --dry-run changed no queue.")
+        lines.append("The verdict comes from the diff alone: the supervisor doesn't compare files_touched with it, so it would")
+        lines.append("not notice an understated handoff whose diff stayed in scope and within the file budget.")
     else:
         lines.append("UNEXPECTED: the supervisor did not reject the handoff for README.md. Its report:")
         lines.append(json.dumps(report, indent=2))
@@ -275,13 +292,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = run_demo(workdir)
     except (DemoError, OSError) as error:
         print(f"demo failed: {error}", file=sys.stderr)
+        if args.keep:
+            print(f"Kept the partial temporary directory: {workdir}", file=sys.stderr)
         return 2
     finally:
-        if args.keep:
-            print(f"Kept the temporary repository: {workdir / 'repo'} (handoff: {workdir / 'handoff.json'})")
-        else:
+        if not args.keep:
             shutil.rmtree(workdir, ignore_errors=True)
     print(render(result))
+    if args.keep:
+        print(f"\nKept the temporary repository: {workdir / 'repo'} (handoff: {workdir / 'handoff.json'})")
     return 0 if rejected_as_expected(result) else 1
 
 
