@@ -151,6 +151,15 @@
       "component": "benchmark"
     },
     {
+      "source": "automation/tests/test_benchmark_trackr.py",
+      "destination": "automation/tests/test_benchmark_trackr.py",
+      "kind": "file",
+      "preserve_executable": false,
+      "delete_stale": false,
+      "template": false,
+      "component": "benchmark"
+    },
+    {
       "source": "automation/tests/fake_ps.py",
       "destination": "automation/tests/fake_ps.py",
       "kind": "file",
