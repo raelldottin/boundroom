@@ -39,8 +39,15 @@ run them as scripts: run as a script, `select.py` would shadow the standard libr
     settings (`dontAsk`) allow edits only inside the slice's `allowed_paths` and its handoff, so
     tool-level edits outside them are denied, not asked about. Each S session records those rules
     (`supervised.edit_rules`).
-- **Scopes** are written by blinded agents, by the owner's decision, from the linked issue or, where
-  none is linked, the pull request's title only. They are empty until the writers run.
+- **Scopes** were written by blinded agents, by the owner's decision, from the linked issue or, where
+  none is linked, the pull request's title only. Each writer also saw a file listing of
+  `src/semver/`, `tests/`, `changelog.d/` and `docs/usage/` at its own task's base.
+  - A first round was discarded unused. It had given every writer one listing, taken from #516's base,
+    which showed older tasks test files that their own fixes add.
+  - Each task's `scope_provenance` records this.
+  - Every task's `required_validations` is `git diff --check` and `.venv/bin/python -m pytest -q`.
+  - `tasks.v2.json` is `"status": "frozen"` with its `frozen_at` date. The pilot and the driver refuse
+    a real run unless the task set is frozen and every scope is filled in.
 - **The model is pinned:** both arms run with `--model claude-opus-5-5`. Each record keeps the model
   it was configured with and the model in the argv that actually ran (`observed_model`).
 
@@ -63,6 +70,23 @@ run them as scripts: run as a script, `select.py` would shadow the standard libr
 **A green base.** Before any model session, every required check runs at the setup commit, under
 `sandbox-exec`. If one fails, the session is recorded as `base_not_green`, no model starts, and it
 costs nothing. Selection applies the same check, so a task whose base is red is never selected.
+
+## The gates' false-positive baseline
+
+For each task, `solutions.v2.json` records whether the human solution fits its own scope
+(`false_positive_baseline`). `select.false_positive_baseline` computes this from the solution's files
+and the task's `allowed_paths` and `max_files_changed`, using the same check the oracle applies. The
+pilot's summary prints the result:
+
+**S gate would reject the human solution: 2/6.**
+- **#469** touches `docs/usage/increase-parts-of-a-version_prereleases.rst`, which is outside its
+  scope.
+- **#516** changes 7 files against a budget of 4. Three of them are outside its scope:
+  `.github/workflows/python-testing.yml`, `pyproject.toml` and `uv.lock`.
+- The other four fit.
+
+**The scopes were not adjusted after this was seen.** The baseline is part of the result: when a
+scope stops a correct change, that is a real cost of the method.
 
 ## The offline wheelhouse
 
@@ -173,15 +197,27 @@ profile (`sandbox.PROFILE`; the parameters are the session's own directories):
 
 ## Before a real run
 
-1. The blinded scope writers fill in each task's `task_statement`, `allowed_paths`,
-   `required_validations` and `max_files_changed`. Each records `by`, `when`, `inputs` (saying no
-   diff was seen) and `leakage_ignored` in `scope_provenance`. The pilot refuses to start without
-   them. Then rerun `select.py` so the green-base check uses the written `required_validations`.
+1. Done: the blinded scopes are written, and `select.py --recheck --freeze <date>` reran the sandboxed
+   oracle and green-base checks with each task's own `required_validations`. All six passed, and the
+   task set was frozen. `--recheck` writes only `solutions.v2.json`; it reads the scopes and doesn't
+   change them.
 2. The owner approves the frozen design and the spending.
 3. The dry run passes:
    `python -m automation.benchmark.trackr.pilot --dry-run --out <dir> --cache-dir <dir> --wheelhouse <dir>`.
 4. The pilot is started from a plain terminal, where both Claude Code's sandbox and `sandbox-exec`
-   can start.
+   can start, from a clean checkout of this branch:
+
+   ```sh
+   uv sync --frozen
+   uv run python -m automation.benchmark.trackr.wheelhouse build --dest ~/trackr-v2/wheelhouse
+   uv run python -m automation.benchmark.trackr.pilot --yes \
+     --out ~/trackr-v2/pilot-r1 --cache-dir ~/trackr-v2/cache --wheelhouse ~/trackr-v2/wheelhouse \
+     --budget-total 56.10 --cap-usd 4.50 --timeout 1800 --model claude-opus-5-5
+   ```
+
+   `wheelhouse build` reaches PyPI once and fails unless every wheel matches `wheelhouse.v2.json`.
+   The pilot refuses to start if the task set isn't frozen, if a scope is missing, if `--model` isn't
+   the frozen model, if `--out` isn't empty, or if `claude --help` lacks a flag the arms use.
 
 ## Known limits
 

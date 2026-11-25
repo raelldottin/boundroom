@@ -426,7 +426,7 @@ def write_json(path: Path, data: Any) -> None:
 
 # The scope's provenance, as the blinded scope writers record it. ``owner_decision`` is optional.
 SCOPE_PROVENANCE_FIELDS = ("by", "when", "inputs", "leakage_ignored")
-SCOPE_PROVENANCE_OPTIONAL = ("owner_decision",)
+SCOPE_PROVENANCE_OPTIONAL = ("owner_decision", "rerun")
 
 
 def scope_errors(task: Mapping[str, Any]) -> list[str]:

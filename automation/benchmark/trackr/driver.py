@@ -240,7 +240,7 @@ def slice_record(task: Mapping[str, Any]) -> dict[str, Any]:
     """The one queued slice, from the task's scope fields only."""
     statement = str(task["task_statement"]).strip()
     title = next((line.strip() for line in statement.splitlines() if line.strip()), statement)[:120]
-    return {
+    record: dict[str, Any] = {
         "slice_id": SLICE_ID,
         "title": title,
         "status": "queued",
@@ -252,6 +252,10 @@ def slice_record(task: Mapping[str, Any]) -> dict[str, Any]:
         "max_files_changed": int(task["max_files_changed"]),
         "notes": statement,
     }
+    # The scope writer's proof level, which S's supervisor checks the handoff against.
+    if task.get("required_proof_level"):
+        record["required_proof_level"] = task["required_proof_level"]
+    return record
 
 
 def queue_data(task: Mapping[str, Any], timeout_seconds: int) -> dict[str, Any]:
@@ -998,6 +1002,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if data.get("status") == "void" and not args.fake:
         print(
             f"stop: this task set is void ({data.get('void_reason', 'no reason recorded')}); only a dry run may use it.",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.fake and data.get("status") != "frozen":
+        print(
+            f"stop: the task set's status is {data.get('status')!r}, not 'frozen'; a real session needs a frozen task set.",
             file=sys.stderr,
         )
         return 2

@@ -836,6 +836,40 @@ class ScopeAndCliTests(TrackRTestCase):
             self.assertEqual(driver.main(argv), 2)
         prepare.assert_not_called()
 
+    def test_a_real_run_refuses_a_task_set_that_is_not_frozen(self) -> None:
+        tasks_file = self.tmp / "draft.json"
+        write_json(tasks_file, {"status": "frozen design, awaiting blinded scopes", "tasks": [make_task(self.base)]})
+        common = ["--tasks", str(tasks_file), "--cache-dir", str(self.tmp / "c"), "--wheelhouse", str(self.tmp / "w")]
+        with unittest.mock.patch.object(pilot, "prepare") as prepare:
+            self.assertEqual(pilot.main([*common, "--out", str(self.tmp / "o"), "--yes"]), 2)
+        prepare.assert_not_called()
+
+    def test_a_run_refuses_a_model_other_than_the_frozen_task_sets(self) -> None:
+        tasks_file = self.tmp / "frozen.json"
+        write_json(tasks_file, {"status": "frozen", "model": MODEL, "tasks": [make_task(self.base)]})
+        common = ["--tasks", str(tasks_file), "--cache-dir", str(self.tmp / "c"), "--wheelhouse", str(self.tmp / "w")]
+        with unittest.mock.patch.object(pilot, "prepare") as prepare:
+            self.assertEqual(pilot.main([*common, "--out", str(self.tmp / "o"), "--yes", "--model", "another-model"]), 2)
+        prepare.assert_not_called()
+
+    def test_the_false_positive_baseline_and_its_summary_line(self) -> None:
+        tight = make_task(self.base, allowed_paths=["src/pkg/calc.py"], max_files_changed=2)
+        fits = make_task(self.base, number=2, id="pr2")
+        solutions = {"pr1": make_solution(self.base, self.head), "pr2": make_solution(self.base, self.head, number=2)}
+        baseline = pilot.human_baseline([tight, fits], solutions)
+        self.assertEqual(baseline[0]["out_of_scope_paths"], ["tests/cases.py", "tests/test_calc.py"])
+        self.assertEqual((baseline[0]["within_budget"], baseline[0]["s_gate_would_reject"]), (False, True))
+        self.assertFalse(baseline[1]["s_gate_would_reject"])
+        self.assertEqual(pilot.baseline_line(baseline), "S gate would reject the human solution: 1/2 (pr1)")
+        self.assertIn(pilot.baseline_line(baseline), pilot.summary_table({"U+": {}, "S": {}}, baseline))
+
+    def test_the_scope_writers_proof_level_reaches_s_queue_and_a_rerun_note_is_allowed(self) -> None:
+        task = make_task(self.base, required_proof_level="domain-tested")
+        task["scope_provenance"] = {**BLIND_PROVENANCE, "rerun": "a first round was discarded"}
+        self.assertEqual(scope_errors(task), [])
+        self.assertEqual(driver.slice_record(task)["required_proof_level"], "domain-tested")
+        self.assertNotIn("required_proof_level", driver.slice_record(make_task(self.base)))
+
     def test_a_real_run_refuses_a_void_task_set(self) -> None:
         tasks_file = self.tmp / "void.json"
         write_json(tasks_file, {"status": "void", "void_reason": "floor effect", "tasks": []})
@@ -866,14 +900,19 @@ class FrozenRecordsTests(unittest.TestCase):
         text = json.dumps(tasks)
         for solution in solutions["solutions"]:
             self.assertNotIn(solution["head_sha"], text)
-            for path in solution["hidden_tests"]:
-                self.assertNotIn(path, json.dumps(tasks["tasks"]))
             self.assertTrue(solution["oracle"]["base"]["contained"] and solution["oracle"]["head"]["contained"])
             self.assertTrue(all(solution["checks"].values()))
+            self.assertIn("s_gate_would_reject", solution["false_positive_baseline"])
+            self.assertEqual(solution["green_base"]["validations_from"], "the task's blinded scope")
         self.assertEqual(tasks["model"], MODEL)
+        self.assertEqual(tasks["status"], "frozen")
+        self.assertTrue(tasks["frozen_at"])
         for task in tasks["tasks"]:
-            self.assertNotIn("human_solution", task)
-            self.assertEqual(sorted(task["scope_provenance"]), sorted(SCOPE_PROVENANCE_FIELDS))
+            for leak in ("human_solution", "numstat", "head_sha", "hidden_tests", "false_positive_baseline"):
+                self.assertNotIn(leak, task)
+            self.assertEqual(scope_errors(task), [], task["id"])
+        rejected = [s["id"] for s in solutions["solutions"] if s["false_positive_baseline"]["s_gate_would_reject"]]
+        self.assertEqual(rejected, ["pr469", "pr516"])
 
 
 if __name__ == "__main__":

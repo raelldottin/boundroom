@@ -60,7 +60,7 @@ from .driver import (
     run_session,
     write_fake_claude,
 )
-from .oracle import evaluate, scope_and_budget
+from .oracle import evaluate
 
 DEFAULT_BUDGET_TOTAL = 60.0
 # Only Claude Code's own settings directory is left out of the reviewer's diff. The supervisor's queue
@@ -225,18 +225,27 @@ def arm_summary(results: Sequence[Mapping[str, Any]], arm: str) -> dict[str, Any
 
 
 def human_baseline(tasks: Sequence[Mapping[str, Any]], solutions: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Which human solutions break their own task's scope or diff budget: the gates' false-positive baseline."""
+    """Which human solutions break their own task's scope or file budget: the S gate's false-positive baseline.
+
+    Computed by select.false_positive_baseline from each solution's files and its task's scope.
+    """
+    from .select import false_positive_baseline
+
     rows = []
     for task in tasks:
         if scope_errors(task):
             rows.append({"task": task_id(task), "status": "scope not filled in"})
             continue
-        human = solutions[task_id(task)]["human_solution"]
-        verdict = scope_and_budget(task, human["numstat"], human.get("harness_files", []))
-        rows.append(
-            {"task": task_id(task), **{key: verdict[key] for key in ("files_changed", "out_of_scope_paths", "within_budget")}}
-        )
+        rows.append({"task": task_id(task), **false_positive_baseline(task, solutions[task_id(task)])})
     return rows
+
+
+def baseline_line(baseline: Sequence[Mapping[str, Any]]) -> str:
+    scored = [row for row in baseline if "s_gate_would_reject" in row]
+    rejected = [row["task"] for row in scored if row["s_gate_would_reject"]]
+    return f"S gate would reject the human solution: {len(rejected)}/{len(scored)}" + (
+        f" ({', '.join(rejected)})" if rejected else ""
+    )
 
 
 def stop_conditions(
@@ -295,7 +304,7 @@ def stop_conditions(
     return conditions
 
 
-def summary_table(summaries: Mapping[str, Mapping[str, Any]]) -> str:
+def summary_table(summaries: Mapping[str, Mapping[str, Any]], baseline: Sequence[Mapping[str, Any]] = ()) -> str:
     rows = [
         ("sessions", "sessions"),
         ("base not green (no session)", "base_not_green"),
@@ -329,6 +338,8 @@ def summary_table(summaries: Mapping[str, Mapping[str, Any]]) -> str:
     lines.append(f"| S gates (from the reason's wording) | | {_cell(s.get('gates'))} |")
     lines.append(f"| S runner's handoff rule | | {_cell(s.get('handoff_rules'))} |")
     lines.append(f"| S cap run_next asked for (replaced by the driver's) | | {_cell(s.get('supervisor_budget_args'))} |")
+    if baseline:
+        lines += ["", baseline_line(baseline)]
     return "\n".join(lines) + "\n"
 
 
@@ -434,7 +445,7 @@ def run_pilot(
                 "stop_conditions": stop_conditions(solutions, tasks, summaries, out_dir),
             }
             write_json(out_dir / "summary.json", summary)
-            (out_dir / "summary.md").write_text(summary_table(summaries), encoding="utf-8")
+            (out_dir / "summary.md").write_text(summary_table(summaries, summary["human_solution_baseline"]), encoding="utf-8")
     if interrupted is not None:
         raise interrupted
     return summary
@@ -522,6 +533,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cap-usd", type=float, default=DEFAULT_CAP_USD)
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--claude-bin", default="claude")
+    parser.add_argument("--model", default=MODEL, help="The model both arms run; must be the frozen task set's.")
     parser.add_argument("--keep-clones", action="store_true")
     parser.add_argument("--no-isolate-user-config", action="store_true", help="Let both arms load user settings and MCP servers.")
     return parser
@@ -540,6 +552,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"stop: this task set is void ({data.get('void_reason', 'no reason recorded')}); only a dry run may use it.",
             file=sys.stderr,
         )
+        return 2
+    if not args.dry_run and data.get("status") != "frozen":
+        print(
+            f"stop: the task set's status is {data.get('status')!r}, not 'frozen'; a real run needs a frozen task set.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.model != data.get("model", MODEL):
+        print(f"stop: --model {args.model} is not the frozen task set's model, {data.get('model')}.", file=sys.stderr)
         return 2
     tasks = data["tasks"]
     solutions = {f"pr{item['number']}": item for item in read_json(args.solutions)["solutions"]}
@@ -567,6 +588,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cap_usd=args.cap_usd,
         timeout_seconds=args.timeout,
         claude_bin=claude_bin,
+        model=args.model,
         work_dir=work,
         isolate_user_config=not args.no_isolate_user_config,
     )
@@ -577,7 +599,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "mode": f"dry run, fake {args.fake}" if args.dry_run else "real",
             "claude_bin": claude_bin,
             "claude_code_version": claude_version(subprocess_runner, claude_bin, env, out_dir),
-            "model": MODEL,
+            "model": config.model,
             "cap_usd": config.cap_usd,
             "timeout_seconds": config.timeout_seconds,
             "budget_total_usd": args.budget_total,

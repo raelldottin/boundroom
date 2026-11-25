@@ -129,14 +129,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     built = sub.add_parser("build", help="Download the pins (needs the network) and freeze them in wheelhouse.v2.json.")
     built.add_argument("--dest", type=Path, required=True)
+    built.add_argument("--update-lock", action="store_true", help="Rewrite wheelhouse.v2.json from what was downloaded.")
     checked = sub.add_parser("verify", help="Check a wheelhouse against wheelhouse.v2.json.")
     checked.add_argument("--wheelhouse", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "build":
         lock = build(args.dest.resolve())
-        write_json(LOCK_FILE, lock)
-        print(json.dumps(lock, indent=2))
-        return 0
+        if args.update_lock or not LOCK_FILE.exists():
+            write_json(LOCK_FILE, lock)
+            print(json.dumps(lock, indent=2))
+            return 0
+        # Without --update-lock the frozen lock decides: the downloaded wheels must match it exactly.
+        problems = verify(args.dest.resolve())
+        print("\n".join(problems) or "wheelhouse matches wheelhouse.v2.json")
+        return 1 if problems else 0
     problems = verify(args.wheelhouse.resolve())
     print("\n".join(problems) or "wheelhouse matches wheelhouse.v2.json")
     return 1 if problems else 0

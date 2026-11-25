@@ -63,6 +63,8 @@ from .common import (
     isolated_environment,
     name_status,
     numstat,
+    read_json,
+    scope_errors,
     subprocess_runner,
     tail,
     write_json,
@@ -389,6 +391,92 @@ def select_tasks(
     return tasks, solutions, audit
 
 
+def false_positive_baseline(task: Mapping[str, Any], solution: Mapping[str, Any]) -> dict[str, Any]:
+    """Whether the human solution fits its own task's scope: the S gate's false-positive baseline.
+
+    The same scope and file-budget check the oracle applies, on the human solution's files. A human
+    solution outside its scope is one the supervisor's scope or budget gate would stop.
+    """
+    from .oracle import scope_and_budget
+
+    verdict = scope_and_budget(task, solution["human_solution"]["numstat"])
+    return {
+        "files_changed": verdict["files_changed"],
+        "max_files_changed": verdict["max_files_changed"],
+        "out_of_scope_paths": verdict["out_of_scope_paths"],
+        "within_budget": verdict["within_budget"],
+        "s_gate_would_reject": not (verdict["in_scope"] and verdict["within_budget"]),
+    }
+
+
+def recheck(
+    tasks: Sequence[Mapping[str, Any]],
+    solutions: Sequence[dict[str, Any]],
+    mirror: Path,
+    stage: SyncStage,
+    environment: Environment,
+    supervisor_python: Path,
+    *,
+    runner: CommandRunner = subprocess_runner,
+    environ: Mapping[str, str] = os.environ,
+    work_dir: Optional[Path] = None,
+    progress: Any = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Rerun the sandboxed oracle and green-base checks with each task's own scope, scopes untouched.
+
+    Returns the updated solutions and the tasks that no longer qualify. The task file is only read.
+    """
+    by_id = {str(solution["id"]): solution for solution in solutions}
+    failures: list[str] = []
+    updated: list[dict[str, Any]] = []
+    for task in tasks:
+        errors = scope_errors(task)
+        if errors:
+            raise TrackRError(f"{task['id']} has no complete scope: " + "; ".join(errors))
+        solution = dict(by_id[str(task["id"])])
+        if progress:
+            progress(f"sandboxed oracle and green-base recheck for {task['id']}")
+        oracle = oracle_check(
+            mirror, solution, stage, environment, supervisor_python, runner=runner, environ=environ, work_dir=work_dir
+        )
+        green = green_base_check(
+            mirror,
+            str(task["base_sha"]),
+            list(task["required_validations"]),
+            stage,
+            environment,
+            supervisor_python,
+            runner=runner,
+            environ=environ,
+            work_dir=work_dir,
+        )
+        green["validations_from"] = "the task's blinded scope"
+        solution["oracle"] = {"base": oracle["base"], "head": oracle["head"]}
+        solution["green_base"] = green
+        solution["checks"] = {
+            **{key: value for key, value in solution["checks"].items() if not key.startswith(("oracle_", "green_base"))},
+            "oracle_fails_at_base": oracle["fails_at_base"],
+            "oracle_passes_at_head": oracle["passes_at_head"],
+            "green_base": green["green"],
+        }
+        solution["false_positive_baseline"] = false_positive_baseline(task, solution)
+        if not (oracle["fails_at_base"] and oracle["passes_at_head"] and green["green"]):
+            failures.append(str(task["id"]))
+        updated.append(solution)
+    return updated, failures
+
+
+def freeze(tasks_file: Path, when: str) -> None:
+    """Mark the task file frozen, changing only its top-level status; refuses while a scope is missing."""
+    data = read_json(tasks_file)
+    missing = {str(task["id"]): scope_errors(task) for task in data["tasks"] if scope_errors(task)}
+    if missing:
+        raise TrackRError(f"refusing to freeze with scopes missing: {missing}")
+    data["status"] = "frozen"
+    data["frozen_at"] = when
+    write_json(tasks_file, data)
+
+
 def public_audit(audit: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """The audit a scope writer may read: which candidates were kept or rejected, and why, nothing more."""
     return [{key: entry[key] for key in ("number", "decision", "reasons") if key in entry} for entry in audit]
@@ -424,12 +512,45 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--pull-requests", type=Path, help="Saved `gh pr view` JSON files' directory, instead of calling gh.")
     parser.add_argument("--tasks-out", type=Path, default=TASKS_FILE)
     parser.add_argument("--solutions-out", type=Path, default=SOLUTIONS_FILE)
+    parser.add_argument(
+        "--recheck",
+        action="store_true",
+        help="Rerun the sandboxed oracle and green-base checks with each task's own scope; write only solutions.v2.json.",
+    )
+    parser.add_argument(
+        "--freeze", metavar="DATE", help="With --recheck: mark tasks.v2.json frozen on DATE if every task passes."
+    )
     args = parser.parse_args(argv)
     if not sandbox.available():
         print("stop: sandbox-exec is not available, and the checks refuse to run uncontained.", file=sys.stderr)
         return 2
     work = args.work_dir.resolve()
     prepared = prepare(args.cache_dir, work, args.wheelhouse, subprocess_runner, os.environ)
+    if args.recheck:
+        tasks_data, solutions_data = read_json(args.tasks_out), read_json(args.solutions_out)
+        updated, failures = recheck(
+            tasks_data["tasks"],
+            solutions_data["solutions"],
+            prepared.target_mirror,
+            prepared.sync,
+            prepared.environment,
+            prepared.supervisor_python,
+            work_dir=work,
+            progress=lambda message: print(message, file=sys.stderr),
+        )
+        solutions_data["solutions"] = updated
+        solutions_data["rechecked_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        solutions_data["rechecked_with"] = {"sync": prepared.sync.record(), "validations": "each task's own required_validations"}
+        write_json(args.solutions_out, solutions_data)
+        rejected = [s["id"] for s in updated if s["false_positive_baseline"]["s_gate_would_reject"]]
+        print(f"recheck: {len(updated) - len(failures)} of {len(updated)} pass; failing: {failures or 'none'}")
+        print(f"S gate would reject the human solution: {len(rejected)}/{len(updated)} ({', '.join(rejected) or 'none'})")
+        if failures:
+            return 1
+        if args.freeze:
+            freeze(args.tasks_out, args.freeze)
+            print(f"froze {args.tasks_out} on {args.freeze}")
+        return 0
     if args.pull_requests:
         pull_requests = [json.loads((args.pull_requests / f"pr{number}.json").read_text()) for number in OWNER_CANDIDATES]
         for pr in pull_requests:
