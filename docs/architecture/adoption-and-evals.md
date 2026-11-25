@@ -1,6 +1,6 @@
 # SPEC-013 (proposed): Adoption and evals
 
-Status: **proposed.** Nothing in this document is implemented. Every claim about current behavior cites the code at `219cbc0`, the head of #294 when this was written (v0.5.3 plus that pull request's benchmark changes) (`file:line`). Hermes Kanban, Hindsight, the Swarm Wiki and supervisor-controlled delegation are target architecture ([SPEC-001](control-plane.md)), not shipped. This spec does not depend on any of them.
+Status: **proposed.** Nothing in this document is implemented. Every claim about current behavior cites the code at `219cbc0`, the head of #294 when this was written (v0.5.3 plus that pull request's benchmark changes) (`file:line`). Hermes Kanban, Hindsight, the Swarm Wiki and supervisor-controlled delegation are target architecture ([SPEC-001](control-plane.md)), not shipped. This spec does not depend on any of them. Line citations are to the code at the time of writing and will be updated to the merge commits when #294 merges.
 
 Related: [SPEC-012, effectiveness proof](effectiveness-proof.md) is the experiment these features make measurable.
 
@@ -19,8 +19,8 @@ Boundroom can't yet show that bounded slices do better than unbounded agent runs
 | --- | --- | --- | --- | --- |
 | 1 | §1 Record the path (transcript link and OTLP to any backend) | S | High: every stopped slice becomes inspectable, and Braintrust-style backends receive it through the OTLP export that already exists | Mostly SPEC-006 delivery work (accepted). The supervisor edits are small and additive. A hosted destination needs an owner decision. |
 | 2 | §2 Handoff history as an eval dataset | M | High: regression evals for stop rules, plus the metrics behind the headline chart | Lives in `automation/benchmark/` under the benchmark exemption. One additive supervisor field (`stop_code`) needs reviewer sign-off as a bounded change. |
-| 3 | §3 CI canary against a real runner | M (code), high approval cost | High credibility: turns "supervised" from a single-machine claim into something CI repeats | Lines up with P0, which is an "adapter/inventory/canary acceptance gate" (`AGENTS.md`). Spending and secrets need a person's approval. |
-| 4 | §4 Structured reviewer verdict and optional LLM judge | M | Medium-high: makes "what risk remains" measurable over time | The verdict schema is a small supervisor addition. The judge reuses benchmark code and is spending. |
+| 3 | §3 Supervisor canary: scripted stops in CI, a real runner on the owner's machine | M | High credibility: every stop is checked end to end on every pull request, and the Claude Code canary becomes repeatable | Not P0's canary (P0.4 and P0.5 canary the Kanban-composed supervisor). The scripted part is test coverage. The real-runner part runs on the owner's machine under AGENTS.md. A CI version needs an owner decision to amend AGENTS.md. |
+| 4 | §4 Structured reviewer verdict and optional LLM judge | M | Medium-high: makes "what risk remains" measurable over time | A person's verdict is a GitHub review, checked read-only. The block schema and the read-only flag are a small supervisor addition. The judge reuses benchmark code, is spending, and never counts as a review. |
 | 5 | §5 `boundroom init` | L | Highest adoption value, but the largest surface | Supervisor feature expansion (roadmap P1, "consumer adoption"). It waits behind P0 unless the owner reorders. |
 
 ## Cross-cutting prerequisite: a machine-readable stop code
@@ -159,51 +159,80 @@ The `rules` and `prompt` modes are offline tooling for harness effectiveness. Pu
 
 ---
 
-## 3. CI canary against a real runner (rank 3)
+## 3. Supervisor canary: scripted stops in CI, a real runner on the owner's machine (rank 3)
 
 ### What ships today
 
 - **A real runner already runs in CI, but only as the benchmark.** `effectiveness-benchmark.yml` is `workflow_dispatch` only (`.github/workflows/effectiveness-benchmark.yml:24-25`), runs Hermes against NVIDIA with `NVIDIA_API_KEY` (`:93-108`), and has `permissions: contents: read` (`:77-78`). It runs benchmark lanes, not `run_next` on a queue. That is why the support matrix still says Hermes is "fakes only" for the supervisor path (`README.md:164`).
 - **The Claude runner has a budget cap.** `--max-budget-usd`, default 5, is passed when a profile is chosen (`run_agent.sh:290-302`; `runner_profile.py:35`).
+- **The `bounded` and `edits` profiles keep a compliant agent in scope.** They give Claude Code a per-slice allow list of the slice's `allowed_paths`, its validations and a few `git` commands, and deny the supervisor-owned paths, `.git`, `.claude`, `~/.ssh`, `~/.aws`, `~/.config` and the web tools (`runner_profile.py:320-341`; modes at `:34`). An edit outside `allowed_paths` is refused before it reaches the disk.
+- **A judged stop exits 0.** `run_next.py` records `stop_failed`, `stop_blocked` or `stop_for_review` in the decision report and the queue, then exits 0 (`docs/reference/exit-codes.md:9`; `run_next.py:582`). A failure report, such as a missing handoff, exits 2 and marks the slice `failed` (`run_next.py:404-415`).
+- **The gate tests call `evaluate_completion` directly** (`automation/tests/test_harness.py:1419`, `:1441`). No test runs `run_next.py` end to end against a freshly synced consumer and checks every stop.
 - **The RA-BD-004 Claude Code canary is done (2026-11-10); the Codex canary is deferred** (`docs/product-roadmap.md:172-173`).
 
-### Scope
+### Why the stop cases use a script, not a model
 
-New workflow `.github/workflows/runner-canary.yml`:
+An earlier draft asked a real agent for a file outside `allowed_paths` and expected `scope_violation`. That asserts the misbehaviour the supervisor exists to prevent. Under `bounded` the edit is refused, so a compliant agent never produces a violation, and the canary would fail when the agent behaves well. A model's exact stop code also isn't repeatable from run to run. So the canary has two parts: a scripted runner exercises every stop, and a real runner covers only a slice that should succeed.
 
-- **Trigger:** `workflow_dispatch` only. No `push`, `pull_request` or `schedule`, matching the benchmark's reasoning (`effectiveness-benchmark.yml:13-22`).
-- **Inputs:** `runner` (`claude|codex|hermes`), `ref`, `budget_usd` (default 1, maximum 5).
-- **Job:**
-  1. Build a throwaway consumer in `$RUNNER_TEMP` from this checkout with `Tools/boundroom-sync.sh --sync --target`, following the smoke steps already tested (`docs/workflows/boundroom.md:403-450`).
-  2. Write a fixture queue of three slices: a **positive** slice (a one-file doc edit, `git diff --check` replayed), a **scope negative** whose notes ask for a file outside `allowed_paths`, and a **budget negative** with `max_files_changed: 1` and a two-file task.
-  3. Run `run_next.py --single-slice --report-file "$RUNNER_TEMP/report.jsonl"` once per slice.
-  4. Assert the stop codes: the positive slice gets `continue` or `review_required`, the negatives get `scope_violation` and `diff_budget_exceeded`, and the throwaway repository's scope check holds.
-  5. Upload the reports, the handoffs and (after §1) the session records as an artifact.
-- **Telemetry:** file mode only (`BOUNDROOM_TELEMETRY=file`). No hosted destination without a separate owner decision.
+### Part A: scripted runner, in CI on every pull request
 
-**Needs from a person**, each a separate recorded approval under AGENTS.md:
+- **The runner is a fixed script.** `automation/tests/fixtures/scripted_runner.py` stands in for the agent. `run_next.py` starts it through `--agent-cmd`, with the placeholders the example template uses (`{repo_root}`, `{handoff_file}`, `{slice_id}`; `automation/examples/example-slices.json:6`). It reads the slice id and makes exactly the commits and the handoff that case calls for. It uses no model, no network, no secret and no money.
+- **Setup.** Each test builds a throwaway consumer in a temporary directory from this checkout with `Tools/boundroom-sync.sh --sync --target`, following the smoke steps already tested (`docs/workflows/boundroom.md:403-450`), and writes a fixture queue. It points `XDG_STATE_HOME` at a temporary directory, so the per-user run lock (`runner_profile.py:425-439`) can't collide with a real run.
+- **Cases.** Each is one `run_next.py --single-slice --report-file <tmp>/report.jsonl`. The supervisor checks validation, then scope, then the diff budget, then proof (`policy.py:985`, `:1002`, `:1019`, `:1038`), so each case passes every gate before the one it targets.
 
-1. **Secrets** in a GitHub Environment `runner-canary` with required reviewers. This is the first use of a protected environment for spending; `publish-docs.yml:59` uses one for Pages. Possible secrets are `ANTHROPIC_API_KEY` (or an approved Claude Code credential), `OPENAI_API_KEY` for Codex, or the existing `NVIDIA_API_KEY` for Hermes. The agent never reads or handles them.
-2. **Budget:** a per-run cap, enforced by `--max-budget-usd` for Claude. Codex and Hermes have no equivalent cap in `run_agent.sh` today. Hermes has only `BOUNDROOM_HERMES_MAX_TURNS`, on stream-json (`run_agent.sh:376-395`). For those runners the job `timeout-minutes` is the cap. Expected cost per run is under the cap; each run is spending.
-3. **Merging the workflow PR** (code-owner approval, under the `main` ruleset).
-4. **Each dispatch** is a run started by a person. The agent may prepare it but not start it.
+  | Case | What the script does | Decision | `stop_code` | Queue status | Exit |
+  | --- | --- | --- | --- | --- | --- |
+  | positive | Edits one allowed file, commits it, writes a valid `done` handoff | `continue` or `stop_for_review`, fixed by the fixture's policy and pinned by the test | the matching `next_slice_eligibility` code | `done` | 0 |
+  | scope | Commits one allowed file and one file outside `allowed_paths`, reports `done` | `stop_failed` | `scope_violation` | `failed` | 0 |
+  | budget | Commits two allowed files under `max_files_changed: 1`, reports `done` | `stop_failed` | `diff_budget_exceeded` | `failed` | 0 |
+  | proof | Commits in scope and reports `done`, without the slice's `manual_proof` entry or `required_proof_level` | `stop_failed` | `proof_missing` | `failed` | 0 |
+  | no handoff | Commits in scope and exits 0 without writing a handoff | failure report | `handoff_missing` | `failed` | 2 |
+
+- **What the tests assert are supervisor invariants:** the decision, the stop code, the slice's status in `slices.json` after the run, the exit code, and the report's structured fields (`files_touched_outside_scope`, `changed_file_count`, `missing_manual_proofs`, `missing_proof_level`). They never read the prose `reason` (`compatibility.md:31`). Until the `stop_code` prerequisite lands, the tests assert the other four, and that prerequisite's pull request adds the code to them.
+- **Where it runs.** `automation/tests/test_supervisor_canary.py`, an ordinary test module, so the required test checks run it on every pull request. That adds no workflow, no required check and no ruleset change.
+
+### Part B: a real runner on the positive slice, on the owner's machine
+
+- **Runner: Claude Code only.** AGENTS.md allows canaries in disposable environments "on the owner's machine only with Claude Code", and Claude Code is the only approved tool on that machine. The Codex canary stays deferred (`docs/product-roadmap.md:173`).
+- **An owner-run command.** `Tools/runner_canary.sh --out <directory outside the repository>`. The owner runs it, or asks Claude Code on the same machine to run it, which AGENTS.md allows for a canary in a disposable environment. It builds a throwaway consumer as Part A does, with no remote, queues one tiny in-scope slice (append a line to one Markdown file, with `git diff --check` as the required validation), and runs `run_next.py --single-slice --runner-profile bounded` with the real `run_agent.sh`. It keeps the profile's default cap. A different cap is a budget change and needs a person's approval. Each run is a Claude Code session on the owner's account.
+- **What it checks.** These hold whatever the model writes. It never compares the model's output with an expected text:
+  1. the run produced exactly one decision report or failure report, and the report parses;
+  2. the decision is one of the documented values (`docs/reference/exit-codes.md`), and the slice's queue status matches it;
+  3. if a handoff exists, it validates against `handoff.schema.json`;
+  4. nothing is out of scope. The script computes this itself in the throwaway repository, from `git diff --name-only base_sha..head_sha` and `git status --porcelain`, and every path must be in `allowed_paths` or be the handoff, unless the decision is `stop_failed` and the report lists that path;
+  5. the cap held. The supervisor passed `BOUNDROOM_CLAUDE_RUNNER_BUDGET_USD` to the runner, and once §1's transcript exists, the session's reported cost is at or under it.
+- **Result.** `pass` when 1-5 hold and the decision is `continue` or `stop_for_review`. `runner_incomplete` when 1-5 hold but the model stopped, failed, timed out or wrote no handoff. That is a model outcome, recorded but not a supervisor failure. `invariant_broken` when any of 1-5 fails, which is a supervisor bug and gets an issue.
+- **Recorded output.** `<out>/canary-record.json` holds the date, the Boundroom commit, `claude --version`, the profile, the cap, the decision, the stop code, the result, the actor (the owner, or `claude-code (for raelldottin)` when Claude Code ran it), and the sha256 of the report and the handoff. It holds no transcript, prompt or source text. After a `pass`, a pull request a person approves changes the README support row to "canaried on the owner's machine on <date>, <version>".
+
+### Not proposed: a real runner in CI
+
+A GitHub-hosted runner with an API key is not "the owner's machine with Claude Code", so a real-runner job in CI is outside what AGENTS.md allows today. It would need all of these, each a separate recorded decision by a person:
+
+1. an owner decision to amend AGENTS.md's canary rule, through a pull request a person approves;
+2. spending approval for each run, and a per-run budget;
+3. secrets in a protected GitHub Environment with required reviewers, which the agent never reads or handles;
+4. a decision on running Claude Code, or another runner, with a credential away from the owner's machine.
+
+Until then there is no `runner-canary.yml`. If the owner decides for one, it reuses Part B's script and checks unchanged, as `workflow_dispatch` only, with `permissions: contents: read` and `persist-credentials: false`.
 
 ### Compatibility
 
-Patch. It adds a workflow and touches nothing in the consumer surface. The support matrix row changes from "fakes only" to "canaried in CI on <date>, <version>" only after a green run. `test_support_matrix.py` (`automation/tests/test_support_matrix.py:45-68`) gains a check that the README row names the workflow.
+No consumer surface changes. Part A adds a test module and a fixture. Part B adds `Tools/runner_canary.sh`, which is not added to `automation/reusable-manifest.json`, so consumers don't receive it. The support matrix row changes only after a recorded `pass`, and `test_support_matrix.py` (`automation/tests/test_support_matrix.py:45-68`) gains a check that the row names a date and a version.
 
 ### Tests
 
-The workflow is not a required check. A unit test confirms that the fixture queue validates against `slice.schema.json` and that the assertion script maps each expected `stop_code`. An `actionlint`-style test confirms the triggers include no `push` or `pull_request`.
+- Part A is itself the test. It also checks that the fixture queue validates against `slice.schema.json` and that the scripted runner refuses an unknown case.
+- Part B is tested with a fake `claude` on `PATH`, as `test_runner_selection.py` does with fake CLIs. An in-scope fake gives `pass`. A fake that writes no handoff gives `runner_incomplete`. A doctored report whose queue status disagrees with its decision gives `invariant_broken`. No test calls a real model.
 
 ### Risks
 
-- **Provider outages look like agent failures.** The benchmark already learned this (`run_agent.sh:641-646`). Classify `agent_exit_nonzero` separately from stop codes.
-- **A real agent with `bypassPermissions`** (`run_agent.sh:304-308`) on a GitHub runner touches only a throwaway repository with no push credentials. Set `permissions: contents: read` and do not persist checkout credentials (`persist-credentials: false`).
+- **Provider outages look like agent failures.** The benchmark already learned this (`run_agent.sh:641-646`). Part B classes `agent_exit_nonzero` and `agent_timeout` as `runner_incomplete`, never as `invariant_broken`.
+- **Part B runs a real agent on the owner's machine.** `bounded` limits its edits to the slice's allowed paths and denies the credential directories and web tools (`runner_profile.py:320-341`). The throwaway repository has no remote, so the `git push` in the allow list has nowhere to go.
+- **Part A depends on `boundroom-sync.sh`.** If the sync changes, these tests change with it. That is intended: they test what a consumer receives.
 
 ### P0 interaction
 
-This is a canary, which P0 asks for. The Codex canary is already a deferred RA-BD-004 item. It is the strongest case for doing this early, but approvals gate it.
+P0's canaries are the end-to-end one-slice canary of the Kanban-composed supervisor (P0.4) and the canary of each opted-in consumer during rollout (P0.5) (`docs/roadmap.md:22-23`). This canary is neither. It exercises today's file-queue supervisor and does not satisfy or replace either gate, though P0.4 can reuse its checks later. Part A is test coverage of existing gates, a bounded change the reviewer can accept before P0. Part B repeats the RA-BD-004 Claude Code canary, done once on 2026-11-10, in a repeatable form.
 
 ---
 
@@ -214,56 +243,127 @@ This is a canary, which P0 asks for. The Codex canary is already a deferred RA-B
 - **A reviewer prompt with fixed output headings**, but no schema: Stop reason, Changed scope, Cleanup required, Proof level, Contract status, Residual risk, Repo state, Approval required, Queue recommendation (`automation/prompts/review.md`).
 - **`residual_risks` is a required non-empty list of strings** (`models.py:188`), seeded with `"<remaining risk or 'No known residual risk.'>"` (`automation/context/build_context.py:202`).
 - **An LLM judge already exists** in the benchmark (`automation/benchmark/judge.py:1-24`, `:243-314`). It runs through the same runner seam in a fresh `git init` workspace (`:258-262`). Its verdict is capped at 64 KiB, and anything malformed is an error, never a pass (`:62-79`, `:145-176`). It is blind to the lane (`:340`) and copies session files without following links (`:299-301`). It can never pass failing tests (`:12-13`).
+- **GitHub already authenticates pull request reviews.** Each review records the account that submitted it, its state (`APPROVED`, `CHANGES_REQUESTED` or `COMMENTED`), the commit it was submitted on (`commit_id`) and its body. GitHub doesn't count an author's review of their own pull request, and the `main` ruleset requires a code owner's approval ([control map](../compliance/controls.md), change management).
 
-### Design decision: where the verdict lives
+### Design decision: a person's verdict is a GitHub review, never a file
 
 The request asks for the verdict "in the handoff". The handoff is written by the runner, the change's author. A reviewer verdict inside it would let the author write its own review, which breaks segregation of duties (AGENTS.md). `Handoff` already rejects unknown keys (`models.py:177`, `extra="forbid"`), so a runner can't slip a `review` key in today. Keep it that way.
 
-The verdict goes in a **sidecar record bound to the handoff's digest**: `automation/reviews/<handoff-stem>.review.json`. Its new schema is `automation/schemas/review.schema.json`, generated from a `Review` model added to `CONTRACTS` (`models.py:200-204`). Fields:
+An earlier draft moved the verdict to a sidecar file, `automation/reviews/<handoff-stem>.review.json`, with `reviewer: {kind: human|llm_judge, actor}`. That fails for the same reason. `actor` is an unauthenticated string, so an agent could write `{kind: human, actor: raelldottin}` and present its own output as a person's review, which AGENTS.md forbids. `automation/reviews/` would be supervisor-owned only in consumers that `boundroom init` set up, so in existing consumers a runner could commit its own review. So:
 
-- `handoff_sha256`;
-- `slice_id`;
-- `reviewer`: `{kind: human|llm_judge, actor}`. For a person, `actor` is their login. For the judge it is `"<runner> (llm_judge)"`. The judge is never presented as a person.
-- `verdict`: `accept|accept_with_followup|rework|reject`;
+- **A person's verdict is a pull request review on GitHub**, submitted from that person's own account. GitHub authenticates it. Boundroom keeps no verdict that a tool trusts. It keeps at most a reference, `{repository, pr_number, review_id, reviewer_login, reviewer_id, commit_id}`, and a tool re-checks that reference through the GitHub API, read-only, every time it counts it. No field in any file can assert that a verdict is a person's.
+- **An LLM judge's verdict is a model's output.** It is recorded separately, labelled with its model id and prompt version, and never counts as a review or an approval (see [The LLM judge, kept apart](#the-llm-judge-kept-apart)).
+
+### The verdict block
+
+The structured fields go in one fenced block in the review body, with the info string `boundroom-review`. The block is JSON, so the parser needs only the standard library:
+
+````markdown
+```boundroom-review
+{
+  "verdict": "rework",
+  "intent_match": 6,
+  "scope_respected": true,
+  "risks_confirmed": ["No test covers an empty table."],
+  "risks_found": ["The migration locks the table during the backfill."],
+  "risks_dismissed": [],
+  "lines_edited": 40,
+  "notes": "Split the backfill into batches."
+}
+```
+````
+
+Fields:
+
+- `verdict` (required): `accept|accept_with_followup|rework|reject`;
 - `intent_match`: 0-10;
 - `scope_respected`: bool;
 - `risks_confirmed`: the handoff's `residual_risks` the reviewer agrees with;
 - `risks_found`: new risks;
 - `risks_dismissed`;
-- `rework_required`: bool;
+- `lines_edited`: lines the reviewer changed or asked to have changed, 0 or more;
+- `slice_id`: required only when the pull request changes more than one handoff;
 - `notes`;
-- `created_at`.
+- `experiment`: optional, used only by [SPEC-012](effectiveness-proof.md)'s blinded review: `{minutes, reasons, arm_guess}`.
+
+The block carries no reviewer, time or commit. Those come from GitHub's record of the review, never from text the reviewer or anyone else typed. The earlier `rework_required` field is dropped, because `verdict` already says it.
+
+The block describes a review. It doesn't make one. GitHub's `APPROVED` state is the approval the ruleset counts, and the block can't turn a `COMMENTED` review into one. `accept` and `accept_with_followup` are valid only in an `APPROVED` review. `rework` and `reject` are valid only in a `CHANGES_REQUESTED` or `COMMENTED` review.
 
 `risks_found` minus `risks_dismissed`, over time, is the measurable "what risk remains".
 
+### How a review is checked, and what happens when the block is missing or malformed
+
+The tool reads the reviews of one named pull request and gives each review one outcome:
+
+- **`counted`**: exactly one well-formed block, a state that matches the verdict, and a reviewer who passes the identity checks below;
+- **`no_verdict`**: no block. The review still exists, and still counts for merging under GitHub's rules, but the metrics count it as missing, never as `accept`;
+- **`invalid: <reason>`**: more than one block, a block that isn't JSON, an unknown key, a value out of range or not in the list, a block over 8 KiB, a verdict that doesn't match the review state, or a body edited by someone other than its author. It is not counted, and nothing is filled in with a default;
+- **`not_a_person`**: the reviewer's account type is `Bot`, the reviewer is the pull request's author, or the review was submitted on a commit that doesn't hold the handoff being reviewed. It is not counted.
+
+The tool never edits, comments on or resubmits a review. A reviewer fixes a missing or malformed block by submitting a new review. When one reviewer submits several reviews, the latest `counted` one on the commit that holds the handoff is the one used.
+
+The review is bound to the handoff through Git, read-only: the tool reads the handoff at the review's `commit_id` (`git show <commit_id>:<handoff path>`) and records its sha256. If the pull request's head changes after the review, the review covers the old head only, as GitHub's stale-approval rule already treats it.
+
+### Why the runner can't write or change a verdict
+
+- **The verdict exists only as a review on GitHub.** Nothing the runner writes is read as a verdict: not the handoff, not a file under `automation/reviews/`, not a commit message, not a pull request comment. The tool reads only the reviews of the pull request it is given.
+- **A person creates the reference by submitting a review on GitHub.** Boundroom doesn't create it. A tool may cache what it found outside the repository, but every count re-reads the API.
+- **The agent's own reviews don't count.** If the runner or the agent posts a review, it does so as `boundroom-agent[bot]` (bot user id `354874784`), whose account type is `Bot`. The agent usually authored the pull request too, and GitHub doesn't count an author's approval either.
+- **Edits are checked.** On GitHub, anyone with write access can edit another person's comment, and the agent's app has write access to pull requests. So the tool reads each review's edit history (GraphQL `userContentEdits`, a read-only query) and refuses a review whose body was edited by anyone other than its author, or whose editors it can't read.
+- **What remains.** The check proves which GitHub account submitted the review, not who was at the keyboard. An agent using the owner's own `gh` login on the owner's machine could submit a review as the owner. The control map records that same gap for the agent's identity: "Nothing technically stops the agent from using the owner's own `gh` login on the same machine" ([control map](../compliance/controls.md)). It applies to merge approvals equally. A verdict is exactly as strong as the pull request approval control, and no stronger.
+
+### The LLM judge, kept apart
+
+`automation/benchmark/intent_judge.py` is optional and is spending. It adapts `Judge` (`judge.py:243`). Its input is the slice's stated intent (`title`, `notes`, `allowed_paths`, `required_validations` from `SliceRecord`, `models.py:130-144`), the `git diff base_sha..head_sha` and the handoff's claims. It reads its verdict file with the same size limit, no-symlink read and "malformed is an error" rule as the benchmark judge, through `read_agent_file` in `automation/benchmark/adapter.py` and `_read_verdict` in `automation/benchmark/judge.py` (as of #294's head, `3c07095`). It runs blind in a fresh workspace with no route to the consumer repository.
+
+Its output is a separate record with its own model and schema, sharing no type with anything a review produces:
+
+- `kind`: always `model_output`;
+- `model`: the model id the session reported, or the one the run pinned. A record without one is refused;
+- `runner`;
+- `prompt_version`: the sha256 of the judge prompt;
+- `verdict`, `intent_match`, `risks_found`, using the review block's values;
+- `created_at`.
+
+It is written to the benchmark's output directory, outside the consumer repository, and is never posted to GitHub. The rules:
+
+- It never counts as a review or an approval. No tool adds it to a count of people's verdicts, and every report labels it "model output (<model>, prompt <version>)".
+- It is never shown to a reviewer as a draft, a pre-filled block or a suggestion before they submit their own review. That would anchor the reviewer and turn a model's verdict into a person's. §2 compares the two only after both exist.
+- It is advisory. It never changes the queue, never approves a board task, never stands in for a person's approval, and is not "independent live verification" (AGENTS.md).
+
 ### Scope
 
-1. **Schema and model.** Add `automation/reviews/` to the default `supervisor_owned_paths` in `boundroom init` (§5). Today the example lists only the queue and handoffs (`automation/examples/example-slices.json` policy). Existing consumers opt in by editing their queue.
-2. **`handoff_summary.py --review <path>`** reads and checks the sidecar: digest match, schema. It renders it beside agent claims and supervisor evidence (`handoff_summary.py:214-290`). It never writes.
-3. **`automation/benchmark/intent_judge.py`** (optional, spending). Adapt `Judge` (`judge.py:243`). Its input is the slice's stated intent (`title`, `notes`, `allowed_paths`, `required_validations` from `SliceRecord`, `models.py:130-144`), the `git diff base_sha..head_sha` and the handoff's claims. Its output is a `Review` with `reviewer.kind=llm_judge`. It reuses `_verdict_bytes` limits and its "malformed is error" rule, and runs blind in a fresh workspace with no route to the consumer repository. Its verdict is advisory. It never changes the queue, never approves a board task, never stands in for the person's approval, and is not "independent live verification" (AGENTS.md).
-4. **§2 integration.** `replay.py` reports how often judge and human agree, and `risks_found` per `stop_code`.
+1. **Schema and model for the block.** `automation/schemas/review-block.schema.json`, generated from a `ReviewBlock` model added to `CONTRACTS` (`models.py:200-204`), with `extra="forbid"`. It describes the block only. It has no `reviewer` or `kind` field, because identity comes from GitHub.
+2. **`handoff_summary.py --review-pr <owner/repo>#<number>`.** It reads the pull request's reviews and their edit history with `gh api`, read-only, through `egress.guard_egress` (`egress.py:47`) so `BOUNDROOM_OFFLINE` refuses it. It binds each review to the handoff as above and renders the outcomes beside agent claims and supervisor evidence (`handoff_summary.py:214-290`), with the reviewer's login and the review's URL. It never writes to GitHub or to the repository.
+3. **The intent judge**, as above.
+4. **§2 integration.** `replay.py` counts only reviews the same check passes. It reports `risks_found` per `stop_code` and how often the judge and people agree, with the two in separate columns.
 
 ### Compatibility
 
-- New schema file and optional sidecar: patch ("Accept more input", `compatibility.md:23`). The `Handoff` schema does not change, which avoids a trap. A new optional handoff field is classed as patch, but an older synced supervisor would *reject* handoffs that carry it, because `extra="forbid"` (`models.py:177`). That makes it effectively breaking across mixed versions.
-- `handoff_summary.py --review`: patch, as a new flag whose absence keeps today's behavior (`compatibility.md:21`).
+- New schema file: patch ("Accept more input", `compatibility.md:23`). The `Handoff` schema does not change, which avoids a trap. A new optional handoff field is classed as patch, but an older synced supervisor would *reject* handoffs that carry it, because `extra="forbid"` (`models.py:177`). That makes it effectively breaking across mixed versions.
+- `handoff_summary.py --review-pr`: patch, as a new flag whose absence keeps today's behavior (`compatibility.md:21`). Without the flag it makes no network call.
 - No exit-code changes.
 
 ### Tests
 
 - Generated-schema check (`automation/schemas/generate.py --check`, run by `make reusable-check`).
-- `handoff_summary --review` rejects a digest mismatch and an unknown key.
-- The judge with a fake runner. The cases are verdict not JSON, score out of range, oversized verdict and a symlinked verdict, each yielding an error and never a pass (mirror `automation/tests/test_benchmark_judge.py`).
+- The block parser, on recorded review bodies: a missing block gives `no_verdict`. Two blocks, bad JSON, an unknown key, a value out of range, an oversized block and a verdict that contradicts the review state each give `invalid` with its reason, and none is counted.
+- Identity, on recorded API responses with no network: a `Bot` reviewer, the author reviewing their own pull request, a review on a commit without the handoff, a body edited by another account, and unreadable edit history are each not counted. A file in the repository that claims a person's verdict, such as `automation/reviews/x.review.json` with `kind: human`, is ignored.
+- With a fake `gh` on `PATH`: the argv is only `api` reads, and the GraphQL query contains no `mutation`. With `BOUNDROOM_OFFLINE` set, the tool refuses before the subprocess runs.
+- The judge with a fake runner. The cases are verdict not JSON, score out of range, oversized verdict and a symlinked verdict, each yielding an error and never a pass (mirror `automation/tests/test_benchmark_judge.py`). A record without a model id is refused. Judge output never appears in the people's section of the `--review-pr` rendering.
 - The judge workspace contains no path to the consumer repository.
 
 ### Risks
 
 - **The judge can be argued around** by a diff written to persuade it. Mitigation: advisory only, plus §2 agreement tracking.
-- **Reviewer burden.** The sidecar is optional. A reviewer who already writes PR reviews can let the judge draft one, then edit and sign it as themselves.
+- **Reviewer burden.** The block is optional. A review without it still counts for merging and shows as `no_verdict` in the metrics. A GitHub saved reply can hold the empty template. The judge never drafts it.
+- **Only GitHub-hosted pull requests are covered.** For a consumer hosted elsewhere, the tool reports `unsupported_host` and counts nothing.
+- **Identity rests on the GitHub account**, with the gap described above.
 
 ### P0 interaction
 
-The schema and `handoff_summary` flag are supervisor-adjacent feature expansion. The reviewer decides whether a small additive slice may proceed before P0. The judge is benchmark-side and spending.
+The schema and the `handoff_summary` flag are supervisor-adjacent feature expansion, and the flag adds the first `gh` call to the supervisor package (§5 notes there is none today). The reviewer decides whether a small additive slice may proceed before P0. The judge is benchmark-side and spending.
 
 ---
 
@@ -289,7 +389,7 @@ New `automation/supervisor/init.py`. It ships to consumers automatically, becaus
     
     Always add `git diff --check`, the replayable one. Each command is labeled with its tier from `classify_validation_ownership`.
   - **`allowed_paths`:** top-level source directories from `git ls-files`, grouped by language. `tests/`, `docs/` and generated directories are marked separately. It never proposes `.github/`, `automation/queue/`, `automation/handoffs/` or lock files.
-  - **Policy:** `agent_command_template` = the `run_agent.sh` template from the example. `supervisor_owned_paths` = the queue, handoffs and (with §4) reviews. `consecutive_autonomous_limit: 1`, `handoff_timeout_seconds: 1800`.
+  - **Policy:** `agent_command_template` = the `run_agent.sh` template from the example. `supervisor_owned_paths` = the queue and handoffs. `consecutive_autonomous_limit: 1`, `handoff_timeout_seconds: 1800`.
   - **Output:** a proposed `slices.json` with one `status: "deferred"` sample slice, a starter `runner-rules.md`, and a `.gitignore` line for `__pycache__/` (the known failure mode, `docs/workflows/boundroom.md:438-442`). Printed as JSON and a diff.
 - **`init.py write`:** writes only files that don't exist, refuses to overwrite, and refuses outside the repository root. It leaves the bootstrap commit to the person, matching the existing contract (`docs/workflows/boundroom.md:420-432`). It validates the result with `policy.load_queue` (`policy.py:252`).
 - **`init.py from-issue <number|url>`:**
@@ -325,9 +425,10 @@ This is feature expansion of the supervisor's adoption path, roadmap P1 (`docs/r
 
 ## Performance note (AGENTS.md)
 
-- §2 `rules --replay` and §3 add subprocess work in benchmark and CI tooling, not in the supervisor's per-slice path.
+- §2 `rules --replay` adds subprocess work in benchmark tooling, not in the supervisor's per-slice path.
+- §3 Part A adds a few `git` repositories and `run_next.py` runs per test run, in the test suite only. Part B runs only when the owner starts it.
 - §1 adds a file write in `run_agent.sh`, only when the operator sets `BOUNDROOM_SESSION_DIR`.
-- §4 adds a file read in `handoff_summary.py`, only with `--review`.
+- §4 adds `gh api` network reads in `handoff_summary.py`, only with `--review-pr`, growing with the number of reviews on one pull request.
 - §5 runs `git ls-files`, which scales with repository size, only on demand and never per slice.
 
 Each implementing PR states these in its description.
@@ -336,5 +437,5 @@ Each implementing PR states these in its description.
 
 1. Whether §2 `rules`/`prompt` mode and the §4 judge count as benchmark work (exempt from P0) or as supervisor feature work.
 2. Whether to send runner telemetry to a hosted backend (Braintrust) for the §1 verification.
-3. Which runner and secret the §3 canary uses first, and the per-run budget.
-4. Whether `automation/reviews/` should become a default `supervisor_owned_paths` entry for new consumers.
+3. Whether to keep the default cap for the §3 Part B canary, and whether a real-runner canary should ever run in CI, which needs AGENTS.md amended plus spending and secrets approvals.
+4. Whether reviewers will use the §4 verdict block in their pull request reviews, and on which repositories.
