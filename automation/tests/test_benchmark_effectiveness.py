@@ -738,12 +738,24 @@ class PhaseArtifactOwnershipTests(unittest.TestCase):
             self.assertIn("refusing to overwrite", str(refusal.exception))
             self.assertEqual("first attempt\n", sentinel.read_text(encoding="utf-8"))
 
-    def test_a_failed_copy_removes_only_what_this_call_created(self) -> None:
+    def test_a_failed_copy_is_recorded_and_removes_only_what_this_call_created(self) -> None:
+        # Running out of descriptors or recursion is the cell's recorded error, not a crash of the run.
+        for failure in (OSError(24, "Too many open files"), RecursionError("maximum recursion depth exceeded")):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as tmp:
+                out_dir = Path(tmp) / "out"
+                out_dir.mkdir()
+                with unittest.mock.patch.object(benchmark_adapter.shutil, "copyfileobj", side_effect=failure):
+                    benchmark_adapter._save_phase_artifacts(self._workspace_with_artifacts(Path(tmp)), out_dir)
+                self.assertFalse((out_dir / "rpi").exists())
+                record = json.loads((out_dir / benchmark_adapter.REFUSED_FILENAME).read_text(encoding="utf-8"))
+                self.assertIn(type(failure).__name__, record["error"])
+
+    def test_an_interrupted_copy_still_removes_what_this_call_created_and_propagates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "out"
             out_dir.mkdir()
-            with unittest.mock.patch.object(benchmark_adapter.shutil, "copyfileobj", side_effect=OSError("disk full")):
-                with self.assertRaises(OSError):
+            with unittest.mock.patch.object(benchmark_adapter.shutil, "copyfileobj", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
                     benchmark_adapter._save_phase_artifacts(self._workspace_with_artifacts(Path(tmp)), out_dir)
             self.assertFalse((out_dir / "rpi").exists())
 
@@ -779,6 +791,90 @@ class PhaseArtifactOwnershipTests(unittest.TestCase):
             workspace.mkdir()
             (workspace / benchmark_adapter.RPI_DIR).symlink_to(keys, target_is_directory=True)
             self.assertFalse(self._copy_out(workspace, Path(tmp)).exists())
+            record = json.loads((Path(tmp) / "out" / benchmark_adapter.REFUSED_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual([{"path": "rpi", "reason": "symlink"}], record["refused"])
+
+    def test_what_was_refused_is_recorded_next_to_the_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            secret = Path(tmp) / "id_ed25519"
+            secret.write_text("PRIVATE\n", encoding="utf-8")
+            workspace = self._workspace_with_artifacts(Path(tmp))
+            rpi = workspace / benchmark_adapter.RPI_DIR
+            (rpi / "nested").mkdir()
+            (rpi / "nested" / "stolen.md").symlink_to(secret)
+            os.link(secret, rpi / "notes.md")
+            os.mkfifo(rpi / "pipe")
+            copied = self._copy_out(workspace, Path(tmp))
+            record = json.loads((copied.parent / benchmark_adapter.REFUSED_FILENAME).read_text(encoding="utf-8"))
+        self.assertIsNone(record["error"])
+        self.assertEqual(
+            [
+                {"path": "rpi/nested/stolen.md", "reason": "symlink"},
+                {"path": "rpi/notes.md", "reason": "hard_link"},
+                {"path": "rpi/pipe", "reason": "special"},
+            ],
+            sorted(record["refused"], key=lambda entry: entry["path"]),
+        )
+
+    def test_an_rpi_swapped_for_a_link_after_it_is_opened_still_copies_what_was_opened(self) -> None:
+        # The source is opened once, before the destination is claimed: a swap after that can't
+        # leave an empty claimed rpi/ behind, or lead the copy to the link's target.
+        with tempfile.TemporaryDirectory() as tmp:
+            keys = Path(tmp) / "keys"
+            keys.mkdir()
+            (keys / "id_ed25519").write_text("PRIVATE\n", encoding="utf-8")
+            workspace = self._workspace_with_artifacts(Path(tmp))
+            rpi = workspace / benchmark_adapter.RPI_DIR
+            out_dir = Path(tmp) / "out"
+            out_dir.mkdir()
+            real_mkdir = Path.mkdir
+
+            def swapping_mkdir(path: Path, *args, **kwargs) -> None:
+                real_mkdir(path, *args, **kwargs)
+                if path == out_dir / "rpi" and not rpi.is_symlink():
+                    rpi.rename(Path(tmp) / "moved")
+                    rpi.symlink_to(keys, target_is_directory=True)
+
+            with unittest.mock.patch.object(Path, "mkdir", autospec=True, side_effect=swapping_mkdir):
+                benchmark_adapter._save_phase_artifacts(workspace, out_dir)
+            self.assertEqual(["phase-1.json"], sorted(p.name for p in (out_dir / "rpi").iterdir()))
+
+
+class CopyRegularTreeTests(unittest.TestCase):
+    """``copy_regular_tree`` copies what an agent wrote, and says what it refused."""
+
+    def test_entries_past_the_depth_limit_are_skipped_and_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(benchmark_adapter, "MAX_COPY_DEPTH", 2):
+            source = Path(tmp) / "src"
+            (source / "a" / "b" / "c").mkdir(parents=True)
+            (source / "a" / "b" / "kept.txt").write_text("kept", encoding="utf-8")
+            (source / "a" / "b" / "c" / "deep.txt").write_text("deep", encoding="utf-8")
+            refused = benchmark_adapter.copy_regular_tree(source, Path(tmp) / "dst")
+            self.assertEqual("kept", (Path(tmp) / "dst" / "a" / "b" / "kept.txt").read_text(encoding="utf-8"))
+            self.assertFalse((Path(tmp) / "dst" / "a" / "b" / "c").exists())
+        self.assertEqual([{"path": "a/b/c", "reason": "too_deep"}], refused)
+
+    def test_a_tree_deeper_than_the_limit_neither_recurses_without_end_nor_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "src"
+            deepest = source.joinpath(*["d"] * (benchmark_adapter.MAX_COPY_DEPTH + 10))
+            deepest.mkdir(parents=True)
+            refused = benchmark_adapter.copy_regular_tree(source, Path(tmp) / "dst")
+        self.assertEqual(["too_deep"], [entry["reason"] for entry in refused])
+        self.assertEqual(benchmark_adapter.MAX_COPY_DEPTH + 1, refused[0]["path"].count("/") + 1)
+
+    def test_file_modes_and_modification_times_are_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "src"
+            source.mkdir()
+            script = source / "run.sh"
+            script.write_text("#!/bin/sh\n", encoding="utf-8")
+            script.chmod(0o750)
+            os.utime(script, (1_000_000_000, 1_000_000_000))
+            self.assertEqual([], benchmark_adapter.copy_regular_tree(source, Path(tmp) / "dst"))
+            copied = os.stat(Path(tmp) / "dst" / "run.sh")
+        self.assertEqual(0o750, copied.st_mode & 0o777)
+        self.assertEqual(1_000_000_000, int(copied.st_mtime))
 
 
 class SubmissionOwnershipTests(unittest.TestCase):

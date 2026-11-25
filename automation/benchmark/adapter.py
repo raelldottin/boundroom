@@ -292,16 +292,41 @@ def _archive_workspace(workspace: Path, out_tar: Path) -> None:
         raise
 
 
+# Directories an agent-written tree may nest before the copy stops descending. Each level holds
+# one descriptor open while its children are copied, so this also bounds the descriptors and the
+# recursion one copy can use.
+MAX_COPY_DEPTH = 64
+# Written next to what was copied: what was left out, and why, so an audit can tell a planted link
+# from nothing written. Never inside the copy, where an agent-written file could have the name.
+REFUSED_FILENAME = "refused.json"
+
+
 class NotARegularFile(Exception):
-    """An agent-written path the harness refuses to read: a link, a special file, or too large."""
+    """An agent-written path the harness refuses to read: a link, a special file, or too large.
+
+    ``reason`` is ``symlink``, ``hard_link``, ``special`` or ``too_large``.
+    """
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"{path}: {reason}")
+        self.reason = reason
 
 
-def is_real_dir(path: Path) -> bool:
-    """A directory, and not a symlink to one: one ``lstat``, so nothing is followed."""
-    try:
-        return stat.S_ISDIR(os.lstat(path).st_mode)
-    except OSError:
-        return False
+class NotARealDirectory(Exception):
+    """An agent-written path that should be a directory and is a symlink (``symlink``) or something else (``not_a_directory``)."""
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"{path}: {reason}")
+        self.reason = reason
+
+
+def _refusal_reason(info: os.stat_result) -> Optional[str]:
+    """Why an opened entry that isn't a directory is refused, or None for a single-name regular file."""
+    if not stat.S_ISREG(info.st_mode):
+        return "special"
+    if info.st_nlink != 1:
+        return "hard_link"
+    return None
 
 
 def read_agent_file(path: Path, limit: int) -> bytes:
@@ -318,90 +343,204 @@ def read_agent_file(path: Path, limit: int) -> bytes:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as error:
         if error.errno == errno.ELOOP:
-            raise NotARegularFile(str(path)) from error
+            raise NotARegularFile(str(path), "symlink") from error
         raise
     with os.fdopen(descriptor, "rb") as handle:
-        info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise NotARegularFile(str(path))
+        reason = _refusal_reason(os.fstat(handle.fileno()))
+        if reason is not None:
+            raise NotARegularFile(str(path), reason)
         data = handle.read(limit + 1)
     if len(data) > limit:
-        raise NotARegularFile(str(path))
+        raise NotARegularFile(str(path), "too_large")
     return data
 
 
-def copy_regular_tree(source: Path, destination: Path) -> None:
+def open_real_dir(path: Path) -> int:
+    """A read-only descriptor for an agent-written directory, never through a symlink.
+
+    Opened once with ``O_NOFOLLOW | O_DIRECTORY`` and checked with ``fstat``, so a caller that
+    copies from the descriptor copies what was checked, whatever is swapped in at the path
+    afterwards. Raises ``NotARealDirectory`` for a symlink or a non-directory and ``OSError``
+    (``FileNotFoundError`` included) when nothing can be opened.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0))
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR):
+            # Some systems report a symlink opened with O_DIRECTORY as ENOTDIR, not ELOOP.
+            try:
+                reason = "symlink" if stat.S_ISLNK(os.lstat(path).st_mode) else "not_a_directory"
+            except OSError:
+                raise error from None
+            raise NotARealDirectory(str(path), reason) from error
+        raise
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise NotARealDirectory(str(path), "not_a_directory")
+    return descriptor
+
+
+def copy_regular_tree(source: Path, destination: Path) -> list[dict[str, str]]:
     """Copy an agent-written tree, leaving out symlinks, hard links, FIFOs, sockets and devices.
+
+    Returns what was left out, as ``{"path", "reason"}`` with the path relative to ``source``.
+    A source that doesn't exist copies nothing and refuses nothing; a source that is itself a
+    symlink, or isn't a directory, copies nothing and is refused with path ``"."``.
+    See ``copy_regular_tree_from`` for what is refused and why.
+    """
+    try:
+        root = open_real_dir(source)
+    except FileNotFoundError:
+        return []
+    except NotARealDirectory as refusal:
+        return [{"path": ".", "reason": refusal.reason}]
+    try:
+        return copy_regular_tree_from(root, Path(destination))
+    finally:
+        os.close(root)
+
+
+def copy_regular_tree_from(root: int, destination: Path) -> list[dict[str, str]]:
+    """Copy the tree under an open directory descriptor into ``destination``; return what was refused.
 
     An agent session writes these trees, and the harness copies them outside the session's
     sandbox: following a link would let the session have the harness copy a file it was
     never allowed to read, such as a key, into the run directory. A hard link is a regular file
     to every other test, so a regular file with more than one name is left out too; probe.py's
-    evidence collector refuses it for the same reason. A root that is itself a symlink copies
-    nothing.
+    evidence collector refuses it for the same reason.
 
     Every entry is opened with ``O_NOFOLLOW`` relative to its parent's descriptor and checked
     with ``fstat`` on what was opened, so a process the session left running can't swap a file
     or directory for a link between the check and the copy. ``shutil.copytree`` can't promise
-    that: it decides from the ``lstat`` it took when listing, then opens by path.
+    that: it decides from the ``lstat`` it took when listing, then opens by path. Directories
+    nested deeper than ``MAX_COPY_DEPTH`` are not descended into.
+
+    Each refusal's reason is ``symlink``, ``hard_link``, ``special`` (a FIFO, socket or device),
+    ``too_deep`` or ``unreadable``. Files keep their permission bits, less setuid, setgid and
+    sticky, and their access and modification times, as ``shutil.copy2`` keeps them.
     """
-    try:
-        root = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0))
-    except OSError:
-        return
-    try:
-        if stat.S_ISDIR(os.fstat(root).st_mode):
-            _copy_regular_entries(root, Path(destination))
-    finally:
-        os.close(root)
+    refused: list[dict[str, str]] = []
+    _copy_regular_entries(root, Path(destination), "", 0, refused)
+    return refused
 
 
-def _copy_regular_entries(directory: int, destination: Path) -> None:
+def _copy_regular_entries(directory: int, destination: Path, prefix: str, depth: int, refused: list[dict[str, str]]) -> None:
     """Copy the real directories and single-name regular files under an open directory descriptor."""
     destination.mkdir(parents=True, exist_ok=True)
+    names = []
     with os.scandir(directory) as entries:
-        names = [entry.name for entry in entries if entry.is_dir(follow_symlinks=False) or entry.is_file(follow_symlinks=False)]
-    for name in names:
+        for entry in entries:
+            if entry.is_symlink():
+                refused.append({"path": prefix + entry.name, "reason": "symlink"})
+            elif entry.is_dir(follow_symlinks=False) or entry.is_file(follow_symlinks=False):
+                names.append(entry.name)
+            else:
+                refused.append({"path": prefix + entry.name, "reason": "special"})
+    for name in sorted(names):
+        relative = prefix + name
         try:
             descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-        except OSError:
-            # A link (ELOOP), or an entry that went away or changed type since the listing.
+        except FileNotFoundError:
+            continue  # Gone since the listing: nothing to copy, nothing refused.
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                refused.append({"path": relative, "reason": "symlink"})  # Swapped for a link since the listing.
+            elif error.errno in (errno.EMFILE, errno.ENFILE):
+                raise
+            else:
+                refused.append({"path": relative, "reason": "unreadable"})
             continue
         try:
             info = os.fstat(descriptor)
             if stat.S_ISDIR(info.st_mode):
-                _copy_regular_entries(descriptor, destination / name)
-            elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
-                with os.fdopen(os.dup(descriptor), "rb") as source, open(destination / name, "wb") as target:
-                    shutil.copyfileobj(source, target)
+                if depth + 1 > MAX_COPY_DEPTH:
+                    refused.append({"path": relative, "reason": "too_deep"})
+                else:
+                    _copy_regular_entries(descriptor, destination / name, relative + "/", depth + 1, refused)
+                    _copy_times_and_mode(info, destination / name, directory=True)
+                continue
+            reason = _refusal_reason(info)
+            if reason is not None:
+                refused.append({"path": relative, "reason": reason})
+                continue
+            target = destination / name
+            with os.fdopen(os.dup(descriptor), "rb") as source, open(target, "wb") as handle:
+                shutil.copyfileobj(source, handle)
+            _copy_times_and_mode(info, target, directory=False)
         finally:
             os.close(descriptor)
 
 
+def _copy_times_and_mode(info: os.stat_result, target: Path, directory: bool) -> None:
+    """Give a copy its source's permission bits and times, as ``shutil.copy2`` and ``copystat`` do.
+
+    Setuid, setgid and sticky bits are dropped: the source is agent-written. A directory always
+    keeps its owner's read, write and search bits, so the harness can still clean up its record.
+    """
+    mode = stat.S_IMODE(info.st_mode) & 0o777
+    if directory:
+        mode |= stat.S_IRWXU
+    os.chmod(target, mode)
+    os.utime(target, ns=(info.st_atime_ns, info.st_mtime_ns))
+
+
+def write_refused(path: Path, refused: list[dict[str, str]], error: Optional[str] = None) -> None:
+    """Record what a copy of agent-written output left out, and the error that stopped it, if one did."""
+    record = {"refused": sorted(refused, key=lambda entry: entry["path"]), "error": error}
+    Path(path).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
+def describe_copy_error(error: BaseException) -> str:
+    """A copy failure as one line for the record: its type, and its message."""
+    return f"{type(error).__name__}: {error}"
+
+
 def _save_phase_artifacts(workspace: Path, out_dir: Path) -> None:
-    """Keep phase artifacts next to the submission so a result can be reproduced."""
-    source = workspace / RPI_DIR
-    # Checked before the destination is claimed: a session that makes `.rpi` itself a link
-    # gets neither the link's target copied out nor an empty directory claimed for it.
-    if not is_real_dir(source):
-        return
+    """Keep phase artifacts next to the submission so a result can be reproduced.
+
+    What the copy refused, and an error that stopped it, are written to ``refused.json`` beside
+    ``rpi/``. Running out of descriptors or recursion while copying is recorded there, not
+    raised: it says what this cell's artifacts are, and doesn't stop the run.
+    """
+    record = Path(out_dir) / REFUSED_FILENAME
     destination = Path(out_dir) / "rpi"
-    # mkdir, not exists()-then-copy: claiming the directory is how ownership is decided, so it
-    # has to be the single operation that decides it. The copy used to open with an
-    # unconditional rmtree, which meant a rerun into a run directory holding a finished cell's
-    # phase artifacts deleted them - the evidence of the attempt being investigated, destroyed
-    # by the attempt investigating it. A retry does not get to decide it owns someone's output.
+    # Opened once, before the destination is claimed, and copied from that descriptor: a session
+    # that makes `.rpi` a link, before or after this point, gets neither the link's target copied
+    # out nor an empty directory claimed for it.
     try:
-        destination.mkdir(parents=True, exist_ok=False)
-    except FileExistsError as collision:
-        raise FileExistsError(f"refusing to overwrite pre-existing phase artifact directory: {destination}") from collision
+        root = open_real_dir(workspace / RPI_DIR)
+    except FileNotFoundError:
+        return
+    except NotARealDirectory as refusal:
+        write_refused(record, [{"path": "rpi", "reason": refusal.reason}])
+        return
+    except OSError as error:
+        write_refused(record, [], describe_copy_error(error))
+        return
     try:
-        copy_regular_tree(source, destination)
-    except BaseException:
-        # Only ever the directory this call created, and only because it created it: a
-        # half-copied artifact set reads as a complete one.
-        shutil.rmtree(destination, ignore_errors=True)
-        raise
+        # mkdir, not exists()-then-copy: claiming the directory is how ownership is decided, so it
+        # has to be the single operation that decides it. The copy used to open with an
+        # unconditional rmtree, which meant a rerun into a run directory holding a finished cell's
+        # phase artifacts deleted them - the evidence of the attempt being investigated, destroyed
+        # by the attempt investigating it. A retry does not get to decide it owns someone's output.
+        try:
+            destination.mkdir(parents=True, exist_ok=False)
+        except FileExistsError as collision:
+            raise FileExistsError(f"refusing to overwrite pre-existing phase artifact directory: {destination}") from collision
+        try:
+            refused = copy_regular_tree_from(root, destination)
+        except (OSError, RecursionError) as error:
+            # Only ever the directory this call created, and only because it created it: a
+            # half-copied artifact set reads as a complete one.
+            shutil.rmtree(destination, ignore_errors=True)
+            write_refused(record, [], describe_copy_error(error))
+            return
+        except BaseException:
+            shutil.rmtree(destination, ignore_errors=True)
+            raise
+        write_refused(record, [{**entry, "path": f"rpi/{entry['path']}"} for entry in refused])
+    finally:
+        os.close(root)
 
 
 def probe_sandbox(

@@ -707,9 +707,13 @@ uv run python -m automation.benchmark lanes --run-dir out --eval --judge \
 - **The judge's outputs are untrusted.** Its `verdict.json` and session reports are read
   and copied without following symlinks or hard links, so a judge can't have the harness record
   a file it couldn't read; a linked or oversized verdict fails as `verdict_not_a_regular_file`.
-  A submission that unpacks past 256 MiB is refused before extraction
-  (`submission_too_large`). A lane's phase artifacts are copied the same way, and a `.rpi` that is itself a symlink is
-  not copied at all.
+  A submission that unpacks past 256 MiB or holds more than 20,000 members is refused before
+  extraction (`submission_too_large`). A lane's phase artifacts are copied the same way, and a
+  `.rpi` that is itself a symlink is not copied at all. Directories nested past 64 levels are not
+  descended into. Each copy writes a `refused.json` beside it (`judge/r<n>/<judge_id>/` and the
+  cell directory) listing every entry it left out, with a reason (`symlink`, `hard_link`,
+  `special`, `too_deep` or `unreadable`), and the error if the copy failed. A failed copy is that
+  cell's error (`judge_record_unreadable` for the judge), never a pass and never a crash.
 - **It needs Python 3.11.4 or later,** for `tarfile`'s `data` filter; an older Python is
   refused before anything runs.
 
