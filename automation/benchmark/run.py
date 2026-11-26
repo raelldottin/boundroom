@@ -209,6 +209,20 @@ def _add_judge_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def lanes_usage_error(args: argparse.Namespace) -> Optional[str]:
+    """The first reason ``lanes`` can't run with these arguments, or None."""
+    if args.judge and args.cleanroom:
+        return (
+            "--judge can't be used with --cleanroom yet: the lanes' tools run in ProgramBench's image, "
+            "but the judge's would run on this machine while it reads model-written code"
+        )
+    if args.judge and not args.eval:
+        return "--judge needs --eval: the gate reads ProgramBench's tests before it pays for a judge"
+    if args.judge and not 1 <= args.min_repeats <= args.repeats:
+        return f"--min-repeats must be between 1 and --repeats ({args.repeats}), got {args.min_repeats}"
+    return None
+
+
 def build_stop_gate(args: argparse.Namespace, env: dict[str, str]) -> Optional[judge.StopGate]:
     """The stop gate ``lanes --judge`` asked for, judged by the lanes' own agent, or None.
 
@@ -312,15 +326,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "compare":
             comparison = lanes_module.build_comparison(args.run_dir, args.lanes, args.repeats)
         else:
-            if args.judge and args.cleanroom:
-                parser.error(
-                    "--judge can't be used with --cleanroom yet: the lanes' tools run in ProgramBench's image, "
-                    "but the judge's would run on this machine while it reads model-written code"
-                )
-            if args.judge and not args.eval:
-                parser.error("--judge needs --eval: the gate reads ProgramBench's tests before it pays for a judge")
-            if args.judge and not 1 <= args.min_repeats <= args.repeats:
-                parser.error(f"--min-repeats must be between 1 and --repeats ({args.repeats}), got {args.min_repeats}")
+            error = lanes_usage_error(args)
+            if error:
+                parser.error(error)
             # Resolved once, so the judge and the lanes are handed the same environment.
             agent_env = resolve_agent_env(args.agent_env)
             try:
