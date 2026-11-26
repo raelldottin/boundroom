@@ -4,9 +4,9 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,7 +38,7 @@ DOMAIN_DOCS = {
 }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a bounded context bundle for one queued slice.")
     parser.add_argument("--slice-id", required=True, help="Queue slice_id to package.")
     parser.add_argument("--queue", default="automation/queue/slices.json", help="Path to the live or example queue JSON file.")
@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--memory-config", help="Optional operator-reviewed Hindsight project-to-bank map (JSON).")
     parser.add_argument("--memory-project", help="Project whose granted bank to recall from; required with --memory-config.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def build_context_bundle(
@@ -61,7 +61,11 @@ def build_context_bundle(
     memory_config: Optional[memory.MemoryConfig] = None,
     memory_project: Optional[str] = None,
     queue_data: Optional[dict[str, Any]] = None,
+    *,
+    now: Callable[[], datetime] = memory.utc_now,
+    environ: Optional[Mapping[str, str]] = None,
 ) -> dict[str, Any]:
+    # ``now`` must return an aware UTC datetime: ``generated_at`` is its ISO form, unconverted.
     # A caller that already holds the queue (a Kanban projection has no file) passes it in.
     if queue_data is None:
         queue_data = policy.load_queue(queue_path)
@@ -76,7 +80,7 @@ def build_context_bundle(
     documents = load_documents(repo_root, document_specs, max_doc_chars=max_doc_chars)
 
     bundle: dict[str, Any] = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": now().isoformat(),
         "policy_sentence": POLICY_SENTENCE,
         "repo": {
             "root": str(repo_root),
@@ -96,7 +100,7 @@ def build_context_bundle(
     if memory_config is not None:
         if not memory_project:
             raise policy.ConfigError("a memory config needs the project whose bank to recall from")
-        bundle["memory"] = memory.recall_section(memory_config, memory_project, slice_record["title"], repo_root)
+        bundle["memory"] = memory.recall_section(memory_config, memory_project, slice_record["title"], repo_root, environ=environ)
     return bundle
 
 
@@ -351,9 +355,15 @@ def git_output(repo_root: Path, command: list[str]) -> str:
     return result.stdout.strip()
 
 
-def main() -> int:
-    args = parse_args()
-    repo_root = REPO_ROOT
+def main(
+    argv: Optional[Sequence[str]] = None,
+    *,
+    repo_root: Optional[Path] = None,
+    now: Callable[[], datetime] = memory.utc_now,
+    environ: Optional[Mapping[str, str]] = None,
+) -> int:
+    args = parse_args(argv)
+    repo_root = REPO_ROOT if repo_root is None else repo_root
     queue_path = repo_root / args.queue
     handoff_dir = repo_root / args.handoff_dir
     bundle = build_context_bundle(
@@ -364,6 +374,8 @@ def main() -> int:
         max_doc_chars=args.max_doc_chars,
         memory_config=memory.load_config(repo_root / args.memory_config) if args.memory_config else None,
         memory_project=args.memory_project,
+        now=now,
+        environ=environ,
     )
 
     payload = json.dumps(bundle, indent=2, ensure_ascii=False)
@@ -378,9 +390,9 @@ def main() -> int:
     return 0
 
 
-def _cli_entry() -> int:
+def _cli_entry(argv: Optional[Sequence[str]] = None) -> int:
     try:
-        return main()
+        return main(argv)
     except policy.ConfigError as error:
         print(f"stop: {error}", file=sys.stderr)
         return 2

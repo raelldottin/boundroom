@@ -393,12 +393,19 @@ def render_telemetry(block: dict[str, Any]) -> str:
     return line
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(
+    argv: Optional[Sequence[str]] = None,
+    *,
+    repo_root: Optional[Path] = None,
+    environ: Optional[Mapping[str, str]] = None,
+    operator_file: Optional[Path] = telemetry_settings.DEFAULT_OPERATOR_FILE,
+) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if (args.board_dir is None) != (args.overlay is None):
         parser.error("--board-dir and --overlay go together")
-    status = collect(REPO_ROOT, args.queue, args.board_dir, args.overlay)
+    root = REPO_ROOT if repo_root is None else repo_root
+    status = collect(root, args.queue, args.board_dir, args.overlay, environ, operator_file)
     if args.json:
         # ensure_ascii escapes every control character, so board or queue text can't drive the terminal.
         print(json.dumps(status, indent=2, ensure_ascii=True))

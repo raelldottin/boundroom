@@ -1,24 +1,27 @@
 """Contract tests for the Hindsight snapshot export (RA-CP-004).
 
-Every call goes to the in-process fake server from ``test_memory``; snapshots are written only
-into pytest's temporary directories.
+Every call goes to the in-process fake Hindsight server on 127.0.0.1 (``hindsight_fake``), with
+the credential passed in as ``environ``; snapshots are written only into pytest's temporary
+directories.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from automation.context import memory
-from automation.tests import test_memory
-from automation.tests.test_memory import SECRET, closed_port, make_config
+from automation.tests import hindsight_fake
+from automation.tests.hindsight_fake import SECRET, closed_port, make_config
 
-# The fake server and credential fixtures are shared with the RA-CP-003 adapter tests.
-fake = test_memory.fake
-api_key = test_memory.api_key
+# The fake Hindsight server fixture, shared by the adapter tests.
+fake = hindsight_fake.fake
+
+ENV = {"HINDSIGHT_API_KEY": SECRET}
 
 PROJECT = "other-project"
 BANK = "other-bank"
@@ -42,10 +45,10 @@ def row(index: int, **extra: object) -> dict[str, object]:
 
 
 def take(config: memory.MemoryConfig) -> dict[str, object]:
-    return memory.snapshot(config, PROJECT, BANK, "operator", CAPTURED_AT)
+    return memory.snapshot(config, PROJECT, BANK, "operator", CAPTURED_AT, environ=ENV)
 
 
-def test_snapshot_pages_the_whole_bank_in_id_order(fake, api_key):
+def test_snapshot_pages_the_whole_bank_in_id_order(fake):
     fake.rows = [row(index) for index in reversed(range(250))]
 
     document = take(make_config(fake.endpoint))
@@ -69,7 +72,7 @@ def test_snapshot_pages_the_whole_bank_in_id_order(fake, api_key):
     assert fake.requests[0]["headers"]["Authorization"] == f"Bearer {SECRET}"
 
 
-def test_empty_bank_is_an_empty_snapshot(fake, api_key):
+def test_empty_bank_is_an_empty_snapshot(fake):
     document = take(make_config(fake.endpoint))
     assert document["memories"] == []
     assert document["total"] == 0
@@ -80,13 +83,13 @@ def test_empty_bank_is_an_empty_snapshot(fake, api_key):
     ("project", "bank_id", "message"),
     [("example-project", "example-bank", "snapshot is not granted"), (PROJECT, "example-bank", "not granted to project")],
 )
-def test_unauthorized_snapshot_never_reaches_the_server(fake, api_key, project, bank_id, message):
+def test_unauthorized_snapshot_never_reaches_the_server(fake, project, bank_id, message):
     with pytest.raises(memory.MemoryAccessError, match=message):
-        memory.snapshot(make_config(fake.endpoint), project, bank_id, "operator")
+        memory.snapshot(make_config(fake.endpoint), project, bank_id, "operator", environ=ENV)
     assert fake.requests == []
 
 
-def test_a_bank_that_changes_between_pages_is_refused(fake, api_key):
+def test_a_bank_that_changes_between_pages_is_refused(fake):
     fake.rows = [row(index) for index in range(150)]
     pages = fake.list_page
     fake.list_page = lambda limit, offset: {**pages(limit, offset), "total": 150 + offset}
@@ -95,7 +98,7 @@ def test_a_bank_that_changes_between_pages_is_refused(fake, api_key):
         take(make_config(fake.endpoint))
 
 
-def test_a_row_repeated_across_pages_is_refused(fake, api_key):
+def test_a_row_repeated_across_pages_is_refused(fake):
     fake.rows = [row(index) for index in range(150)]
     pages = fake.list_page
     fake.list_page = lambda limit, offset: pages(limit, offset - 1 if offset else 0)
@@ -104,7 +107,7 @@ def test_a_row_repeated_across_pages_is_refused(fake, api_key):
         take(make_config(fake.endpoint))
 
 
-def test_a_bank_that_shrinks_mid_snapshot_is_refused(fake, api_key):
+def test_a_bank_that_shrinks_mid_snapshot_is_refused(fake):
     fake.rows = [row(index) for index in range(150)]
     fake.list_page = lambda limit, offset: {"items": fake.rows[offset : offset + limit] if not offset else [], "total": 150}
 
@@ -112,7 +115,7 @@ def test_a_bank_that_shrinks_mid_snapshot_is_refused(fake, api_key):
         take(make_config(fake.endpoint))
 
 
-def test_a_bank_over_budget_is_refused_not_truncated(fake, api_key):
+def test_a_bank_over_budget_is_refused_not_truncated(fake):
     fake.rows = [row(index) for index in range(3)]
 
     with pytest.raises(memory.MemoryAccessError, match="max_snapshot_memories=2"):
@@ -121,24 +124,24 @@ def test_a_bank_over_budget_is_refused_not_truncated(fake, api_key):
 
 
 @pytest.mark.parametrize("body", [{"items": [{"text": "no id"}], "total": 1}, {"total": 0}, [1, 2]])
-def test_malformed_list_response_is_unavailable(fake, api_key, body):
+def test_malformed_list_response_is_unavailable(fake, body):
     fake.list_page = lambda limit, offset: body
 
     with pytest.raises(memory.MemoryUnavailable, match="ListResponse|ListItem"):
         take(make_config(fake.endpoint))
 
 
-def test_unreachable_server_is_unavailable(api_key):
+def test_unreachable_server_is_unavailable():
     with pytest.raises(memory.MemoryUnavailable, match="connection refused"):
         take(make_config(f"http://127.0.0.1:{closed_port()}"))
 
 
-def test_snapshot_needs_an_operator(fake, api_key):
+def test_snapshot_needs_an_operator(fake):
     with pytest.raises(memory.MemoryAccessError, match="operator"):
-        memory.snapshot(make_config(fake.endpoint), PROJECT, BANK, "  ")
+        memory.snapshot(make_config(fake.endpoint), PROJECT, BANK, "  ", environ=ENV)
 
 
-def test_written_snapshot_is_content_addressed_canonical_and_idempotent(fake, api_key, tmp_path):
+def test_written_snapshot_is_content_addressed_canonical_and_idempotent(fake, tmp_path):
     fake.rows = [row(2), row(1)]
     document = take(make_config(fake.endpoint))
 
@@ -197,20 +200,30 @@ def cli(tmp_path: Path, endpoint: str, project: str = PROJECT) -> list[str]:
     ]
 
 
-def test_cli_writes_one_snapshot(fake, api_key, tmp_path, capsys):
+def test_cli_writes_one_snapshot(fake, tmp_path, capsys):
     fake.rows = [row(1)]
 
-    assert memory.main(cli(tmp_path, fake.endpoint)) == 0
+    assert memory.main(cli(tmp_path, fake.endpoint), now=lambda: datetime(2026, 10, 28, tzinfo=timezone.utc), environ=ENV) == 0
 
-    report = json.loads(capsys.readouterr().out)
-    assert report["bank_id"] == BANK and report["memories"] == 1
-    assert json.loads(Path(report["path"]).read_bytes())["memories"] == [row(1)]
+    document = {
+        "format": "hindsight-snapshot/v1",
+        "project": PROJECT,
+        "bank_id": BANK,
+        "captured_at": CAPTURED_AT,
+        "captured_by": "operator",
+        "hindsight_revision": memory.HINDSIGHT_REVISION,
+        "memories": [row(1)],
+        "total": 1,
+    }
+    data = memory.snapshot_bytes(document)
+    path = tmp_path / "snapshots" / (hashlib.sha256(data).hexdigest() + ".json")
+    assert json.loads(capsys.readouterr().out) == {"path": str(path), "bank_id": BANK, "memories": 1}
+    assert path.read_bytes() == data
 
 
-def test_cli_stops_on_access_errors_and_reports_unavailability(fake, api_key, tmp_path, capsys):
-    assert memory.main(cli(tmp_path, fake.endpoint, project="example-project")) == 2
-    assert "stop: snapshot is not granted" in capsys.readouterr().err
-    assert memory.main(cli(tmp_path, f"http://127.0.0.1:{closed_port()}")) == 1
-    assert "unavailable: connection refused" in capsys.readouterr().err
+def test_cli_stops_on_access_errors_and_reports_unavailability(fake, tmp_path, capsys):
+    assert memory.main(cli(tmp_path, fake.endpoint, project="example-project"), environ=ENV) == 2
+    assert capsys.readouterr() == ("", "stop: snapshot is not granted to project 'example-project'\n")
+    assert memory.main(cli(tmp_path, f"http://127.0.0.1:{closed_port()}"), environ=ENV) == 1
+    assert capsys.readouterr() == ("", "unavailable: connection refused\n")
     assert list((tmp_path / "snapshots").iterdir()) == []
-    assert SECRET not in capsys.readouterr().err

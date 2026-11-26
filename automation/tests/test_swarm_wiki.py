@@ -24,6 +24,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO_ROOT / ".github/workflows/swarm-wiki-compiler.yml"
 STAND_IN = """
 import json, sys
+if "--lists" in sys.argv:
+    print("[1]")
+    print("[2]", file=sys.stderr)
+    raise SystemExit(0)
 if "--crash" in sys.argv:
     print("swarm-wiki: boom", file=sys.stderr)
     raise SystemExit(2)
@@ -45,37 +49,99 @@ def stand_in(tmp_path, monkeypatch):
     (checkout / swarm_wiki.COMPILER_ENTRY).write_text(STAND_IN, encoding="utf-8")
     git(checkout, "init", "-q")
     git(checkout, "add", "-A")
-    git(checkout, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "stand-in")
+    git(
+        checkout,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "stand-in",
+    )
     monkeypatch.setattr(swarm_wiki, "COMPILER_COMMIT", git(checkout, "rev-parse", "HEAD"))
     return checkout
 
 
-def test_pinned_build_returns_the_compiler_evidence(stand_in):
-    evidence = swarm_wiki.run(stand_in, ["--board", "b"], check=False)
-
-    assert evidence["compiler"] == {
-        "repository": "raelldottin/hermes-swarm-protocol",
-        "commit": swarm_wiki.COMPILER_COMMIT,
-        "entry": "ops/build_wiki.py",
+def evidence(mode: str, argv: list[str], exit_code: int, report: object, findings: list, errors: list) -> dict:
+    return {
+        "compiler": {
+            "repository": "raelldottin/hermes-swarm-protocol",
+            "commit": swarm_wiki.COMPILER_COMMIT,
+            "entry": "ops/build_wiki.py",
+        },
+        "mode": mode,
+        "argv": argv,
+        "exit_code": exit_code,
+        "report": report,
+        "findings": findings,
+        "errors": errors,
     }
-    assert evidence["mode"] == "build" and evidence["argv"] == ["--board", "b"] and evidence["exit_code"] == 0
-    assert evidence["report"] == {"argv": ["--board", "b"], "matches": True}
-    assert evidence["findings"] == [{"class": "stale-memory-source", "target": "s.json#m1"}]
-    assert evidence["errors"] == ["plain warning"]
+
+
+FINDING = {"class": "stale-memory-source", "target": "s.json#m1"}
+
+
+def test_pinned_build_returns_the_compiler_evidence(stand_in):
+    assert swarm_wiki.run(stand_in, ["--board", "b"], check=False) == evidence(
+        "build", ["--board", "b"], 0, {"argv": ["--board", "b"], "matches": True}, [FINDING], ["plain warning"]
+    )
 
 
 def test_check_mode_adds_the_check_flag_and_keeps_the_exit_code(stand_in):
-    evidence = swarm_wiki.run(stand_in, ["--unresolved"], check=True)
-
-    assert evidence["mode"] == "check" and evidence["argv"] == ["--unresolved", "--check"]
-    assert evidence["exit_code"] == 1
+    assert swarm_wiki.run(stand_in, ["--unresolved"], check=True) == evidence(
+        "check",
+        ["--unresolved", "--check"],
+        1,
+        {"argv": ["--unresolved", "--check"], "matches": True},
+        [FINDING],
+        ["plain warning"],
+    )
 
 
 def test_compiler_errors_are_recorded_not_parsed(stand_in):
-    evidence = swarm_wiki.run(stand_in, ["--crash"], check=False)
+    assert swarm_wiki.run(stand_in, ["--crash"], check=False) == evidence("build", ["--crash"], 2, None, [], ["swarm-wiki: boom"])
 
-    assert evidence["exit_code"] == 2 and evidence["report"] is None
-    assert evidence["errors"] == ["swarm-wiki: boom"] and evidence["findings"] == []
+
+def test_json_that_is_not_an_object_is_neither_a_report_nor_a_finding(stand_in):
+    assert swarm_wiki.run(stand_in, ["--lists"], check=False) == evidence("build", ["--lists"], 0, None, [], ["[2]"])
+
+
+def test_a_pinned_checkout_without_the_compiler_entry_is_refused(tmp_path, monkeypatch):
+    checkout = tmp_path / "compiler"
+    checkout.mkdir()
+    (checkout / "README.md").write_text("not the compiler\n", encoding="utf-8")
+    git(checkout, "init", "-q")
+    git(checkout, "add", "-A")
+    git(
+        checkout,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "other",
+    )
+    monkeypatch.setattr(swarm_wiki, "COMPILER_COMMIT", git(checkout, "rev-parse", "HEAD"))
+
+    with pytest.raises(swarm_wiki.CompilerPinError, match="^ops/build_wiki.py is missing from the compiler checkout$"):
+        swarm_wiki.run(checkout, [], check=False)
+
+
+def test_an_interpreter_that_cannot_start_is_refused(stand_in, tmp_path):
+    python = str(tmp_path / "no-such-python")
+
+    with pytest.raises(swarm_wiki.CompilerPinError) as raised:
+        swarm_wiki.run(stand_in, [], check=False, python=python)
+
+    assert str(raised.value) == f"cannot run {python}: No such file or directory"
 
 
 def test_another_commit_is_refused_before_running(stand_in, monkeypatch):
@@ -107,19 +173,68 @@ def test_the_operator_cannot_pass_the_wrappers_own_flags(stand_in):
 
 
 def test_a_compiler_that_hangs_is_stopped(stand_in):
-    with pytest.raises(swarm_wiki.CompilerPinError, match="did not finish"):
+    with pytest.raises(swarm_wiki.CompilerPinError, match="^compiler did not finish within 1e-06 seconds$"):
         swarm_wiki.run(stand_in, [], check=False, python=sys.executable, timeout=0.000001)
 
 
-def test_cli_writes_evidence_and_returns_the_compiler_exit_code(stand_in, tmp_path, capsys):
+def rendered(evidence: dict) -> str:
+    return json.dumps(evidence, indent=2, sort_keys=True) + "\n"
+
+
+def test_cli_writes_evidence_to_a_file_and_returns_the_compiler_exit_code(stand_in, tmp_path, capsys):
     evidence_path = tmp_path / "evidence.json"
 
     code = swarm_wiki.main(["check", "--compiler", str(stand_in), "--evidence", str(evidence_path), "--", "--unresolved"])
 
-    assert code == 1
-    assert json.loads(evidence_path.read_text(encoding="utf-8"))["argv"] == ["--unresolved", "--check"]
-    assert swarm_wiki.main(["build", "--compiler", str(tmp_path / "missing")]) == 2
-    assert "stop:" in capsys.readouterr().err
+    assert (code, capsys.readouterr()) == (1, ("", ""))
+    assert evidence_path.read_text(encoding="utf-8") == rendered(
+        evidence(
+            "check",
+            ["--unresolved", "--check"],
+            1,
+            {"argv": ["--unresolved", "--check"], "matches": True},
+            [FINDING],
+            ["plain warning"],
+        )
+    )
+
+
+def test_cli_prints_evidence_without_an_evidence_file(stand_in, capsys):
+    code = swarm_wiki.main(["build", "--compiler", str(stand_in), "--", "--board", "b"])
+
+    expected = evidence("build", ["--board", "b"], 0, {"argv": ["--board", "b"], "matches": True}, [FINDING], ["plain warning"])
+    assert (code, capsys.readouterr()) == (0, (rendered(expected), ""))
+
+
+def test_cli_without_compiler_arguments_passes_none(stand_in, capsys):
+    code = swarm_wiki.main(["build", "--compiler", str(stand_in)])
+
+    expected = evidence("build", [], 0, {"argv": [], "matches": True}, [FINDING], ["plain warning"])
+    assert (code, capsys.readouterr()) == (0, (rendered(expected), ""))
+
+
+def test_cli_stops_on_a_checkout_that_is_not_the_pinned_compiler(tmp_path, capsys):
+    missing = tmp_path / "missing"
+
+    code = swarm_wiki.main(["build", "--compiler", str(missing)])
+
+    assert (code, capsys.readouterr()) == (2, ("", f"stop: {missing} is not a readable git checkout\n"))
+
+
+def test_the_module_runs_as_a_command(tmp_path):
+    missing = tmp_path / "missing"
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
+
+    result = subprocess.run(
+        [sys.executable, "-m", "automation.context.swarm_wiki", "build", "--compiler", str(missing)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert (result.returncode, result.stdout, result.stderr) == (2, "", f"stop: {missing} is not a readable git checkout\n")
 
 
 def test_ci_runs_the_same_pinned_commit():

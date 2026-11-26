@@ -35,7 +35,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, Literal, Optional, TypeVar
+from typing import Annotated, Any, Callable, Literal, Mapping, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -207,16 +207,35 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
 
+def utc_now() -> datetime:
+    """The default clock of every ``now`` seam here and in ``build_context``: an aware UTC time.
+
+    A caller injecting its own ``now`` must return an aware UTC datetime too; nothing converts it.
+    """
+    return datetime.now(timezone.utc)
+
+
 def _request(
-    config: MemoryConfig, bank_id: str, route: str, body: Optional[dict[str, Any]] = None, params: Optional[dict[str, Any]] = None
+    config: MemoryConfig,
+    bank_id: str,
+    route: str,
+    body: Optional[dict[str, Any]] = None,
+    params: Optional[dict[str, Any]] = None,
+    *,
+    environ: Optional[Mapping[str, str]] = None,
 ) -> Any:
-    """POST ``body`` as JSON, or GET with ``params`` when there is no body."""
+    """POST ``body`` as JSON, or GET with ``params`` when there is no body.
+
+    ``environ`` is where the credential and the offline switch are read, the process
+    environment by default.
+    """
+    env = os.environ if environ is None else environ
     payload = None if body is None else json.dumps(body, ensure_ascii=False, sort_keys=True).encode("utf-8")
     if payload is not None and len(payload) > config.budgets.max_request_bytes:
         raise MemoryAccessError(f"request of {len(payload)} bytes exceeds max_request_bytes={config.budgets.max_request_bytes}")
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if config.api_key_env:
-        api_key = os.environ.get(config.api_key_env, "")
+        api_key = env.get(config.api_key_env, "")
         if not api_key:
             raise MemoryAccessError(f"credential variable {config.api_key_env} is not set")
         headers["Authorization"] = f"Bearer {api_key}"
@@ -224,7 +243,7 @@ def _request(
     if params:
         url += "?" + urllib.parse.urlencode(params)
     try:
-        url = egress.guard_egress("memory", url)
+        url = egress.guard_egress("memory", url, env)
     except egress.EgressRefused as error:
         raise MemoryOffline(str(error)) from None
     request = urllib.request.Request(url, data=payload, headers=headers, method="GET" if payload is None else "POST")
@@ -297,7 +316,15 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def recall(config: MemoryConfig, project: str, bank_id: str, query: str, repo_root: Path) -> dict[str, Any]:
+def recall(
+    config: MemoryConfig,
+    project: str,
+    bank_id: str,
+    query: str,
+    repo_root: Path,
+    *,
+    environ: Optional[Mapping[str, str]] = None,
+) -> dict[str, Any]:
     authorize(config, project, bank_id, "recall")
     body = {
         "query": query,
@@ -306,7 +333,7 @@ def recall(config: MemoryConfig, project: str, bank_id: str, query: str, repo_ro
         "max_tokens": config.budgets.recall_max_tokens,
     }
     try:
-        response = _parse(_RecallResponse, _request(config, bank_id, "/memories/recall", body)).model_dump()
+        response = _parse(_RecallResponse, _request(config, bank_id, "/memories/recall", body, environ=environ)).model_dump()
     except BankNotFound:
         response = {"results": []}
     return {"bank_id": bank_id, **shape_recall(response, repo_root, config.budgets)}
@@ -367,13 +394,18 @@ def _provenance_problem(result: dict[str, Any], repo_root: Path, digests: dict[s
     current = digests[source_path]
     if current is None:
         return "source missing"
-    if current != metadata["source_sha256"]:
-        return "source changed since retained"
-    return ""
+    return "source changed since retained" if current != metadata["source_sha256"] else ""
 
 
 def retain(
-    config: MemoryConfig, project: str, bank_id: str, repo_root: Path, source_path: str, evidence_ref: str
+    config: MemoryConfig,
+    project: str,
+    bank_id: str,
+    repo_root: Path,
+    source_path: str,
+    evidence_ref: str,
+    *,
+    environ: Optional[Mapping[str, str]] = None,
 ) -> dict[str, Any]:
     """Retain one whole repository file with its digest and evidence reference.
 
@@ -398,7 +430,7 @@ def retain(
             "evidence_ref": evidence_ref,
         },
     }
-    response = _parse(_RetainResponse, _request(config, bank_id, "/memories", {"items": [item], "async": False}))
+    response = _parse(_RetainResponse, _request(config, bank_id, "/memories", {"items": [item], "async": False}, environ=environ))
     return {
         "bank_id": bank_id,
         "document_id": source_path,
@@ -408,11 +440,13 @@ def retain(
     }
 
 
-def reflect(config: MemoryConfig, project: str, bank_id: str, query: str) -> dict[str, Any]:
+def reflect(
+    config: MemoryConfig, project: str, bank_id: str, query: str, *, environ: Optional[Mapping[str, str]] = None
+) -> dict[str, Any]:
     """Ask Hindsight to reason over the bank. The answer is generated text, never source proof."""
     authorize(config, project, bank_id, "reflect")
     body = {"query": query, "budget": "low", "max_tokens": config.budgets.reflect_max_tokens}
-    response = _parse(_ReflectResponse, _request(config, bank_id, "/reflect", body))
+    response = _parse(_ReflectResponse, _request(config, bank_id, "/reflect", body, environ=environ))
     text = response.text[: config.budgets.max_total_chars]
     return {
         "bank_id": bank_id,
@@ -423,7 +457,9 @@ def reflect(config: MemoryConfig, project: str, bank_id: str, query: str) -> dic
     }
 
 
-def recall_section(config: MemoryConfig, project: str, query: str, repo_root: Path) -> dict[str, Any]:
+def recall_section(
+    config: MemoryConfig, project: str, query: str, repo_root: Path, *, environ: Optional[Mapping[str, str]] = None
+) -> dict[str, Any]:
     """The ``memory`` section of a context bundle.
 
     Access errors propagate: a misconfigured map stops the bundle. An unavailable server
@@ -434,20 +470,28 @@ def recall_section(config: MemoryConfig, project: str, query: str, repo_root: Pa
         raise MemoryAccessError(f"project {project!r} has no memory bank in the map")
     section: dict[str, Any] = {"source": "hindsight", "project": project, "query": query}
     try:
-        return {**section, **recall(config, project, grant.bank_id, query, repo_root)}
+        return {**section, **recall(config, project, grant.bank_id, query, repo_root, environ=environ)}
     except MemoryUnavailable as error:
         return {**section, "bank_id": grant.bank_id, "status": "unavailable", "error": str(error), "results": []}
 
 
 def snapshot(
-    config: MemoryConfig, project: str, bank_id: str, captured_by: str, captured_at: Optional[str] = None
+    config: MemoryConfig,
+    project: str,
+    bank_id: str,
+    captured_by: str,
+    captured_at: Optional[str] = None,
+    *,
+    now: Callable[[], datetime] = utc_now,
+    environ: Optional[Mapping[str, str]] = None,
 ) -> dict[str, Any]:
     """Export every memory unit in the bank as a ``hindsight-snapshot/v1`` document.
 
     Pages ``GET /memories/list`` in full. A bank that changes between pages, or that holds more
     than ``max_snapshot_memories``, is refused rather than exported partially, because a partial
     snapshot would read as a complete one. Rows are kept as the server returned them, sorted by
-    id: the compiler, not this export, judges their provenance.
+    id: the compiler, not this export, judges their provenance. ``now`` must return an aware UTC
+    datetime: ``captured_at`` is formatted with a ``Z`` suffix and not converted.
     """
     authorize(config, project, bank_id, "snapshot")
     if not captured_by.strip():
@@ -458,7 +502,7 @@ def snapshot(
     changed = MemoryUnavailable("bank changed during the snapshot; capture again")
     while True:
         params = {"limit": SNAPSHOT_PAGE_SIZE, "offset": len(rows)}
-        page = _parse(_ListResponse, _request(config, bank_id, "/memories/list", params=params))
+        page = _parse(_ListResponse, _request(config, bank_id, "/memories/list", params=params, environ=environ))
         if total is None:
             total = page.total
             if total > limit:
@@ -480,7 +524,7 @@ def snapshot(
         "format": SNAPSHOT_FORMAT,
         "project": project,
         "bank_id": bank_id,
-        "captured_at": captured_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "captured_at": captured_at or now().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "captured_by": captured_by,
         "hindsight_revision": HINDSIGHT_REVISION,
         "memories": [rows[row_id] for row_id in sorted(rows)],
@@ -514,7 +558,12 @@ def write_snapshot(document: dict[str, Any], out_dir: Path) -> Path:
     return path
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(
+    argv: Optional[list[str]] = None,
+    *,
+    now: Callable[[], datetime] = utc_now,
+    environ: Optional[Mapping[str, str]] = None,
+) -> int:
     parser = argparse.ArgumentParser(description="Export one Hindsight bank as a Swarm Wiki snapshot.")
     parser.add_argument("command", choices=["snapshot"])
     parser.add_argument("--config", type=Path, required=True, help="Operator-reviewed memory map (JSON).")
@@ -527,7 +576,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         grant = config.projects.get(args.project)
         if grant is None:
             raise MemoryAccessError(f"project {args.project!r} has no memory bank in the map")
-        document = snapshot(config, args.project, grant.bank_id, args.captured_by)
+        document = snapshot(config, args.project, grant.bank_id, args.captured_by, now=now, environ=environ)
         path = write_snapshot(document, args.out)
     except MemoryAccessError as error:
         print(f"stop: {error}", file=sys.stderr)
