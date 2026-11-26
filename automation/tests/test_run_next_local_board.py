@@ -90,6 +90,9 @@ def test_one_slice_runs_on_a_local_board_and_waits_for_a_person(consumer, agent,
     kinds = [(e["kind"], e["actor"]) for e in board.local.events(first)]
     assert ("claimed", lb.SUPERVISOR_ACTOR) in kinds and ("review_requested", lb.SUPERVISOR_ACTOR) in kinds
     assert not any(kind == "approved" for kind, _ in kinds)  # only a person approves
+    # The claim can't be renewed, so it outlasts the agent's timeout by half an hour for the replay.
+    (claimed,) = [e["payload"] for e in board.local.events(first) if e["kind"] == "claimed"]
+    assert claimed["ttl_seconds"] == EXAMPLE_OVERLAY["policy"]["handoff_timeout_seconds"] + 1800
     run = board.local.events(first)[-1]["payload"]
     assert run["slice_id"] == board.slice_id(first) and len(run["handoff_sha256"]) == 64
     assert not board.hermes_mark.exists()
@@ -165,6 +168,7 @@ def test_a_runner_profile_adds_what_the_runner_may_run_to_the_prompt(consumer, a
 
     profiled = prompt_for("edits", ("--runner-profile", "edits"))
     assert "## What you may run" in profiled and "- `Edit(src/loop.py)`" in profiled
+    assert "- `Edit(automation/handoffs/" in profiled  # its own handoff, by its path in the repository
     assert "## What you may run" in prompt_for("default", ())  # bounded by default since v0.4.0 (RA-SET-010)
     # BOUNDROOM_CLAUDE_PERMISSION_MODE set alone is the one way to run with no profile.
     monkeypatch.setenv("BOUNDROOM_CLAUDE_PERMISSION_MODE", "bypassPermissions")
