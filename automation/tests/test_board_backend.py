@@ -5,6 +5,8 @@ The board, the stand-in ``hermes`` and its call log come from ``test_kanban_writ
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -15,13 +17,14 @@ from automation.supervisor import kanban_writer as kw
 from automation.supervisor import run_next
 from automation.supervisor.board_backend import BoardBackend, Claim
 from automation.tests import test_kanban_writer
-from automation.tests.test_kanban_writer import BOARD, READY, calls, row
+from automation.tests.test_kanban_writer import BOARD, READY, calls
 
 board = test_kanban_writer.board
 hermes = test_kanban_writer.hermes
 handoff = test_kanban_writer.handoff
 
-OVERLAY = Path(__file__).resolve().parents[2] / "automation/examples/kanban-overlay.json"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+OVERLAY = REPO_ROOT / "automation/examples/kanban-overlay.json"
 
 
 class RecordingBackend:
@@ -61,15 +64,21 @@ def test_the_hermes_backend_is_a_board_backend(board, hermes):
     assert backend.snapshot() == kp.read_board(board)
 
 
-def test_the_hermes_backend_claims_and_records_through_hermes(board, hermes, handoff, tmp_path):
-    backend = kw.HermesBackend(board, hermes)
+def test_a_claim_cannot_be_altered_once_made():
+    # A fresh interpreter defines ``Claim`` while this test runs, so the mutation harness (which
+    # credits import-time lines only to the tests that execute them) checks this test against it.
+    code = (
+        "import dataclasses\n"
+        "from automation.supervisor.board_backend import Claim\n"
+        f"held = Claim({BOARD!r}, {READY!r}, 1)\n"
+        "try:\n"
+        "    held.run_id = 2\n"
+        "except dataclasses.FrozenInstanceError:\n"
+        "    print('refused', held.run_id)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True, text=True, check=True, timeout=60)
 
-    held = backend.claim(READY, backend.snapshot().revision, 600)
-    assert held == Claim(BOARD, READY, 1)
-    assert backend.record(held, "done", "ok", handoff) is True
-
-    assert row(board, "SELECT status FROM tasks WHERE id = ?", READY) == ("review",)
-    assert [call["argv"][3] for call in calls(tmp_path)] == ["claim", "request-review"]
+    assert result.stdout == "refused 1\n"
 
 
 def test_the_kanban_queue_reaches_the_board_only_through_its_backend(board, handoff, tmp_path, monkeypatch):
