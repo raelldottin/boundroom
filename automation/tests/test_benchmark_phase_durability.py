@@ -125,6 +125,7 @@ class KilledPhaseDurabilityTests(unittest.TestCase):
         # Censored, not invalid: the phase ran out of its ceiling having done what it owed.
         self.assertEqual(PHASE_CENSORED, result.state)
         # The budget bought working time; the shutdown grace is recorded, never charged.
+        self.assertEqual(PHASE_BUDGET_SECONDS, result.budget_seconds)
         self.assertLessEqual(result.seconds, PHASE_BUDGET_SECONDS)
         self.assertGreaterEqual(result.grace_seconds, 0.0)
 

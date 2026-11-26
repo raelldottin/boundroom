@@ -26,7 +26,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Optional, Protocol
+from typing import Any, Callable, Mapping, Optional, Protocol
 
 from automation.supervisor import run_next
 from automation.supervisor.telemetry_metrics import session_outcome
@@ -304,6 +304,9 @@ class ExecutionContext:
     # records spans around each session: nothing from it reaches the prompt, the context file,
     # the command, the agent's environment or the workspace. None is off.
     telemetry: Any = None
+    # The clock every session is timed and the instance budget is spent against, in monotonic
+    # seconds. Like the budget it measures, it is the same for every lane and never reaches the agent.
+    clock: Callable[[], float] = time.monotonic
 
 
 class ExecutionStrategy(Protocol):
@@ -808,9 +811,9 @@ def run_phase(
             budget_seconds=budget,
         ) as session:
             # Timed inside both spans, so the phase's charge is exactly the session's, as before.
-            started = time.monotonic()
+            started = ctx.clock()
             returncode = ctx.runner(command, ctx.workspace, ctx.env, budget)
-            elapsed = time.monotonic() - started
+            elapsed = ctx.clock() - started
             tracing.annotate(tracer, session, exit_code=returncode, duration_seconds=round(elapsed, 3))
             if returncode != 0:
                 tracing.fail(tracer, session, "agent_timeout" if returncode == AGENT_TIMEOUT_RETURNCODE else "agent_exit_nonzero")
@@ -850,13 +853,13 @@ class _BudgetedRun:
 
     def __init__(self, ctx: ExecutionContext, ceilings: Optional[Mapping[str, int]] = None) -> None:
         self._ctx = ctx
-        self._started = time.monotonic()
+        self._started = ctx.clock()
         self.phases: list[PhaseResult] = []
         self.budgets = _scaled_ceilings(ceilings, ctx.timeout_seconds) if ceilings else {}
 
     @property
     def remaining(self) -> int:
-        spent = time.monotonic() - self._started
+        spent = self._ctx.clock() - self._started
         return int(self._ctx.timeout_seconds - spent)
 
     @property
@@ -866,7 +869,8 @@ class _BudgetedRun:
     def phase(self, name: str, prompt_text: str, context_data: dict[str, Any]) -> PhaseResult:
         # The instance budget stays the backstop: ceilings sum to it, but a lane must not
         # outlive it if a phase overruns its own kill.
-        allowed = min(self.budgets.get(name, self.remaining), self.remaining)
+        remaining = self.remaining
+        allowed = min(self.budgets.get(name, remaining), remaining)
         result = run_phase(self._ctx, name, prompt_text, context_data, allowed)
         self.phases.append(result)
         return result

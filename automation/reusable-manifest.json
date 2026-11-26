@@ -124,6 +124,24 @@
       "component": "benchmark"
     },
     {
+      "source": "automation/tests/test_benchmark_lanes_core.py",
+      "destination": "automation/tests/test_benchmark_lanes_core.py",
+      "kind": "file",
+      "preserve_executable": false,
+      "delete_stale": false,
+      "template": false,
+      "component": "benchmark"
+    },
+    {
+      "source": "automation/tests/test_benchmark_strategies.py",
+      "destination": "automation/tests/test_benchmark_strategies.py",
+      "kind": "file",
+      "preserve_executable": false,
+      "delete_stale": false,
+      "template": false,
+      "component": "benchmark"
+    },
+    {
       "source": "automation/tests/test_benchmark_judge.py",
       "destination": "automation/tests/test_benchmark_judge.py",
       "kind": "file",
