@@ -57,7 +57,7 @@ def commit(repo: Path) -> None:
 
 
 @pytest.fixture
-def repo(tmp_path, monkeypatch) -> Path:
+def repo(tmp_path) -> Path:
     """A consumer with the example queue committed and a clean worktree."""
     path = tmp_path / "consumer"
     path.mkdir()
@@ -66,17 +66,21 @@ def repo(tmp_path, monkeypatch) -> Path:
     shutil.copytree(REPO_ROOT / "automation/prompts", path / "automation/prompts")
     write_queue(path, EXAMPLE_QUEUE)
     commit(path)
-    monkeypatch.setattr(operator_status, "REPO_ROOT", path)
     return path
 
 
-def status_json(capsys, *argv: str) -> tuple[int, dict[str, Any]]:
-    code = operator_status.main(["--json", *argv])
+def run_main(root: Path, argv: list[str]) -> int:
+    """The command, against ``root``, with no telemetry settings from the person running the tests."""
+    return operator_status.main(argv, repo_root=root, environ={}, operator_file=root.parent / "absent-telemetry.json")
+
+
+def status_json(capsys, root: Path, *argv: str) -> tuple[int, dict[str, Any]]:
+    code = run_main(root, ["--json", *argv])
     return code, json.loads(capsys.readouterr().out)
 
 
-def status_text(capsys, *argv: str) -> tuple[int, str]:
-    code = operator_status.main(list(argv))
+def status_text(capsys, root: Path, *argv: str) -> tuple[int, str]:
+    code = run_main(root, list(argv))
     return code, capsys.readouterr().out
 
 
@@ -94,7 +98,7 @@ def snapshot(*roots: Path) -> dict[str, tuple[int, bytes]]:
 
 
 def test_the_json_report_is_one_versioned_object(repo, capsys):
-    code, status = status_json(capsys)
+    code, status = status_json(capsys, repo)
 
     assert code == 0
     assert set(status) == TOP_LEVEL_KEYS
@@ -124,7 +128,7 @@ def test_the_next_slice_is_the_one_run_next_dry_run_selects(repo, capsys, monkey
     write_queue(repo, queue)
     commit(repo)
 
-    _, status = status_json(capsys)
+    _, status = status_json(capsys, repo)
     monkeypatch.setattr(run_next, "REPO_ROOT", repo)
     monkeypatch.setattr(sys, "argv", ["run_next", "--dry-run", "--include-blocked"])
     assert run_next._cli_entry() == 0
@@ -139,8 +143,8 @@ def test_the_version_comes_from_the_plugin_manifest_when_there_is_one(repo, caps
     manifest.parent.mkdir(parents=True)
     manifest.write_text(json.dumps({"name": "boundroom", "version": "9.8.7"}), encoding="utf-8")
 
-    _, status = status_json(capsys)
-    _, text = status_text(capsys)
+    _, status = status_json(capsys, repo)
+    _, text = status_text(capsys, repo)
 
     assert status["boundroom_version"] == {"value": "9.8.7", "source": operator_status.VERSION_FILE}
     assert operator_status.VERSION_FILE in status["provenance"]["files_read"]
@@ -148,13 +152,15 @@ def test_the_version_comes_from_the_plugin_manifest_when_there_is_one(repo, caps
 
 
 def test_a_synced_copy_without_a_manifest_has_no_version(repo, capsys):
-    _, status = status_json(capsys)
+    _, status = status_json(capsys, repo)
 
     assert status["boundroom_version"] == {"value": None, "source": None}
 
 
-def test_boundroom_itself_reports_its_release_version():
-    status = operator_status.collect(REPO_ROOT, queue="automation/examples/example-slices.json")
+def test_boundroom_itself_reports_its_release_version(tmp_path):
+    status = operator_status.collect(
+        REPO_ROOT, queue="automation/examples/example-slices.json", environ={}, operator_file=tmp_path / "absent.json"
+    )
     manifest = json.loads((REPO_ROOT / operator_status.VERSION_FILE).read_text(encoding="utf-8"))
 
     assert status["boundroom_version"]["value"] == manifest["version"]
@@ -165,8 +171,8 @@ def test_boundroom_itself_reports_its_release_version():
 
 
 def test_no_lock_means_no_sync_pin(repo, capsys):
-    _, status = status_json(capsys)
-    _, text = status_text(capsys)
+    _, status = status_json(capsys, repo)
+    _, text = status_text(capsys, repo)
 
     assert status["sync_pin"] is None
     assert "sync pin: none (no automation/boundroom.lock or automation/repo-automation.lock)" in text
@@ -178,8 +184,8 @@ def test_a_boundroom_lock_reports_its_pin(repo, capsys):
     (repo / "automation/boundroom.lock").write_text(json.dumps(lock), encoding="utf-8")
     commit(repo)
 
-    _, status = status_json(capsys)
-    _, text = status_text(capsys)
+    _, status = status_json(capsys, repo)
+    _, text = status_text(capsys, repo)
 
     assert status["sync_pin"] == {"path": "automation/boundroom.lock", "legacy": False, **lock}
     assert "automation/boundroom.lock" in status["provenance"]["files_read"]
@@ -193,8 +199,8 @@ def test_a_legacy_lock_is_read_and_named_legacy(repo, capsys):
     )
     commit(repo)
 
-    _, status = status_json(capsys)
-    _, text = status_text(capsys)
+    _, status = status_json(capsys, repo)
+    _, text = status_text(capsys, repo)
 
     assert status["sync_pin"] == {
         "path": "automation/repo-automation.lock",
@@ -211,7 +217,7 @@ def test_the_new_lock_name_wins_over_the_legacy_one(repo, capsys):
     (repo / "automation/boundroom.lock").write_text(json.dumps({"commit": SHA}), encoding="utf-8")
     (repo / "automation/repo-automation.lock").write_text(json.dumps({"commit": "f" * 40}), encoding="utf-8")
 
-    _, status = status_json(capsys)
+    _, status = status_json(capsys, repo)
 
     assert (status["sync_pin"]["path"], status["sync_pin"]["commit"]) == ("automation/boundroom.lock", SHA)
 
@@ -219,8 +225,8 @@ def test_the_new_lock_name_wins_over_the_legacy_one(repo, capsys):
 def test_a_lock_without_a_commit_is_reported_as_a_problem(repo, capsys):
     (repo / "automation/boundroom.lock").write_text("{}", encoding="utf-8")
 
-    _, status = status_json(capsys)
-    _, text = status_text(capsys)
+    _, status = status_json(capsys, repo)
+    _, text = status_text(capsys, repo)
 
     assert status["sync_pin"]["commit"] is None
     assert status["sync_pin"]["error"] == "the lock names no commit"
@@ -234,8 +240,8 @@ def test_an_empty_queue_has_nothing_eligible(repo, capsys):
     write_queue(repo, {**EXAMPLE_QUEUE, "slices": []})
     commit(repo)
 
-    code, status = status_json(capsys)
-    _, text = status_text(capsys)
+    code, status = status_json(capsys, repo)
+    _, text = status_text(capsys, repo)
 
     assert code == 0
     assert status["next_eligible_slice"] is None
@@ -255,8 +261,8 @@ def test_a_blocked_slice_is_reported_with_its_reason_and_unblocker(repo, capsys)
     write_queue(repo, queue)
     commit(repo)
 
-    _, status = status_json(capsys)
-    _, text = status_text(capsys)
+    _, status = status_json(capsys, repo)
+    _, text = status_text(capsys, repo)
 
     assert status["blocked_slices"] == [
         {
@@ -278,18 +284,19 @@ def test_an_in_progress_slice_is_a_refusal(repo, capsys):
     write_queue(repo, queue)
     commit(repo)
 
-    _, status = status_json(capsys)
+    _, status = status_json(capsys, repo)
 
-    assert {"code": "active_slice", "message": "queue already has in_progress slice today-continue-ui-regression-coverage"} in (
-        status["refusals"]
-    )
+    assert status["refusals"] == [
+        {"code": "active_slice", "message": "queue already has in_progress slice today-continue-ui-regression-coverage"},
+        {"code": "no_eligible_slice", "message": "no eligible queued slice found."},
+    ]
 
 
 def test_a_dirty_path_outside_the_next_slice_is_a_refusal(repo, capsys):
     (repo / "stray.txt").write_text("not in scope\n", encoding="utf-8")
 
-    _, status = status_json(capsys)
-    _, text = status_text(capsys)
+    _, status = status_json(capsys, repo)
+    _, text = status_text(capsys, repo)
 
     assert status["provenance"]["worktree_clean"] is False
     assert status["provenance"]["dirty_paths"] == ["stray.txt"]
@@ -305,19 +312,24 @@ def test_a_queue_without_an_agent_command_is_a_refusal(repo, capsys):
     write_queue(repo, queue)
     commit(repo)
 
-    _, status = status_json(capsys)
+    _, status = status_json(capsys, repo)
 
-    assert [refusal["code"] for refusal in status["refusals"]] == ["no_agent_command"]
+    assert status["refusals"] == [
+        {
+            "code": "no_agent_command",
+            "message": "no agent command template configured. Pass --agent-cmd or set policy.agent_command_template.",
+        }
+    ]
 
 
 def test_a_missing_queue_is_reported_and_the_exit_code_says_so(repo, capsys):
     (repo / QUEUE).unlink()
     commit(repo)
 
-    code, status = status_json(capsys)
-    text_code, text = status_text(capsys)
+    code, status = status_json(capsys, repo)
+    text_code, text = status_text(capsys, repo)
 
-    assert code == text_code == operator_status.EX_INCOMPLETE
+    assert code == text_code == 1
     assert [refusal["code"] for refusal in status["refusals"]] == [
         "queue_unreadable",
     ]
@@ -327,16 +339,23 @@ def test_a_missing_queue_is_reported_and_the_exit_code_says_so(repo, capsys):
 
 
 def test_outside_git_the_provenance_is_unknown(tmp_path, capsys, monkeypatch):
-    write_queue(tmp_path, EXAMPLE_QUEUE)
-    monkeypatch.setattr(operator_status, "REPO_ROOT", tmp_path)
-    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    plain = tmp_path / "plain"
+    write_queue(plain, EXAMPLE_QUEUE)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
 
-    code, status = status_json(capsys)
-    _, text = status_text(capsys)
+    code, status = status_json(capsys, plain)
+    _, text = status_text(capsys, plain)
 
-    assert code == operator_status.EX_INCOMPLETE
-    assert status["provenance"]["git_head"] is None and status["provenance"]["worktree_clean"] is None
-    assert status["refusals"][0]["code"] == "git_unavailable"
+    assert code == 1
+    assert status["provenance"] == {
+        "repo_root": str(plain),
+        "git_head": None,
+        "worktree_clean": None,
+        "dirty_paths": None,
+        "files_read": [QUEUE],
+    }
+    assert [refusal["code"] for refusal in status["refusals"]] == ["git_unavailable"]
+    assert status["next_eligible_slice"]["slice_id"] == "today-continue-ui-regression-coverage"
     assert "provenance: HEAD unknown, worktree unknown" in text
 
 
@@ -346,8 +365,8 @@ def test_queue_text_cannot_drive_the_terminal(repo, capsys):
     write_queue(repo, queue)
     commit(repo)
 
-    _, text = status_text(capsys)
-    code = operator_status.main(["--json"])
+    _, text = status_text(capsys, repo)
+    code = run_main(repo, ["--json"])
     raw = capsys.readouterr().out
 
     assert code == 0
@@ -374,8 +393,8 @@ def board(tmp_path) -> tuple[Path, Path, str]:
 def test_board_mode_reports_the_projection(repo, board, capsys):
     board_dir, overlay, task_id = board
 
-    code, status = status_json(capsys, "--board-dir", str(board_dir), "--overlay", str(overlay))
-    _, text = status_text(capsys, "--board-dir", str(board_dir), "--overlay", str(overlay))
+    code, status = status_json(capsys, repo, "--board-dir", str(board_dir), "--overlay", str(overlay))
+    _, text = status_text(capsys, repo, "--board-dir", str(board_dir), "--overlay", str(overlay))
 
     assert code == 0
     assert status["mode"]["kind"] == "board"
@@ -395,24 +414,42 @@ def test_a_board_inside_the_repository_is_a_refusal(repo, capsys):
     document = {"version": 1, "backend": "local", "board": "local-board", "policy": EXAMPLE_OVERLAY["policy"]}
     overlay.write_text(json.dumps({**document, "approved": {task_id: approval}}), encoding="utf-8")
 
-    _, status = status_json(capsys, "--board-dir", str(board_dir), "--overlay", str(overlay))
+    _, status = status_json(capsys, repo, "--board-dir", str(board_dir), "--overlay", str(overlay))
 
-    assert status["refusals"][0]["code"] == "board_inside_repository"
+    assert status["refusals"] == [
+        {"code": "board_inside_repository", "message": f"the board {board_dir} is inside the repository; keep boards outside it"},
+        {
+            "code": "dirty_outside_scope",
+            "message": "repo is dirty outside the next slice scope: boards/local-board/board.db, overlay.json",
+        },
+        {
+            "code": "no_agent_command",
+            "message": "no agent command template configured. Pass --agent-cmd or set policy.agent_command_template.",
+        },
+    ]
+    assert status["next_eligible_slice"]["slice_id"] == f"board.local-board.{task_id}"
 
 
 def test_an_unreadable_board_is_reported(repo, board, capsys):
     board_dir, overlay, _ = board
 
-    code, status = status_json(capsys, "--board-dir", str(board_dir.parent / "missing"), "--overlay", str(overlay))
+    code, status = status_json(capsys, repo, "--board-dir", str(board_dir.parent / "missing"), "--overlay", str(overlay))
 
-    assert code == operator_status.EX_INCOMPLETE
-    assert status["refusals"][0]["code"] == "board_unreadable"
-    assert status["next_eligible_slice"] is None
+    assert code == 1
+    assert [refusal["code"] for refusal in status["refusals"]] == ["board_unreadable"]
+    assert status["mode"] == {
+        "kind": "board",
+        "board_dir": str(board_dir.parent / "missing"),
+        "overlay": str(overlay),
+        "backend": "local",
+        "board": "local-board",
+    }
+    assert (status["next_eligible_slice"], status["slice_counts"], status["blocked_slices"]) == (None, {}, [])
 
 
 def test_board_dir_and_overlay_go_together(repo, capsys):
     with pytest.raises(SystemExit) as raised:
-        operator_status.main(["--board-dir", "somewhere"])
+        run_main(repo, ["--board-dir", "somewhere"])
 
     assert raised.value.code == 2
     assert "--board-dir and --overlay go together" in capsys.readouterr().err
@@ -430,9 +467,9 @@ def test_the_status_writes_nothing(repo, board, capsys):
     before = snapshot(repo, board_dir, overlay)
     assert before
 
-    operator_status.main([])
-    operator_status.main(["--json"])
-    operator_status.main(["--board-dir", str(board_dir), "--overlay", str(overlay)])
+    run_main(repo, [])
+    run_main(repo, ["--json"])
+    run_main(repo, ["--board-dir", str(board_dir), "--overlay", str(overlay)])
     capsys.readouterr()
 
     assert snapshot(repo, board_dir, overlay) == before
