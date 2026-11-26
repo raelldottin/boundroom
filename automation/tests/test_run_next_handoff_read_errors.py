@@ -9,31 +9,15 @@ no failure report, and the next run refused with "queue already has in_progress 
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
 
 import pytest
 
-from automation.supervisor import telemetry
 from automation.tests import test_run_next_single_slice
-from automation.tests.test_run_next_single_slice import FIRST, SECOND, statuses, supervise
+from automation.tests.test_run_next_single_slice import FIRST, SECOND, decision_codes, statuses, supervise, trace_flags
 
 consumer = test_run_next_single_slice.consumer
 queue = test_run_next_single_slice.queue
-
-
-@pytest.fixture
-def decision_codes(monkeypatch) -> list[Optional[str]]:
-    """The ``error_code`` of every ``boundroom.decision`` mark: the reason code a failure carries."""
-    codes: list[Optional[str]] = []
-    original = telemetry.Telemetry.mark
-
-    def mark(self, name: str, error_code: Optional[str] = None, **attributes: Any) -> None:
-        if name == "boundroom.decision":
-            codes.append(error_code)
-        original(self, name, error_code, **attributes)
-
-    monkeypatch.setattr(telemetry.Telemetry, "mark", mark)
-    return codes
+traced = test_run_next_single_slice.traced
 
 
 AGENTS = {
@@ -45,16 +29,16 @@ AGENTS = {
 
 
 @pytest.mark.parametrize("agent", AGENTS.values(), ids=AGENTS.keys())
-def test_an_unreadable_handoff_fails_the_slice(queue, monkeypatch, capsys, decision_codes, agent):
+def test_an_unreadable_handoff_fails_the_slice(queue, traced, monkeypatch, capsys, agent):
     path, _ = queue
 
-    assert supervise(monkeypatch, "--single-slice", "--agent-cmd", agent) == 2
+    assert supervise(monkeypatch, "--single-slice", "--agent-cmd", agent, *trace_flags(traced)) == 2
 
     assert statuses(path) == {FIRST: "failed", SECOND: "queued"}
     report = json.loads(capsys.readouterr().out)
     assert (report["slice_id"], report["queue_status"], report["decision"]) == (FIRST, "failed", "stop_failed")
     assert report["reason"].startswith("Invalid handoff artifact: ")
-    assert decision_codes == ["handoff_invalid"]
+    assert decision_codes(traced) == ["handoff_invalid"]
 
 
 @pytest.mark.parametrize("agent", AGENTS.values(), ids=AGENTS.keys())

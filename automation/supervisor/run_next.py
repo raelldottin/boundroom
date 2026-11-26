@@ -11,9 +11,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -93,8 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_args() -> argparse.Namespace:
-    return build_parser().parse_args()
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 class JsonQueue:
@@ -163,29 +164,40 @@ def board_for(args: argparse.Namespace, repo_root: Path) -> board_backend.BoardB
     return kanban_writer.HermesBackend(board_dir, shlex.split(args.hermes))
 
 
-def main() -> int:
-    args = parse_args()
-    for warning in settings.legacy_env_warnings(os.environ):
+def main(
+    argv: Optional[Sequence[str]] = None,
+    *,
+    repo_root: Optional[Path] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> int:
+    """Run the supervisor. ``repo_root`` defaults to ``REPO_ROOT``, read when called, and ``environ`` to
+    ``os.environ``. ``environ`` reaches the legacy-name warnings, the nested-run check, the run lock, the
+    settings, telemetry and the agent's environment. Validation replays, memory recall and Hermes
+    board writes still run in the process's own environment."""
+    args = parse_args(argv)
+    # Read when called, not when defined, so a caller (or a test) that sets REPO_ROOT is honoured.
+    repo_root = REPO_ROOT if repo_root is None else repo_root
+    environ = os.environ if environ is None else environ
+    for warning in settings.legacy_env_warnings(environ):
         print(warning, file=sys.stderr)
     try:
         # No worker may start the next slice (SPEC-008 PS-20): by variable, and by the run lock for
         # a runner that unset the variable.
-        runner_profile.refuse_if_nested(os.environ, "run_next")
+        runner_profile.refuse_if_nested(environ, "run_next")
         if args.dry_run:
-            return _run(args)
-        with runner_profile.run_lock(os.environ):
-            return _run(args)
+            return _run(args, repo_root=repo_root, environ=environ)
+        with runner_profile.run_lock(environ):
+            return _run(args, repo_root=repo_root, environ=environ)
     except runner_profile.ProfileRefused as error:
         print(f"stop: {error}", file=sys.stderr)
         return EX_CONFIG
 
 
-def _run(args: argparse.Namespace) -> int:
+def _run(args: argparse.Namespace, *, repo_root: Path, environ: Mapping[str, str]) -> int:
     if args.single_slice and args.autonomous_limit is not None:
         # argparse keeps only the last of repeated flags, so any value at all is refused, 1 included.
         print("stop: --single-slice runs one slice and refuses --autonomous-limit.", file=sys.stderr)
         return EX_USAGE
-    repo_root = REPO_ROOT
     handoff_dir = repo_root / args.handoff_dir
     handoff_dir.mkdir(parents=True, exist_ok=True)
     if bool(args.kanban_board) != bool(args.kanban_overlay):
@@ -201,7 +213,7 @@ def _run(args: argparse.Namespace) -> int:
 
     queue_data = store.load()
     telemetry_settings_resolved = telemetry_settings.resolve(
-        flags=vars(args), environ=os.environ, repository=queue_data["policy"].get("telemetry")
+        flags=vars(args), environ=environ, repository=queue_data["policy"].get("telemetry")
     )
     for message in telemetry_settings_resolved.messages:
         print(message, file=sys.stderr)
@@ -211,8 +223,8 @@ def _run(args: argparse.Namespace) -> int:
     telemetry_report = telemetry_settings_resolved.report()
     report_file = report_file_for(args.report_file, repo_root)
     profile = None
-    if runner_profile.configured(vars(args), os.environ):
-        profile = runner_profile.choose(vars(args), os.environ)
+    if runner_profile.configured(vars(args), environ):
+        profile = runner_profile.choose(vars(args), environ)
     profile_record = profile.record() if profile else None
     try:
         tracer = telemetry.configure(
@@ -238,11 +250,12 @@ def _run(args: argparse.Namespace) -> int:
         telemetry_report["trace_id"] = telemetry.trace_id(root)
 
         started = time.monotonic()
-        code: Optional[int] = None
+        outcome = "error"  # unless _supervise returns an exit code
         try:
             code = _supervise(
                 args,
                 repo_root=repo_root,
+                environ=environ,
                 handoff_dir=handoff_dir,
                 memory_config=memory_config,
                 store=store,
@@ -255,21 +268,299 @@ def _run(args: argparse.Namespace) -> int:
                 profile_record=profile_record,
                 report_file=report_file,
             )
+            outcome = telemetry_metrics.run_outcome(code)
         finally:
-            outcome = "error" if code is None else telemetry_metrics.run_outcome(code)
             tracer.record_run("run_next", outcome, time.monotonic() - started)
         tracer.annotate(root, exit_code=code)
         if code != 0:
             tracer.fail(root, "exit_nonzero")
-        if code is None:  # unreachable: the try assigned code or raised
-            raise RuntimeError("no exit code")
         return code
+
+
+# ---------------------------------------------------------------------------------------------------
+# The functional core: what the supervisor decides, from facts the shell below gathers. Nothing here
+# reads the clock, the environment, Git, the queue or the board, so each decision is tested by its
+# return value alone (test_run_next_core.py). No function here returns an exit-code literal; the
+# one exit code the core chooses is fail()'s default of 2, and test_operator_docs.py reads it there.
+# ---------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class NothingEligible:
+    """No queued slice can run: the lines to print, to stdout, before stopping cleanly."""
+
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Selected:
+    """The slice the queue's own order picks next."""
+
+    slice_record: dict
+
+
+@dataclass(frozen=True)
+class Refuse:
+    """Stop before anything is claimed, with this message on stderr."""
+
+    message: str
+
+
+@dataclass(frozen=True)
+class DryRun:
+    """Package the slice and report it, claiming nothing."""
+
+    slice_record: dict
+
+
+@dataclass(frozen=True)
+class Claim:
+    """Claim the slice and run the agent on it."""
+
+    slice_record: dict
+
+
+@dataclass(frozen=True)
+class Failure:
+    """A claimed slice fails: the report's reason, the decision span's reason code, the exit code."""
+
+    reason: str
+    code: str
+    exit_code: int
+
+
+@dataclass(frozen=True)
+class HandoffMissing:
+    """The agent left no handoff file."""
+
+
+@dataclass(frozen=True)
+class HandoffInvalid:
+    """The handoff file is there but is not valid JSON, fails its schema, or can't be read back."""
+
+    error: str
+
+
+@dataclass(frozen=True)
+class HandoffLoaded:
+    """The handoff, validated, and its bytes as written."""
+
+    data: dict
+    raw: bytes
+
+
+HandoffRead = HandoffMissing | HandoffInvalid | HandoffLoaded
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """A judged slice: the decision report, its digest for the trace, and what the store records."""
+
+    report: dict
+    report_sha256: str
+    store_reason: str
+    should_continue: bool
+
+
+def active_refusal(queue_data: dict) -> Optional[str]:
+    """Refuse to start while a slice is already in progress: a run in flight, or one that died."""
+    active = policy.active_slice(queue_data)
+    if active is None:
+        return None
+    return f"stop: queue already has in_progress slice {active['slice_id']}"
+
+
+def command_refusal(agent_command_template: str, dry_run: bool) -> Optional[str]:
+    """Refuse a real run with no agent command to run; a dry run needs none."""
+    if dry_run or agent_command_template.strip():
+        return None
+    return "stop: no agent command template configured. Pass --agent-cmd or set policy.agent_command_template."
+
+
+def autonomous_limit(resolved: Optional[int], policy_limit: int) -> int:
+    """The run's slice limit. A limit of 0 has always fallen back to the policy's, so it still does."""
+    return resolved or policy_limit
+
+
+def select_step(queue_data: dict, include_blocked: bool) -> NothingEligible | Selected:
+    """The next slice to run, or what to print when none can run."""
+    next_slice = policy.select_next_slice(queue_data)
+    if next_slice is not None:
+        return Selected(next_slice)
+    lines = ["stop: no eligible queued slice found."]
+    reports = policy.blocked_slice_reports(queue_data) if include_blocked else []
+    if reports:
+        lines += ["", "blocked/deferred slices:"]
+        for report in reports:
+            lines.append(f"- {report.status}: {report.slice_id}")
+            lines.append(f"  missing entry condition: {report.entry_condition}")
+            lines.append(f"  recommended unblocker: {report.recommended_unblocker or '<none recorded>'}")
+    return NothingEligible(tuple(lines))
+
+
+def plan_step(
+    slice_record: dict, *, dirty_paths_before_run: list[str], queue_policy: dict, dry_run: bool
+) -> Refuse | DryRun | Claim:
+    """Refuse a worktree dirty outside the slice's scope; otherwise dry-run or claim the slice."""
+    unexpected_dirty = policy.out_of_scope_paths(
+        dirty_paths_before_run, slice_record["allowed_paths"], queue_policy["supervisor_owned_paths"]
+    )
+    if unexpected_dirty:
+        return Refuse("stop: repo is dirty outside the next slice scope:\n- " + "\n- ".join(unexpected_dirty))
+    if dry_run:
+        return DryRun(slice_record)
+    return Claim(slice_record)
+
+
+def dry_run_report(
+    slice_record: dict,
+    *,
+    handoff_path: Path,
+    context_bundle: dict,
+    telemetry_report: dict,
+    profile_record: Optional[dict],
+    queue_data: dict,
+    include_blocked: bool,
+) -> dict:
+    """What a dry run prints: the slice, its handoff path, its validations and its context."""
+    report = {
+        "selected_slice": slice_record["slice_id"],
+        "handoff_path": str(handoff_path),
+        "required_validations": slice_record["required_validations"],
+        "supervisor_replayable_validations": policy.supervisor_replayable_validations(slice_record["required_validations"]),
+        "validation_ownership": context_bundle["validation_ownership"],
+        "allowed_paths": slice_record["allowed_paths"],
+        "context_documents": [doc["path"] for doc in context_bundle["documents"]],
+        "telemetry": telemetry_report,
+    }
+    if profile_record:
+        report["runner_profile"] = profile_record
+    if include_blocked:
+        report["blocked_slices"] = [
+            {
+                "slice_id": blocked.slice_id,
+                "status": blocked.status,
+                "entry_condition": blocked.entry_condition,
+                "recommended_unblocker": blocked.recommended_unblocker,
+            }
+            for blocked in policy.blocked_slice_reports(queue_data)
+        ]
+    return report
+
+
+def fail(reason: str, code: str, exit_code: int = 2) -> Failure:
+    """A failure of the claimed slice. ``code`` is the reason code the decision span's status carries."""
+    return Failure(reason, code, exit_code)
+
+
+def session_error(exit_code: int) -> str:
+    """The reason code for an agent session that didn't exit 0. 124 is timeout(1)'s exit code."""
+    return "agent_timeout" if exit_code == 124 else "agent_exit_nonzero"
+
+
+def session_failure(exit_code: int, slice_id: str) -> Optional[Failure]:
+    """An agent that exited nonzero fails the slice, and its exit code becomes the run's."""
+    if exit_code == 0:
+        return None
+    return fail(f"Agent command exited with code {exit_code} for slice {slice_id}.", session_error(exit_code), exit_code)
+
+
+def handoff_failure(read: HandoffRead, slice_id: str, handoff_path: Path) -> Optional[Failure]:
+    """A handoff that is missing, invalid, or for another slice fails the slice."""
+    if isinstance(read, HandoffMissing):
+        return fail(f"Missing handoff artifact for slice {slice_id} at {handoff_path}", "handoff_missing")
+    if isinstance(read, HandoffInvalid):
+        return fail(f"Invalid handoff artifact: {read.error}", "handoff_invalid")
+    if read.data["slice_id"] == slice_id:
+        return None
+    return fail("Handoff slice_id does not match the in-progress slice.", "handoff_slice_mismatch")
+
+
+def failure_report(
+    failure: Failure,
+    write_error: Optional[str],
+    *,
+    slice_record: dict,
+    completed_runs: int,
+    autonomous_limit: int,
+    telemetry: Optional[dict],
+    runner_profile: Optional[dict],
+    base_sha: Optional[str],
+    head_sha: Optional[str],
+) -> dict:
+    """The failure report. If the store refused the failed status too, it says the slice is still
+    ``in_progress``, not ``failed``: both stores leave the status unchanged when a write fails."""
+    reason, queue_status = failure.reason, "failed"
+    if write_error is not None:
+        queue_status = "in_progress"
+        reason = f"{reason}\nRecording the failure also failed, so the slice is still in_progress: {write_error}"
+    return make_failure_report(
+        slice_record=slice_record,
+        reason=reason,
+        completed_runs=completed_runs,
+        autonomous_limit=autonomous_limit,
+        telemetry=telemetry,
+        runner_profile=runner_profile,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        queue_status=queue_status,
+    )
+
+
+def judge_step(
+    slice_record: dict,
+    decision: policy.CompletionDecision,
+    *,
+    completed_runs: int,
+    autonomous_limit: int,
+    telemetry: Optional[dict],
+    runner_profile: Optional[dict],
+    base_sha: Optional[str],
+    head_sha: Optional[str],
+) -> Verdict:
+    """From the policy's decision to the decision report, its digest, and the reason the store records."""
+    report = make_decision_report(
+        slice_record=slice_record,
+        decision=decision,
+        completed_runs=completed_runs,
+        autonomous_limit=autonomous_limit,
+        telemetry=telemetry,
+        runner_profile=runner_profile,
+        base_sha=base_sha,
+        head_sha=head_sha,
+    )
+    return Verdict(
+        report=report,
+        report_sha256=hashlib.sha256(json.dumps(report, sort_keys=True).encode("utf-8")).hexdigest(),
+        store_reason=decision.stop_reason or decision.decision,
+        should_continue=decision.should_continue,
+    )
+
+
+# ---------------------------------------------------------------------------------------------------
+# The imperative shell: gathers the facts, in the order the supervisor always has, and carries out
+# the core's decisions: the loop, the queue or board writes, Git, the agent, telemetry and output.
+# ---------------------------------------------------------------------------------------------------
+
+
+def read_handoff(handoff_path: Path) -> HandoffRead:
+    """Read the handoff the agent left. load_json raises ConfigError for invalid JSON, the schema
+    check ValueError, and the read OSError."""
+    if not handoff_path.exists():
+        return HandoffMissing()
+    try:
+        handoff = policy.load_handoff(handoff_path)
+        raw = handoff_path.read_bytes()
+    except (ValueError, policy.ConfigError, OSError) as error:
+        return HandoffInvalid(str(error))
+    return HandoffLoaded(handoff, raw)
 
 
 def _supervise(
     args: argparse.Namespace,
     *,
     repo_root: Path,
+    environ: Mapping[str, str],
     handoff_dir: Path,
     memory_config: Optional[memory.MemoryConfig],
     store: JsonQueue | KanbanQueue,
@@ -283,63 +574,52 @@ def _supervise(
     report_file: Optional[Path],
 ) -> int:
     """Select, claim, run and judge slices under the run's root span; returns the exit code."""
-    active = policy.active_slice(queue_data)
-    if active is not None:
-        print(f"stop: queue already has in_progress slice {active['slice_id']}", file=sys.stderr)
+    refusal = active_refusal(queue_data)
+    if refusal:
+        print(refusal, file=sys.stderr)
         return 2
 
     # Read through the settings registry (SPEC-008), which reports where each value came from.
     setting_sources = settings.Sources(
         entry_point="run_next",
         flags=vars(args),
-        environ=os.environ,
+        environ=environ,
         repository=settings.repository_values(queue_data["policy"]),
     )
     agent_command_template = settings.resolve("agent_command", setting_sources).value
     # The runner the caller asked for. run_agent.sh resolves auto later, so auto stays auto here.
     requested_runner = settings.resolve("runner", setting_sources).value
-    if not args.dry_run and not agent_command_template.strip():
-        print(
-            "stop: no agent command template configured. Pass --agent-cmd or set policy.agent_command_template.",
-            file=sys.stderr,
-        )
+    refusal = command_refusal(agent_command_template, args.dry_run)
+    if refusal:
+        print(refusal, file=sys.stderr)
         return 2
 
-    # A limit of 0 has always fallen back to the policy's, so it still does.
-    autonomous_limit = (
+    limit = (
         1
         if args.single_slice
-        else settings.resolve("autonomous_limit", setting_sources).value or queue_data["policy"]["consecutive_autonomous_limit"]
+        else autonomous_limit(
+            settings.resolve("autonomous_limit", setting_sources).value, queue_data["policy"]["consecutive_autonomous_limit"]
+        )
     )
     completed_runs = 0
 
     while True:
         queue_data = store.load()
-        next_slice = policy.select_next_slice(queue_data)
-        if next_slice is None:
+        selection = select_step(queue_data, args.include_blocked)
+        if isinstance(selection, NothingEligible):
             tracer.mark("boundroom.select", result="none eligible")
-            print("stop: no eligible queued slice found.")
-            if args.include_blocked:
-                reports = policy.blocked_slice_reports(queue_data)
-                if reports:
-                    print()
-                    print("blocked/deferred slices:")
-                    for report in reports:
-                        print(f"- {report.status}: {report.slice_id}")
-                        print(f"  missing entry condition: {report.entry_condition}")
-                        if report.recommended_unblocker:
-                            print(f"  recommended unblocker: {report.recommended_unblocker}")
-                        else:
-                            print("  recommended unblocker: <none recorded>")
+            for line in selection.lines:
+                print(line)
             return 0
+        next_slice = selection.slice_record
 
         tracer.mark("boundroom.select", slice_id=next_slice["slice_id"])
         dirty_paths_before_run = policy.git_dirty_paths(repo_root)
-        unexpected_dirty = policy.out_of_scope_paths(
-            dirty_paths_before_run, next_slice["allowed_paths"], queue_data["policy"]["supervisor_owned_paths"]
+        plan = plan_step(
+            next_slice, dirty_paths_before_run=dirty_paths_before_run, queue_policy=queue_data["policy"], dry_run=args.dry_run
         )
-        if unexpected_dirty:
-            print("stop: repo is dirty outside the next slice scope:\n- " + "\n- ".join(unexpected_dirty), file=sys.stderr)
+        if isinstance(plan, Refuse):
+            print(plan.message, file=sys.stderr)
             return 2
 
         timestamp_token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -368,29 +648,16 @@ def _supervise(
             repo_root=repo_root, slice_record=next_slice, context_bundle=context_bundle, handoff_path=handoff_path
         )
 
-        if args.dry_run:
-            report = {
-                "selected_slice": next_slice["slice_id"],
-                "handoff_path": str(handoff_path),
-                "required_validations": next_slice["required_validations"],
-                "supervisor_replayable_validations": policy.supervisor_replayable_validations(next_slice["required_validations"]),
-                "validation_ownership": context_bundle["validation_ownership"],
-                "allowed_paths": next_slice["allowed_paths"],
-                "context_documents": [doc["path"] for doc in context_bundle["documents"]],
-                "telemetry": telemetry_report,
-            }
-            if profile_record:
-                report["runner_profile"] = profile_record
-            if args.include_blocked:
-                report["blocked_slices"] = [
-                    {
-                        "slice_id": blocked.slice_id,
-                        "status": blocked.status,
-                        "entry_condition": blocked.entry_condition,
-                        "recommended_unblocker": blocked.recommended_unblocker,
-                    }
-                    for blocked in policy.blocked_slice_reports(queue_data)
-                ]
+        if isinstance(plan, DryRun):
+            report = dry_run_report(
+                next_slice,
+                handoff_path=handoff_path,
+                context_bundle=context_bundle,
+                telemetry_report=telemetry_report,
+                profile_record=profile_record,
+                queue_data=queue_data,
+                include_blocked=args.include_blocked,
+            )
             emit(report, report_file)
             return 0
 
@@ -399,47 +666,46 @@ def _supervise(
         base_commit_sha = policy.git_head(repo_root)
         store.set_status(next_slice, "in_progress")
 
-        current = next_slice
         fail_started = False
 
-        def fail(reason: str, code: str, exit_code: int = 2) -> int:
-            """Fail the slice. ``code`` is the reason code the decision span's status carries.
-
-            If the queue or board refuses this write too, the report says the slice is still
-            ``in_progress``, not ``failed``: both stores leave the status unchanged when a write fails.
-            """
+        def record_failure(failure: Failure) -> int:
+            """Fail the slice in the store, and report it. Returns the run's exit code."""
             nonlocal fail_started
             fail_started = True
-            tracer.mark("boundroom.decision", error_code=code, verdict="failed", reason=telemetry.without_root(reason, repo_root))
+            tracer.mark(
+                "boundroom.decision",
+                error_code=failure.code,
+                verdict="failed",
+                reason=telemetry.without_root(failure.reason, repo_root),
+            )
             tracer.metric("boundroom.slice.decisions", decision="failed", queue_status="failed")
-            queue_status = "failed"
+            write_error: Optional[str] = None
             try:
-                store.set_status(current, "failed", reason, handoff_path)
+                store.set_status(next_slice, "failed", failure.reason, handoff_path)
             except Exception as error:
-                queue_status = "in_progress"
-                reason = f"{reason}\nRecording the failure also failed, so the slice is still in_progress: {error}"
+                write_error = str(error)
             else:
                 tracer.mark("boundroom.board.record", verdict="failed")
             try:
                 head_sha: Optional[str] = policy.git_head(repo_root)
             except Exception:  # the report must still go out if git itself is what failed
                 head_sha = None
-            report = make_failure_report(
-                slice_record=current,
-                reason=reason,
+            report = failure_report(
+                failure,
+                write_error,
+                slice_record=next_slice,
                 completed_runs=completed_runs,
-                autonomous_limit=autonomous_limit,
+                autonomous_limit=limit,
                 telemetry=telemetry_report,
                 runner_profile=profile_record,
                 base_sha=base_commit_sha,
                 head_sha=head_sha,
-                queue_status=queue_status,
             )
             emit(report, report_file)
-            return exit_code
+            return failure.exit_code
 
-        # From the claim until the verdict is recorded, any error fails the slice through fail(). Escaping
-        # would leave it in_progress with no report, and the next run would refuse to start.
+        # From the claim until the verdict is recorded, any error fails the slice through record_failure().
+        # Escaping would leave it in_progress with no report, and the next run would refuse to start.
         try:
             queue_data = policy.set_slice_status(queue_data, next_slice["slice_id"], "in_progress")
             tracer.mark("boundroom.claim", slice_id=next_slice["slice_id"], base_sha=base_commit_sha, result="claimed")
@@ -453,7 +719,7 @@ def _supervise(
                     runner_attributes["boundroom.runner.profile"] = profile.effective
                 with tracer.span("boundroom.agent_session", slice_id=next_slice["slice_id"], **runner_attributes) as session:
                     runner_telemetry = telemetry.runner_environment(
-                        telemetry_settings_resolved, os.environ, session, tracer.run_id, next_slice["slice_id"]
+                        telemetry_settings_resolved, environ, session, tracer.run_id, next_slice["slice_id"]
                     )
                     if tracer.enabled:
                         telemetry_report.update(runner_telemetry.report())
@@ -467,6 +733,7 @@ def _supervise(
                         command_template=agent_command_template,
                         profile=profile,
                         extra_env=runner_telemetry.variables,
+                        environ=environ,
                     )
                     session_outcome = telemetry_metrics.session_outcome(exit_code)
                     tracer.annotate(session, exit_code=exit_code)
@@ -475,7 +742,7 @@ def _supervise(
             except Exception as error:  # pragma: no cover - last-resort queue recovery
                 if isinstance(error, subprocess.TimeoutExpired):
                     session_outcome = "timeout"
-                return fail(f"Supervisor error while running slice: {error}", "supervisor_error")
+                return record_failure(fail(f"Supervisor error while running slice: {error}", "supervisor_error"))
             finally:
                 tracer.metric(
                     "boundroom.agent_session.duration",
@@ -485,32 +752,24 @@ def _supervise(
                     runner=requested_runner,
                 )
 
-            if exit_code != 0:
-                return fail(
-                    f"Agent command exited with code {exit_code} for slice {next_slice['slice_id']}.",
-                    session_error(exit_code),
-                    exit_code,
+            failure = session_failure(exit_code, next_slice["slice_id"])
+            if failure:
+                return record_failure(failure)
+
+            read = read_handoff(handoff_path)
+            if isinstance(read, HandoffLoaded):
+                tracer.mark(
+                    "boundroom.handoff.evaluate",
+                    handoff_sha256=hashlib.sha256(read.raw).hexdigest(),
+                    status=read.data["status"],
+                    schema_result="valid",
+                    **({"handoff_text": read.raw.decode("utf-8", errors="replace")} if content else {}),
                 )
-
-            if not handoff_path.exists():
-                return fail(f"Missing handoff artifact for slice {next_slice['slice_id']} at {handoff_path}", "handoff_missing")
-
-            # load_json raises ConfigError for invalid JSON, the schema check ValueError, and the read OSError.
-            try:
-                handoff = policy.load_handoff(handoff_path)
-                handoff_bytes = handoff_path.read_bytes()
-            except (ValueError, policy.ConfigError, OSError) as error:
-                return fail(f"Invalid handoff artifact: {error}", "handoff_invalid")
-
-            tracer.mark(
-                "boundroom.handoff.evaluate",
-                handoff_sha256=hashlib.sha256(handoff_bytes).hexdigest(),
-                status=handoff["status"],
-                schema_result="valid",
-                **({"handoff_text": handoff_bytes.decode("utf-8", errors="replace")} if content else {}),
-            )
-            if handoff["slice_id"] != next_slice["slice_id"]:
-                return fail("Handoff slice_id does not match the in-progress slice.", "handoff_slice_mismatch")
+            failure = handoff_failure(read, next_slice["slice_id"], handoff_path)
+            if failure:
+                return record_failure(failure)
+            assert isinstance(read, HandoffLoaded)  # handoff_failure refused every other read
+            handoff = read.data
 
             # Git failures get their own reason code; anything else falls to the guard below.
             try:
@@ -518,7 +777,7 @@ def _supervise(
                 committed_paths = policy.git_committed_paths(repo_root, base_commit_sha)
                 post_run_commit_sha = policy.git_head(repo_root)
             except (policy.ConfigError, OSError, subprocess.SubprocessError) as error:
-                return fail(f"Git error after slice {next_slice['slice_id']} ran: {error}", "git_error")
+                return record_failure(fail(f"Git error after slice {next_slice['slice_id']} ran: {error}", "git_error"))
 
             validation_replays: list[policy.ValidationReplayResult] = []
             if handoff["status"] == "done":
@@ -541,7 +800,7 @@ def _supervise(
                 dirty_paths_before_run=dirty_paths_before_run,
                 dirty_paths_after_run=dirty_paths_after_run,
                 completed_autonomous_runs=completed_runs + 1,
-                run_limit=autonomous_limit,
+                run_limit=limit,
                 validation_replays=validation_replays,
                 post_run_commit_sha=post_run_commit_sha,
                 committed_paths=committed_paths,
@@ -550,11 +809,11 @@ def _supervise(
             )
             completed_runs += 1
 
-            decision_report = make_decision_report(
-                slice_record=next_slice,
-                decision=decision,
+            verdict = judge_step(
+                next_slice,
+                decision,
                 completed_runs=completed_runs,
-                autonomous_limit=autonomous_limit,
+                autonomous_limit=limit,
                 telemetry=telemetry_report,
                 runner_profile=profile_record,
                 base_sha=base_commit_sha,
@@ -566,25 +825,22 @@ def _supervise(
                 verdict=decision.decision,
                 reason=telemetry.without_root(decision.stop_reason, repo_root),
                 changed_file_count=decision.changed_file_count,
-                report_sha256=hashlib.sha256(json.dumps(decision_report, sort_keys=True).encode("utf-8")).hexdigest(),
+                report_sha256=verdict.report_sha256,
             )
-            store.set_status(next_slice, decision.queue_status, decision.stop_reason or decision.decision, handoff_path)
+            store.set_status(next_slice, decision.queue_status, verdict.store_reason, handoff_path)
         except Exception as error:
             if fail_started:
-                raise  # fail() itself broke: calling it again could record the slice twice
-            return fail(f"Supervisor error while handling slice {next_slice['slice_id']}: {error}", "supervisor_error")
+                raise  # record_failure() itself broke: calling it again could record the slice twice
+            return record_failure(
+                fail(f"Supervisor error while handling slice {next_slice['slice_id']}: {error}", "supervisor_error")
+            )
         tracer.mark("boundroom.board.record", verdict=decision.queue_status)
         tracer.metric("boundroom.slice.decisions", decision=decision.decision, queue_status=decision.queue_status)
 
-        emit(decision_report, report_file)
+        emit(verdict.report, report_file)
 
-        if not decision.should_continue:
+        if not verdict.should_continue:
             return 0
-
-
-def session_error(exit_code: int) -> str:
-    """The reason code for an agent session that didn't exit 0. 124 is timeout(1)'s exit code."""
-    return "agent_timeout" if exit_code == 124 else "agent_exit_nonzero"
 
 
 def run_agent(
@@ -597,8 +853,9 @@ def run_agent(
     command_template: str,
     profile: Optional[runner_profile.RunnerProfile] = None,
     extra_env: Optional[dict[str, str]] = None,
+    environ: Optional[Mapping[str, str]] = None,
 ) -> int:
-    """Run the agent command on the rendered ``prompt_text``."""
+    """Run the agent command on the rendered ``prompt_text``, in ``environ`` (default ``os.environ``)."""
     timeout_seconds = queue_data["policy"]["handoff_timeout_seconds"]
     handoff = repo_relative(handoff_path, repo_root)
     if profile is not None and profile.effective != "custom":
@@ -627,13 +884,15 @@ def run_agent(
 
     try:
         # Only telemetry's trace context and, when asked for, the runner's exporter (SPEC-006 UD-9).
-        environ = {**os.environ, **extra_env} if extra_env else None
+        base = os.environ if environ is None else environ
+        # None, the process's own environment, unless something was added or another one injected.
+        env = {**base, **extra_env} if extra_env else (None if base is os.environ else dict(base))
         if profile is None:
-            result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds, env=environ)
+            result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds, env=env)
             return result.returncode
         # The profile builds on that environment, so its own variables win (SPEC-008).
         with runner_profile.runner_environment(
-            slice_record, queue_data["policy"], profile, environ or os.environ, handoff=handoff, repo_root=repo_root
+            slice_record, queue_data["policy"], profile, env or base, handoff=handoff, repo_root=repo_root
         ) as env:
             result = subprocess.run(formatted_command, cwd=repo_root, shell=True, timeout=timeout_seconds, env=env)
             return result.returncode
@@ -893,9 +1152,9 @@ def serialize_validation_replays(replay_results: list[policy.ValidationReplayRes
     ]
 
 
-def _cli_entry() -> int:
+def _cli_entry(argv: Optional[Sequence[str]] = None) -> int:
     try:
-        return main()
+        return main(argv)
     except (policy.ConfigError, kanban_projection.ProjectionError) as error:
         print(f"stop: {error}", file=sys.stderr)
         return 2

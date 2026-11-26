@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import io
+import json
 import re
+import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest import mock
 
 from automation.supervisor import run_next, settings
 from automation.tests.test_compatibility_policy import sync_deprecated_keys
@@ -92,20 +93,21 @@ class LegacyEnvWarningTests(unittest.TestCase):
         self.assertEqual(settings.LEGACY_ENV_REMOVAL, sync_deprecated_keys()["allow_owlory_specific"])
 
     def test_run_next_prints_the_warnings_before_it_starts(self) -> None:
-        stderr = io.StringIO()
-        environ = {"REPO_AUTOMATION_HERMES_BIN": "hermes"}
-        with (
-            mock.patch.dict(run_next.os.environ, environ, clear=True),
-            mock.patch.object(run_next, "parse_args", return_value=mock.Mock(dry_run=True)),
-            mock.patch.object(run_next, "_run", return_value=0) as run,
-            redirect_stderr(stderr),
-        ):
-            self.assertEqual(0, run_next.main())
-        run.assert_called_once()
-        self.assertIn(
+        """A run on an empty queue, in the environment it is given, warns first and then stops cleanly."""
+        stderr, stdout = io.StringIO(), io.StringIO()
+        example = json.loads((REPO_ROOT / "automation/examples/example-slices.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            queue = Path(directory) / "slices.json"
+            queue.write_text(json.dumps({**example, "slices": []}), encoding="utf-8")
+            environ = {"REPO_AUTOMATION_HERMES_BIN": "hermes"}
+            with redirect_stderr(stderr), redirect_stdout(stdout):
+                code = run_next.main(["--dry-run", "--queue", str(queue)], repo_root=Path(directory), environ=environ)
+        self.assertEqual(0, code)
+        self.assertEqual(
             "warning: REPO_AUTOMATION_HERMES_BIN is deprecated and stops working in v0.6.0; use BOUNDROOM_HERMES_BIN.",
-            stderr.getvalue(),
+            stderr.getvalue().splitlines()[0],
         )
+        self.assertEqual("stop: no eligible queued slice found.\n", stdout.getvalue())
 
 
 class UpgradeGuideTests(unittest.TestCase):

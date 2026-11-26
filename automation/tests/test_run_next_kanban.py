@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import shlex
 import shutil
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -25,6 +27,45 @@ board = test_kanban_writer.board
 hermes = test_kanban_writer.hermes
 fake = test_memory.fake
 api_key = test_memory.api_key
+
+
+GitFault = Callable[..., Path]
+FAIL_THE_CALL = "echo 'fatal: injected failure' >&2; exit 128"
+
+
+@pytest.fixture
+def git_fault(tmp_path, monkeypatch) -> GitFault:
+    """Put a ``git`` ahead of the real one on PATH. Once its trigger file exists, the first call whose
+    arguments match ``pattern`` (a shell ``case`` pattern) runs ``action`` and removes the trigger. The
+    default action fails that call; an action that doesn't exit falls through to the real git.
+
+    Git is where the supervisor meets the outside world, so this is how the run_next tests make it
+    fail on cue. Returns the trigger, for an agent command to arm with ``touch``; ``armed=True`` arms
+    it now.
+    """
+    real = shutil.which("git")
+    assert real
+    bin_dir = tmp_path / "fault-bin"
+    trigger = tmp_path / "git-fault-armed"
+
+    def install(pattern: str, action: str = FAIL_THE_CALL, armed: bool = False) -> Path:
+        bin_dir.mkdir(exist_ok=True)
+        script = bin_dir / "git"
+        script.write_text(
+            "#!/bin/sh\n"
+            f"if [ -e {shlex.quote(str(trigger))} ]; then\n"
+            f'  case "$*" in\n    {pattern}) rm -f {shlex.quote(str(trigger))}; {action};;\n  esac\nfi\n'
+            f'exec {shlex.quote(real)} "$@"\n',
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        if armed:
+            trigger.touch()
+        return trigger
+
+    return install
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OVERLAY = REPO_ROOT / "automation/examples/kanban-overlay.json"
@@ -140,14 +181,18 @@ def test_a_dry_run_never_writes_to_the_board(consumer, board, hermes, agent, mon
     assert row(board, "SELECT status FROM tasks WHERE id = ?", READY) == ("ready",)
 
 
-def test_a_board_edited_after_projection_is_never_claimed(consumer, board, hermes, agent, monkeypatch, capsys, tmp_path):
-    real_build = run_next.build_context_bundle
-
-    def build_then_edit(**kwargs):
-        execute(board, "UPDATE tasks SET priority = 9 WHERE id = 't_000000a1';")  # someone edits the board
-        return real_build(**kwargs)
-
-    monkeypatch.setattr(run_next, "build_context_bundle", build_then_edit)
+def test_a_board_edited_after_projection_is_never_claimed(
+    consumer, board, hermes, agent, git_fault, monkeypatch, capsys, tmp_path
+):
+    # Someone edits the board while the supervisor reads the commit the slice starts from, the last
+    # thing it does before the claim. The hook relies on that order: git_head is the last call before it.
+    edit = tmp_path / "edit_board.py"
+    statement = "UPDATE tasks SET priority = 9 WHERE id = 't_000000a1'"
+    edit.write_text(
+        f"import sqlite3\nconn = sqlite3.connect({str(board / 'kanban.db')!r})\nconn.execute({statement!r})\nconn.commit()\n",
+        encoding="utf-8",
+    )
+    git_fault("'rev-parse --verify HEAD'", action=f"{shlex.quote(sys.executable)} {shlex.quote(str(edit))}", armed=True)
 
     assert supervise(monkeypatch, board, hermes, agent) == 2
 

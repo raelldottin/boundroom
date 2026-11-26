@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from automation.supervisor import run_next
 from automation.tests import test_run_next_single_slice
 from automation.tests.test_run_next_single_slice import FIRST, SECOND, runs, statuses, supervise
 
@@ -51,7 +52,12 @@ def missing_fragment(repo: Path) -> str:
     return "stop: prompt_fragment_unreadable: automation/prompts/base.md"
 
 
-BREAKAGES = [stale_placeholder, symlinked_rules, missing_fragment]
+def oversized_rules(repo: Path) -> str:
+    (repo / "automation/runner-rules.md").write_bytes(b"x" * (32 * 1024 + 1))
+    return "stop: runner_rules_too_large: automation/runner-rules.md is 32769 bytes; the limit is 32768"
+
+
+BREAKAGES = [stale_placeholder, symlinked_rules, missing_fragment, oversized_rules]
 
 
 @pytest.mark.parametrize("flag", ["--single-slice", "--dry-run"])
@@ -86,3 +92,5 @@ def test_the_agent_gets_the_rendered_prompt(queue, consumer, monkeypatch):
     prompt = seen.read_text(encoding="utf-8")
     assert f"`slice_id`: `{FIRST}`" in prompt
     assert re.search(r"__[A-Z0-9_]+__", prompt) is None
+    # A repository with no runner rules adds no section; repository_rules says so with "", its str type.
+    assert "## Repository Rules" not in prompt and run_next.repository_rules(consumer) == ""
