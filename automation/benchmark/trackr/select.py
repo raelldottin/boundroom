@@ -42,6 +42,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from . import sandbox
 from .common import (
+    SUPERVISOR_LABEL,
     SUPERVISOR_RELEASE,
     DEFAULT_REQUIRED_VALIDATIONS,
     MODEL,
@@ -91,7 +92,7 @@ SELECTION_RULE = {
         "base+setup and pass at head+setup",
         "under sandbox-exec: every required check passes at the setup commit (green base)",
     ],
-    "setup": f"Boundroom {SUPERVISOR_RELEASE} (v0.5.3) synced in by its own Tools/boundroom-sync.sh "
+    "setup": f"Boundroom {SUPERVISOR_RELEASE} ({SUPERVISOR_LABEL}) synced in by its own Tools/boundroom-sync.sh "
     f"(--omit {' --omit '.join(SYNC_OMIT)}), plus an offline .venv from wheelhouse.v2.json",
     "base_sha": "the first parent of the squash merge commit",
     "head_sha": "the squash merge commit",

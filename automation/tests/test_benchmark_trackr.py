@@ -32,6 +32,7 @@ from automation.benchmark.trackr.common import (
     SCOPE_FIELDS,
     SCOPE_PROVENANCE_FIELDS,
     SOLUTIONS_FILE,
+    SUPERVISOR_RELEASE,
     TASKS_FILE,
     V1_TASKS_FILE,
     Completed,
@@ -514,7 +515,9 @@ class GitEscapeTests(TrackRTestCase):
         self.assertNotIn("Edit(.git/**)", deny)
         guarded = [rule for rule in deny if rule.startswith("Edit(.git/")]
         self.assertEqual(guarded, ["Edit(.git/config)", "Edit(.git/hooks/**)", "Edit(.git/info/**)"])
-        self.assertEqual(guarded, [f"Edit(.git/{part})" if part == "config" else f"Edit(.git/{part}/**)" for part in driver.GIT_GUARDED])
+        self.assertEqual(
+            guarded, [f"Edit(.git/{part})" if part == "config" else f"Edit(.git/{part}/**)" for part in driver.GIT_GUARDED]
+        )
 
     def test_s_keeps_the_supervisors_own_git_deny(self) -> None:
         profile = runner_profile.choose({}, {})
@@ -860,6 +863,22 @@ class ScopeAndCliTests(TrackRTestCase):
             self.assertEqual(pilot.main([*common, "--out", str(self.tmp / "o"), "--yes", "--model", "another-model"]), 2)
         prepare.assert_not_called()
 
+    def test_a_real_run_refuses_a_task_set_frozen_against_another_supervisor(self) -> None:
+        # v2.1 moved S from v0.5.3 to v0.5.3 plus #300. A task set checked against one supervisor
+        # can't be run with another: its green bases and oracle results were measured with that sync.
+        tasks_file = self.tmp / "frozen.json"
+        stale = {
+            "status": "frozen",
+            "model": MODEL,
+            "provenance": {"sync": {"release": "b" * 40}},
+            "tasks": [make_task(self.base)],
+        }
+        write_json(tasks_file, stale)
+        common = ["--tasks", str(tasks_file), "--cache-dir", str(self.tmp / "c"), "--wheelhouse", str(self.tmp / "w")]
+        with unittest.mock.patch.object(pilot, "prepare") as prepare:
+            self.assertEqual(pilot.main([*common, "--out", str(self.tmp / "o"), "--yes"]), 2)
+        prepare.assert_not_called()
+
     def test_the_false_positive_baseline_and_its_summary_line(self) -> None:
         tight = make_task(self.base, allowed_paths=["src/pkg/calc.py"], max_files_changed=2)
         fits = make_task(self.base, number=2, id="pr2")
@@ -900,6 +919,19 @@ class FrozenRecordsTests(unittest.TestCase):
         self.assertEqual(data["status"], "void")
         self.assertEqual(data["provenance"]["model_sessions"], 3)
         self.assertNotIn("preregistered", json.dumps(data["provenance"]["amendments"]))
+
+    def test_v2_1_runs_s_on_the_supervisor_with_the_queue_write_fix(self) -> None:
+        # Pilot v2 run r1 found that v0.5.3 fails a slice whose handoff lists the supervisor's own
+        # queue write (#300). By the owner's decision S runs main at #300's merge, and run r1 is void.
+        self.assertEqual(SUPERVISOR_RELEASE, "2136eb910780c1e79c6598c84ddf734c95a5217c")
+        tasks, solutions = read_json(TASKS_FILE), read_json(SOLUTIONS_FILE)
+        self.assertEqual(tasks["provenance"]["sync"]["release"], SUPERVISOR_RELEASE)
+        self.assertEqual(solutions["rechecked_with"]["sync"]["release"], SUPERVISOR_RELEASE)
+        self.assertIn(SUPERVISOR_RELEASE, tasks["selection_rule"]["setup"])
+        self.assertEqual(tasks["design"], "v2.1")
+        (run,) = tasks["void_runs"]
+        self.assertEqual((run["run"], run["model_sessions"], run["cost_usd"]), ("r1", 6, 2.65))
+        self.assertGreaterEqual(len(tasks["amendments"]), 2)
 
     def test_v2_keeps_the_solution_out_of_the_task_file(self) -> None:
         if not TASKS_FILE.exists():

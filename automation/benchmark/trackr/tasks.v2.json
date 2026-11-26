@@ -1,6 +1,7 @@
 {
   "schema": "boundroom.trackr.tasks/2",
   "spec": "SPEC-012 Track R, pilot v2",
+  "design": "v2.1",
   "status": "frozen",
   "selection_rule": {
     "task_set": "v2: python-semver pull requests merged after the model's training cutoff",
@@ -22,7 +23,7 @@
       "under sandbox-exec, with the setup applied and the harness restored: hidden tests fail or error at base+setup and pass at head+setup",
       "under sandbox-exec: every required check passes at the setup commit (green base)"
     ],
-    "setup": "Boundroom b193297829c68d2243e5e32d1517cf0b51568813 (v0.5.3) synced in by its own Tools/boundroom-sync.sh (--omit benchmark), plus an offline .venv from wheelhouse.v2.json",
+    "setup": "Boundroom 2136eb910780c1e79c6598c84ddf734c95a5217c (v0.5.3 plus #300) synced in by its own Tools/boundroom-sync.sh (--omit benchmark), plus an offline .venv from wheelhouse.v2.json",
     "base_sha": "the first parent of the squash merge commit",
     "head_sha": "the squash merge commit",
     "hidden_tests": "tests/test_*.py files the pull request added or changed; other files it changed under tests/ are installed with them as support files",
@@ -46,13 +47,13 @@
     "selected_by": "automation/benchmark/trackr/select.py",
     "selector_commit": "da61a67eddf85e94eeb1bc421b077ad0ac9e825b",
     "sync": {
-      "release": "b193297829c68d2243e5e32d1517cf0b51568813",
+      "release": "2136eb910780c1e79c6598c84ddf734c95a5217c",
       "script": "Tools/boundroom-sync.sh",
       "omit": [
         "benchmark"
       ],
       "files": 58,
-      "sha256": "384d2de11733ac81878bdadcf222095307c60a2a1e25ccded7ae069318e13ada"
+      "sha256": "2aca76a5825a5945c2219ea0371df34236cfd99c4f16f3b90bdf703e4e426bad"
     },
     "model": "claude-opus-5-5",
     "python": "3.12.16",
@@ -309,5 +310,42 @@
       ]
     }
   ],
-  "frozen_at": "2026-11-25"
+  "frozen_at": "2026-11-26",
+  "amendments": [
+    {
+      "date": "2026-11-26",
+      "by": "the owner (decision), recorded by the agent",
+      "after_sessions": 6,
+      "change": "Arm U+ denies edits only to .git/config, .git/hooks/** and .git/info/**, not .git/**.",
+      "reason": "In run r1, U+ chained `git add … && git commit …`. A chained command doesn't match the sandbox's excludedCommands, so it ran inside the sandbox, where Edit(.git/**) denied .git/index.lock, and U+ committed nothing in any of its 3 sessions. S was unaffected: its dontAsk allowlist runs git on its own. A $0.10 probe with real Claude Code showed the narrowed rule lets a chained commit through and still denies writes to .git/hooks and .git/config. S keeps the supervisor's own Edit(.git/**)."
+    },
+    {
+      "date": "2026-11-26",
+      "by": "the owner (decision), recorded by the agent",
+      "after_sessions": 6,
+      "change": "Arm S runs Boundroom 2136eb910780c1e79c6598c84ddf734c95a5217c (main at #300's merge: v0.5.3 plus #300) instead of the v0.5.3 release commit b193297829c68d2243e5e32d1517cf0b51568813.",
+      "reason": "In run r1, v0.5.3 failed pr485's S session, whose fix was in scope and passed the hidden tests, because its handoff listed the supervisor's own queue write (automation/queue/slices.json) in dirty_paths_outside_scope, as base.md asks. #300 fixes that. The sandboxed oracle and green-base checks were rerun with the new sync: 6 of 6 pass, and the gates still reject the same 2 human solutions (pr469, pr516)."
+    }
+  ],
+  "void_runs": [
+    {
+      "run": "r1",
+      "started_at": "2026-11-26T09:02:36Z",
+      "model_sessions": 6,
+      "completed": 5,
+      "interrupted": 1,
+      "cost_usd": 2.65,
+      "stopped_by": "the agent, after finding both defects above",
+      "reason": "Both defects biased the result, one against each arm, so none of its sessions is used. The record is kept outside the repository at the run's output directory, and on #297."
+    }
+  ],
+  "budget": {
+    "total_usd": 60.0,
+    "spent_before_v2_1_usd": {
+      "v1": 3.9,
+      "v2_r1": 2.65,
+      "sandbox_probe": 0.1
+    },
+    "v2_1_budget_total_usd": 53.34
+  }
 }

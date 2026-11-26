@@ -54,7 +54,7 @@
       },
       "oracle": {
         "base": {
-          "setup_sha": "e1d01aa8a4338a892d4376cb27a8964a59d30626",
+          "setup_sha": "83627d7596139ee53be1b4153e6eca49c969b346",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -69,10 +69,10 @@
           "skipped": 0,
           "passed_all": false,
           "failed_any": true,
-          "output_tail": "E       AssertionError: assert '1.0.0' == '2.0.0'\nE         \nE         - 2.0.0\nE         ? ^\nE         + 1.0.0\nE         ? ^\n\ntests/test_parsing.py:217: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[1.2.3+build.5-patch-1.2.4]\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[1.0.0+build.5-patch-1.0.1]\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[0.1.4+build.5-patch-0.1.5]\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[1.2.0+build.5-minor-1.3.0]\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[1.0.0+build.5-major-2.0.0]\n5 failed, 36 passed in 0.11s"
+          "output_tail": "E       AssertionError: assert '1.0.0' == '2.0.0'\nE         \nE         - 2.0.0\nE         ? ^\nE         + 1.0.0\nE         ? ^\n\ntests/test_parsing.py:217: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[1.2.3+build.5-patch-1.2.4]\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[1.0.0+build.5-patch-1.0.1]\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[0.1.4+build.5-patch-0.1.5]\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[1.2.0+build.5-minor-1.3.0]\nFAILED tests/test_parsing.py::test_next_version_with_versioninfo[1.0.0+build.5-major-2.0.0]\n5 failed, 36 passed in 0.08s"
         },
         "head": {
-          "setup_sha": "b17feba5728a965455886b96c54d5356cacb0e9e",
+          "setup_sha": "3adae2f26604e76cc09556ddb4fa76e3cd6e7ee2",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -87,11 +87,11 @@
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": "src/semver/version.py         273     89     90     16  62.8%   51, 132, 148, 150, 160, 171, 180, 189, 198, 207, 248, 264, 278-283, 363->365, 366, 368, 388-399, 418, 422, 424, 433, 440-445, 493, 497, 501, 505, 509, 530-549, 552-553, 575-576, 598-627, 657, 659, 694-700, 716-720, 747-754\n-----------------------------------------------------------------------\nTOTAL                         443    161    110     18  60.0%\n41 passed in 0.15s"
+          "output_tail": "src/semver/version.py         273     89     90     16  62.8%   51, 132, 148, 150, 160, 171, 180, 189, 198, 207, 248, 264, 278-283, 363->365, 366, 368, 388-399, 418, 422, 424, 433, 440-445, 493, 497, 501, 505, 509, 530-549, 552-553, 575-576, 598-627, 657, 659, 694-700, 716-720, 747-754\n-----------------------------------------------------------------------\nTOTAL                         443    161    110     18  60.0%\n41 passed in 0.09s"
         }
       },
       "green_base": {
-        "setup_sha": "85184ebafcae28dc39e1660814f5776a1c59ca21",
+        "setup_sha": "7adfaff71c0435eba94444a80bcb66e5599be780",
         "green": true,
         "validations": [
           {
@@ -99,9 +99,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 0.308,
+            "wall_seconds": 0.182,
             "failures": [],
-            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-bwyvcudo' (errno=Operation not permitted)",
+            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-qP3omJi4' (errno=Operation not permitted)",
             "contained": true
           },
           {
@@ -109,9 +109,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 1.766,
+            "wall_seconds": 1.105,
             "failures": [],
-            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         273      0     90      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         443      0    110      0  100.0%\n354 passed, 60 warnings in 1.05s",
+            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         273      0     90      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         443      0    110      0  100.0%\n354 passed, 60 warnings in 0.58s",
             "contained": true
           }
         ],
@@ -179,7 +179,7 @@
       },
       "oracle": {
         "base": {
-          "setup_sha": "9aefcd0d4340b915e41a10dbb09f06d6847b9cc7",
+          "setup_sha": "540eae9f2d4a22d07850caf4ddda20a3c77bb656",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -194,10 +194,10 @@
           "skipped": 0,
           "passed_all": false,
           "failed_any": true,
-          "output_tail": "        v = Version.parse(\"1.2.3-beta2\")\n>       assert str(v.next_version(\"prerelease\", \"beta\")) == \"1.2.3-beta3\"\nE       AssertionError: assert '1.2.3-beta.1' == '1.2.3-beta3'\nE         \nE         - 1.2.3-beta3\nE         ?           ^\nE         + 1.2.3-beta.1\nE         ?           ^^\n\ntests/test_issue484.py:33: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_issue484.py::test_issue_484_rc3_to_rc4 - AssertionError: as...\nFAILED tests/test_issue484.py::test_issue_484_rc9_to_rc10 - AssertionError: a...\nFAILED tests/test_issue484.py::test_issue_484_custom_token - AssertionError: ...\n3 failed, 2 passed in 0.07s"
+          "output_tail": "        v = Version.parse(\"1.2.3-beta2\")\n>       assert str(v.next_version(\"prerelease\", \"beta\")) == \"1.2.3-beta3\"\nE       AssertionError: assert '1.2.3-beta.1' == '1.2.3-beta3'\nE         \nE         - 1.2.3-beta3\nE         ?           ^\nE         + 1.2.3-beta.1\nE         ?           ^^\n\ntests/test_issue484.py:33: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_issue484.py::test_issue_484_rc3_to_rc4 - AssertionError: as...\nFAILED tests/test_issue484.py::test_issue_484_rc9_to_rc10 - AssertionError: a...\nFAILED tests/test_issue484.py::test_issue_484_custom_token - AssertionError: ...\n3 failed, 2 passed in 0.04s"
         },
         "head": {
-          "setup_sha": "a0c23cb1a99d515b6752157f3ab90add3aeb3296",
+          "setup_sha": "6aeb1f3d9d2983dde2893f4cf5e90e30a5f5737a",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -212,11 +212,11 @@
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": "src/semver/version.py         304    156    102     14  41.4%   48-66, 73, 154, 178-180, 188-206, 215, 224, 233, 242, 251, 266, 292, 308, 322-327, 340-341, 354-355, 368-369, 407-418, 438-456, 473-502, 527, 536, 540, 542->552, 556, 560, 564, 568, 572, 576, 597-616, 619-620, 624->626, 627, 631, 642-643, 665-694, 724, 726, 737, 741, 745, 747, 769-775, 791-795, 822-829\n-----------------------------------------------------------------------\nTOTAL                         474    245    122     14  42.1%\n5 passed in 0.12s"
+          "output_tail": "src/semver/version.py         304    156    102     14  41.4%   48-66, 73, 154, 178-180, 188-206, 215, 224, 233, 242, 251, 266, 292, 308, 322-327, 340-341, 354-355, 368-369, 407-418, 438-456, 473-502, 527, 536, 540, 542->552, 556, 560, 564, 568, 572, 576, 597-616, 619-620, 624->626, 627, 631, 642-643, 665-694, 724, 726, 737, 741, 745, 747, 769-775, 791-795, 822-829\n-----------------------------------------------------------------------\nTOTAL                         474    245    122     14  42.1%\n5 passed in 0.07s"
         }
       },
       "green_base": {
-        "setup_sha": "2c27baa982e7843d5d0d7f34204827f44fc5bd5d",
+        "setup_sha": "b575844b39ca28a9ddfec4bdb66640be3b552a49",
         "green": true,
         "validations": [
           {
@@ -224,9 +224,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 0.256,
+            "wall_seconds": 0.186,
             "failures": [],
-            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-PdYJYowt' (errno=Operation not permitted)",
+            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-D7rD0DDv' (errno=Operation not permitted)",
             "contained": true
           },
           {
@@ -234,9 +234,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 1.751,
+            "wall_seconds": 1.212,
             "failures": [],
-            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         300      0    100      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         470      0    120      0  100.0%\n438 passed, 1 skipped in 1.04s",
+            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         300      0    100      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         470      0    120      0  100.0%\n438 passed, 1 skipped in 0.69s",
             "contained": true
           }
         ],
@@ -302,7 +302,7 @@
       },
       "oracle": {
         "base": {
-          "setup_sha": "ba39d256a039552e05041ec3615456f3b3f2d9db",
+          "setup_sha": "f424b165ca5236998b47bff65ffe06f4421490d4",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -317,10 +317,10 @@
           "skipped": 0,
           "passed_all": false,
           "failed_any": true,
-          "output_tail": "             ^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE ValueError\n\ntests/test_bump.py:180: Failed\n=========================== short test summary info ============================\nFAILED tests/test_bump.py::test_next_version_matches_literal_prerelease_token_family[1.2.3-alpha.beta.1+build.7-alpha.beta-1.2.3-alpha.beta.2]\nFAILED tests/test_bump.py::test_next_version_matches_literal_prerelease_token_family[1.2.3-alphaXbeta9-alpha.beta-1.2.3-alpha.beta.1]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[[]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[rc.]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[rc+build]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[rc..next]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[rc.01]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[01]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[r\\xe9]\n9 failed, 36 passed in 0.26s"
+          "output_tail": "             ^^^^^^^^^^^^^^^^^^^^^^^^^\nE       Failed: DID NOT RAISE ValueError\n\ntests/test_bump.py:180: Failed\n=========================== short test summary info ============================\nFAILED tests/test_bump.py::test_next_version_matches_literal_prerelease_token_family[1.2.3-alpha.beta.1+build.7-alpha.beta-1.2.3-alpha.beta.2]\nFAILED tests/test_bump.py::test_next_version_matches_literal_prerelease_token_family[1.2.3-alphaXbeta9-alpha.beta-1.2.3-alpha.beta.1]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[[]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[rc.]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[rc+build]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[rc..next]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[rc.01]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[01]\nFAILED tests/test_bump.py::test_next_version_rejects_invalid_prerelease_token[r\\xe9]\n9 failed, 36 passed in 0.15s"
         },
         "head": {
-          "setup_sha": "58e4cf9cdcd824d136c023b565ea742f1f930eb9",
+          "setup_sha": "4aa5d9aee33a7498240c828e7bc43ae797cb6e59",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -335,11 +335,11 @@
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": "src/semver/version.py         304     75    100     17  72.8%   57, 62-65, 154, 193, 217, 226, 235, 244, 253, 294, 325->329, 457, 479, 481, 483, 502, 529, 538, 574, 578, 582, 586, 590, 611-630, 633-634, 645, 656-657, 679-708, 738, 740, 751, 755, 759, 761, 783-789, 805-809, 836-843\n-----------------------------------------------------------------------\nTOTAL                         474    141    120     18  68.2%\n45 passed in 0.22s"
+          "output_tail": "src/semver/version.py         304     75    100     17  72.8%   57, 62-65, 154, 193, 217, 226, 235, 244, 253, 294, 325->329, 457, 479, 481, 483, 502, 529, 538, 574, 578, 582, 586, 590, 611-630, 633-634, 645, 656-657, 679-708, 738, 740, 751, 755, 759, 761, 783-789, 805-809, 836-843\n-----------------------------------------------------------------------\nTOTAL                         474    141    120     18  68.2%\n45 passed in 0.13s"
         }
       },
       "green_base": {
-        "setup_sha": "a51842b643e7f089ad7c782d4dd1bf72573414af",
+        "setup_sha": "c48962460310a25d999c27afa70171286b5cc7e0",
         "green": true,
         "validations": [
           {
@@ -347,9 +347,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 0.249,
+            "wall_seconds": 0.186,
             "failures": [],
-            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-XY11im95' (errno=Operation not permitted)",
+            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-fBo7CgD3' (errno=Operation not permitted)",
             "contained": true
           },
           {
@@ -357,9 +357,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 1.883,
+            "wall_seconds": 1.307,
             "failures": [],
-            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         303      0    100      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         473      0    120      0  100.0%\n471 passed, 1 skipped in 1.17s",
+            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         303      0    100      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         473      0    120      0  100.0%\n471 passed, 1 skipped in 0.79s",
             "contained": true
           }
         ],
@@ -425,7 +425,7 @@
       },
       "oracle": {
         "base": {
-          "setup_sha": "bc44f547b70811f542f5eba9bc20534a3ee73e49",
+          "setup_sha": "3024448bc1044456b1f3b335d3662186b44fe33f",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -443,7 +443,7 @@
           "output_tail": "        if (\n            isinstance(index, slice)\n            and (index.start is not None and index.start < 0)\n>           or (index.stop is not None and index.stop < 0)\n                ^^^^^^^^^^\n        ):\nE       AttributeError: 'float' object has no attribute 'stop'\n\nsrc/semver/version.py:640: AttributeError\n=========================== short test summary info ============================\nFAILED tests/test_index.py::test_version_accepts_index_protocol - AttributeEr...\nFAILED tests/test_index.py::test_invalid_version_index_type[None] - Attribute...\nFAILED tests/test_index.py::test_invalid_version_index_type[1] - AttributeErr...\nFAILED tests/test_index.py::test_invalid_version_index_type[1.0] - AttributeE...\n4 failed, 44 passed in 0.10s"
         },
         "head": {
-          "setup_sha": "63a7a4bc182565efbc1cccb1e61e4734f9d6e010",
+          "setup_sha": "3535c9d95c0954d32fe79d1a991c5ebb07555967",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -458,11 +458,11 @@
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": "src/semver/version.py         317    187    106      6  34.5%   50-68, 75, 156, 180-182, 190-210, 219, 228, 237, 246, 255, 286, 296, 307-313, 326-331, 344-345, 358-359, 372-373, 406-424, 442-460, 477-506, 539-590, 594, 598, 602, 606, 610, 614, 658-659, 662-667, 670, 681-682, 704-733, 763, 765, 776, 780, 784, 786, 804-816, 832-836, 863-870\n-----------------------------------------------------------------------\nTOTAL                         487    276    126      6  37.4%\n48 passed in 0.12s"
+          "output_tail": "src/semver/version.py         317    187    106      6  34.5%   50-68, 75, 156, 180-182, 190-210, 219, 228, 237, 246, 255, 286, 296, 307-313, 326-331, 344-345, 358-359, 372-373, 406-424, 442-460, 477-506, 539-590, 594, 598, 602, 606, 610, 614, 658-659, 662-667, 670, 681-682, 704-733, 763, 765, 776, 780, 784, 786, 804-816, 832-836, 863-870\n-----------------------------------------------------------------------\nTOTAL                         487    276    126      6  37.4%\n48 passed in 0.10s"
         }
       },
       "green_base": {
-        "setup_sha": "78c82f250022dff5b57dd3a3eb208e6589e50bc9",
+        "setup_sha": "0e0920a5a6e8ecfd29ee37abe2f963500c2a7949",
         "green": true,
         "validations": [
           {
@@ -470,9 +470,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 0.311,
+            "wall_seconds": 0.187,
             "failures": [],
-            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-p8Fs99Lc' (errno=Operation not permitted)",
+            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-t0RPJpYd' (errno=Operation not permitted)",
             "contained": true
           },
           {
@@ -480,9 +480,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 2.119,
+            "wall_seconds": 1.421,
             "failures": [],
-            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         312      0    106      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         482      0    126      0  100.0%\n529 passed, 1 skipped in 1.41s",
+            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         312      0    106      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         482      0    126      0  100.0%\n529 passed, 1 skipped in 0.93s",
             "contained": true
           }
         ],
@@ -561,7 +561,7 @@
       },
       "oracle": {
         "base": {
-          "setup_sha": "77d9d8df3f914948e0f7ef9b4f3d94b5c75f0c48",
+          "setup_sha": "02edbef823fabfaa0e1bc55fafa7eb213b2756a9",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -576,10 +576,10 @@
           "skipped": 0,
           "passed_all": false,
           "failed_any": true,
-          "output_tail": "FAILED tests/test_compare.py::test_should_compare_version_tuples[t0] - Failed...\nFAILED tests/test_compare.py::test_should_compare_version_tuples[t1] - Failed...\nFAILED tests/test_compare.py::test_should_compare_version_tuples[t2] - Failed...\nFAILED tests/test_compare.py::test_should_compare_version_tuples[t3] - Failed...\nFAILED tests/test_compare.py::test_should_compare_version_tuples[t4] - Failed...\nFAILED tests/test_compare.py::test_should_warn_when_testing_equality_with_strings_or_tuples[1.0.0]\nFAILED tests/test_compare.py::test_should_warn_when_testing_equality_with_strings_or_tuples[other1]\nFAILED tests/test_compare.py::test_should_compare_version_string[1.0.0] - Fai...\nFAILED tests/test_compare.py::test_should_compare_version_string[1.0.0-pre.2]\nFAILED tests/test_compare.py::test_should_compare_version_string[1.0.0-pre.2+build.4]\nFAILED tests/test_compare_invalid_operands.py::test_equality_with_malformed_collection_is_false[other1]\nFAILED tests/test_compare_invalid_operands.py::test_equality_with_malformed_collection_is_false[other4]\nFAILED tests/test_compare_invalid_operands.py::test_equality_with_malformed_collection_is_false[other5]\nFAILED tests/test_compare_invalid_operands.py::test_valid_collection_operands_still_compare\n14 failed, 94 passed in 0.38s"
+          "output_tail": "FAILED tests/test_compare.py::test_should_compare_version_tuples[t0] - Failed...\nFAILED tests/test_compare.py::test_should_compare_version_tuples[t1] - Failed...\nFAILED tests/test_compare.py::test_should_compare_version_tuples[t2] - Failed...\nFAILED tests/test_compare.py::test_should_compare_version_tuples[t3] - Failed...\nFAILED tests/test_compare.py::test_should_compare_version_tuples[t4] - Failed...\nFAILED tests/test_compare.py::test_should_warn_when_testing_equality_with_strings_or_tuples[1.0.0]\nFAILED tests/test_compare.py::test_should_warn_when_testing_equality_with_strings_or_tuples[other1]\nFAILED tests/test_compare.py::test_should_compare_version_string[1.0.0] - Fai...\nFAILED tests/test_compare.py::test_should_compare_version_string[1.0.0-pre.2]\nFAILED tests/test_compare.py::test_should_compare_version_string[1.0.0-pre.2+build.4]\nFAILED tests/test_compare_invalid_operands.py::test_equality_with_malformed_collection_is_false[other1]\nFAILED tests/test_compare_invalid_operands.py::test_equality_with_malformed_collection_is_false[other4]\nFAILED tests/test_compare_invalid_operands.py::test_equality_with_malformed_collection_is_false[other5]\nFAILED tests/test_compare_invalid_operands.py::test_valid_collection_operands_still_compare\n14 failed, 94 passed in 0.22s"
         },
         "head": {
-          "setup_sha": "275dd5f4d84b61177c2091b9cc919bd7cd9b90ee",
+          "setup_sha": "e5e321e9d4a91a468cb6198fa3a6bd8a764ac185",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -594,11 +594,11 @@
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": "src/semver/version.py         320    137    108      4  52.1%   169, 193-195, 232, 241, 250, 259, 268, 309, 320-326, 339-344, 357-358, 371-372, 385-386, 419-437, 455-473, 552-603, 648-668, 671-672, 675-680, 694-695, 717-746, 778, 789, 797, 799, 821-829, 848-849, 876-883\n-----------------------------------------------------------------------\nTOTAL                         490    211    128      7  52.4%\n108 passed, 33 warnings in 0.30s"
+          "output_tail": "src/semver/version.py         320    137    108      4  52.1%   169, 193-195, 232, 241, 250, 259, 268, 309, 320-326, 339-344, 357-358, 371-372, 385-386, 419-437, 455-473, 552-603, 648-668, 671-672, 675-680, 694-695, 717-746, 778, 789, 797, 799, 821-829, 848-849, 876-883\n-----------------------------------------------------------------------\nTOTAL                         490    211    128      7  52.4%\n108 passed, 33 warnings in 0.23s"
         }
       },
       "green_base": {
-        "setup_sha": "faad24fb0445b19b6202c84c093ac3b07ab70bfb",
+        "setup_sha": "b9daadb036ce0fb0939d6999696984e75ef1b4f4",
         "green": true,
         "validations": [
           {
@@ -606,9 +606,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 0.302,
+            "wall_seconds": 0.187,
             "failures": [],
-            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-qzczZ2Dh' (errno=Operation not permitted)",
+            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-SEXJzR0r' (errno=Operation not permitted)",
             "contained": true
           },
           {
@@ -616,9 +616,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 2.185,
+            "wall_seconds": 1.372,
             "failures": [],
-            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         317      0    106      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         487      0    126      0  100.0%\n533 passed, 1 skipped in 1.41s",
+            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         317      0    106      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         487      0    126      0  100.0%\n533 passed, 1 skipped in 0.86s",
             "contained": true
           }
         ],
@@ -711,7 +711,7 @@
       },
       "oracle": {
         "base": {
-          "setup_sha": "fe8e792a23e2fc453f3e16c100bcd4cd9744df1b",
+          "setup_sha": "943f38b3d260a0cab52b4de1a5752141c5d06b09",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -726,10 +726,10 @@
           "skipped": 0,
           "passed_all": false,
           "failed_any": true,
-          "output_tail": "tests/test_compare.py::test_should_compare_version_list[lst4]\n  /private/tmp/claude-502/-Users-raelldottin-Documents-Work-boundroom/6e0fe78c-3fba-4481-94fc-298a59f77d9a/scratchpad/v2recheck/trackr-select-f8mruos9/base/tests/test_compare.py:373: DeprecationWarning: Equality comparisons between Version and strings, tuples or lists are deprecated and will be removed in semver 4; convert strings with Version.parse() and tuples with Version(*parts). See details in issue #506.\n    assert not lst == v0\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_compare.py::test_should_compare_superscript_digit_as_alphanumeric[\\xb2-2-1]\nFAILED tests/test_compare.py::test_should_compare_superscript_digit_as_alphanumeric[a.\\xb2-b.0--1]\nFAILED tests/test_compare.py::test_should_compare_superscript_digit_as_alphanumeric[a.0-b.\\xb2--1]\nFAILED tests/test_parsing.py::test_equal_prereleases_have_equal_hashes[007-7]\nFAILED tests/test_parsing.py::test_equal_prereleases_have_equal_hashes[alpha.007.beta-alpha.7.beta]\nFAILED tests/test_parsing.py::test_equal_prereleases_have_equal_hashes[\\u0667-7]\nFAILED tests/test_parsing.py::test_equal_prereleases_have_equal_hashes[-None]\nFAILED tests/test_parsing.py::test_should_treat_superscript_digit_as_alphanumeric_identifier\n8 failed, 128 passed, 20 warnings in 0.44s"
+          "output_tail": "tests/test_compare.py::test_should_compare_version_list[lst4]\n  /Users/raelldottin/trackr-v2/recheck-v21/trackr-select-65klrwbd/base/tests/test_compare.py:373: DeprecationWarning: Equality comparisons between Version and strings, tuples or lists are deprecated and will be removed in semver 4; convert strings with Version.parse() and tuples with Version(*parts). See details in issue #506.\n    assert not lst == v0\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/test_compare.py::test_should_compare_superscript_digit_as_alphanumeric[\\xb2-2-1]\nFAILED tests/test_compare.py::test_should_compare_superscript_digit_as_alphanumeric[a.\\xb2-b.0--1]\nFAILED tests/test_compare.py::test_should_compare_superscript_digit_as_alphanumeric[a.0-b.\\xb2--1]\nFAILED tests/test_parsing.py::test_equal_prereleases_have_equal_hashes[007-7]\nFAILED tests/test_parsing.py::test_equal_prereleases_have_equal_hashes[alpha.007.beta-alpha.7.beta]\nFAILED tests/test_parsing.py::test_equal_prereleases_have_equal_hashes[\\u0667-7]\nFAILED tests/test_parsing.py::test_equal_prereleases_have_equal_hashes[-None]\nFAILED tests/test_parsing.py::test_should_treat_superscript_digit_as_alphanumeric_identifier\n8 failed, 128 passed, 20 warnings in 0.26s"
         },
         "head": {
-          "setup_sha": "056b85ba4053adf481208e67082c27ab4830e475",
+          "setup_sha": "e0e82d5579e737e61f2095fe94c68a13bff3f07b",
           "harness_restored": {
             "restored": [],
             "removed": [],
@@ -744,11 +744,11 @@
           "skipped": 0,
           "passed_all": true,
           "failed_any": false,
-          "output_tail": "src/semver/version.py         322     85    108      8  70.9%   80-81, 170, 196, 236, 245, 254, 263, 272, 313, 329, 343-348, 428->430, 431, 433, 459-477, 591, 599-604, 650-670, 673-674, 703-704, 726-755, 787, 830-838, 857-858, 885-892\n-----------------------------------------------------------------------\nTOTAL                         492    155    128      9  66.5%\n136 passed, 20 warnings in 0.38s"
+          "output_tail": "src/semver/version.py         322     85    108      8  70.9%   80-81, 170, 196, 236, 245, 254, 263, 272, 313, 329, 343-348, 428->430, 431, 433, 459-477, 591, 599-604, 650-670, 673-674, 703-704, 726-755, 787, 830-838, 857-858, 885-892\n-----------------------------------------------------------------------\nTOTAL                         492    155    128      9  66.5%\n136 passed, 20 warnings in 0.22s"
         }
       },
       "green_base": {
-        "setup_sha": "d57ccd955783e76d2935fd12522e7e4a85e10ced",
+        "setup_sha": "9f4279fef0c62fa178d8e3677c364d4ef3486c25",
         "green": true,
         "validations": [
           {
@@ -756,9 +756,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 0.318,
+            "wall_seconds": 0.186,
             "failures": [],
-            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-TsDYLP6w' (errno=Operation not permitted)",
+            "output_tail": "git: error: couldn't create cache file '/var/folders/5j/ccbp933j3hg69yn71jpyzzkw0000gp/T/xcrun_db-Taao474B' (errno=Operation not permitted)",
             "contained": true
           },
           {
@@ -766,9 +766,9 @@
             "exit_code": 0,
             "timed_out": false,
             "passed": true,
-            "wall_seconds": 2.308,
+            "wall_seconds": 1.319,
             "failures": [],
-            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         319      0    108      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         489      0    128      0  100.0%\n548 passed, 1 skipped, 34 warnings in 1.57s",
+            "output_tail": "Name                        Stmts   Miss Branch BrPart   Cover   Missing\n------------------------------------------------------------------------\nsrc/semver/__about__.py         7      0      0      0  100.0%\nsrc/semver/__init__.py          4      0      0      0  100.0%\nsrc/semver/__main__.py          9      0      2      0  100.0%\nsrc/semver/_deprecated.py      81      0      8      0  100.0%\nsrc/semver/_types.py            9      0      0      0  100.0%\nsrc/semver/cli.py              60      0     10      0  100.0%\nsrc/semver/version.py         319      0    108      0  100.0%\n------------------------------------------------------------------------\nTOTAL                         489      0    128      0  100.0%\n548 passed, 1 skipped, 34 warnings in 0.84s",
             "contained": true
           }
         ],
@@ -1179,16 +1179,16 @@
       ]
     }
   ],
-  "rechecked_at": "2026-11-25T12:02:45Z",
+  "rechecked_at": "2026-11-26T09:46:41Z",
   "rechecked_with": {
     "sync": {
-      "release": "b193297829c68d2243e5e32d1517cf0b51568813",
+      "release": "2136eb910780c1e79c6598c84ddf734c95a5217c",
       "script": "Tools/boundroom-sync.sh",
       "omit": [
         "benchmark"
       ],
       "files": 58,
-      "sha256": "384d2de11733ac81878bdadcf222095307c60a2a1e25ccded7ae069318e13ada"
+      "sha256": "2aca76a5825a5945c2219ea0371df34236cfd99c4f16f3b90bdf703e4e426bad"
     },
     "validations": "each task's own required_validations"
   }

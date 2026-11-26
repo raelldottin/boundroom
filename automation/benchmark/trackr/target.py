@@ -1,7 +1,7 @@
 """The target's setup: Boundroom synced beside python-semver, offline venvs, and the test harness.
 
 **The sync.** Boundroom's own ``Tools/boundroom-sync.sh --sync`` runs once per pilot or selection,
-from a clean checkout of the v0.5.3 release commit, into a staging directory. It checks the source's
+from a clean checkout of the pinned supervisor commit (SUPERVISOR_RELEASE), into a staging directory. It checks the source's
 provenance (the pin, the remote, a clean tree) and runs the source's quality gate,
 ``make reusable-check``, which takes minutes, so it runs once and not per clone. The staged result is
 then copied into each clone, and ``boundroom-sync.sh --check`` (an unpinned drift report) confirms
@@ -95,7 +95,7 @@ def stage_sync(
     boundroom_mirror: Path, work: Path, supervisor_python: Path, runner: CommandRunner, env: Mapping[str, str]
 ) -> SyncStage:
     """Run the release's own sync, fully verified, into ``work/stage``. Starts no model."""
-    source = work / "boundroom-v0.5.3"
+    source = work / "boundroom-supervisor"
     clone_at(boundroom_mirror, SUPERVISOR_RELEASE, source, env, history_only=False)
     git(["remote", "add", "origin", SUPERVISOR_UPSTREAM], source, env)  # its identity, for the sync's check
     stage = work / "stage"

@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from .common import (
+    sync_pin_error,
     MODEL,
     SOLUTIONS_FILE,
     TASKS_FILE,
@@ -558,6 +559,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"stop: the task set's status is {data.get('status')!r}, not 'frozen'; a real run needs a frozen task set.",
             file=sys.stderr,
         )
+        return 2
+    pin_error = None if args.dry_run else sync_pin_error(data)
+    if pin_error:
+        print(f"stop: {pin_error}; recheck and refreeze it first.", file=sys.stderr)
         return 2
     if args.model != data.get("model", MODEL):
         print(f"stop: --model {args.model} is not the frozen task set's model, {data.get('model')}.", file=sys.stderr)

@@ -1,6 +1,6 @@
 """What the Track R selection, driver, oracle and pilot share: clones, commands and the environment.
 
-Track R v2 runs against an external target, python-semver, with Boundroom v0.5.3 synced beside its
+Track R v2 runs against an external target, python-semver, with Boundroom v0.5.3 plus #300 synced beside its
 code. Every clone made here is disposable, lives outside any repository and has no remote. A
 session's clone holds no object from after its base commit, so the human solution can't be found
 with ``git log --all`` or ``git cat-file``. Every git command the driver runs disables hooks and
@@ -31,10 +31,13 @@ V1_TASKS_FILE = HERE / "tasks.pilot.json"  # void; kept as the record of v1
 TARGET_UPSTREAM = "https://github.com/python-semver/python-semver.git"
 TARGET_REPOSITORY = "python-semver/python-semver"
 TARGET_MIRROR = "python-semver.git"
-# The supervisor beside it: Boundroom's v0.5.3 release commit, synced by its own sync script.
+# The supervisor beside it, synced by its own sync script. v2.1 (owner, 2026-11-26): main at #300's
+# merge, which is v0.5.3 plus the fix for failing a slice whose handoff lists the supervisor's own
+# queue write. v2 used the v0.5.3 release commit, b193297.
 SUPERVISOR_UPSTREAM = "https://github.com/raelldottin/boundroom.git"
 SUPERVISOR_MIRROR = "boundroom.git"
-SUPERVISOR_RELEASE = "b193297829c68d2243e5e32d1517cf0b51568813"
+SUPERVISOR_RELEASE = "2136eb910780c1e79c6598c84ddf734c95a5217c"
+SUPERVISOR_LABEL = "v0.5.3 plus #300"
 MODEL = "claude-opus-5-5"
 
 TIMEOUT_RETURNCODE = 124  # timeout(1)'s code, as the benchmark and run_next read it
@@ -472,3 +475,14 @@ def provenance_errors(provenance: Any) -> list[str]:
 
 def task_id(task: Mapping[str, Any]) -> str:
     return f"pr{task['number']}"
+
+
+def sync_pin_error(task_set: Mapping[str, Any]) -> Optional[str]:
+    """Why a real run can't use *task_set*: it was checked against another supervisor than the one synced.
+
+    The green bases and oracle results were measured with that sync, so they don't carry over.
+    """
+    frozen = ((task_set.get("provenance") or {}).get("sync") or {}).get("release")
+    if frozen == SUPERVISOR_RELEASE:
+        return None
+    return f"the task set was checked against supervisor {frozen or 'unrecorded'}, but this pilot syncs {SUPERVISOR_RELEASE}"

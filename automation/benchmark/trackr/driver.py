@@ -2,7 +2,7 @@
 
 **Setup, the same in both arms but for S's queue.** A fresh clone of python-semver at the task's
 ``base_sha``, outside any repository, with no remote and no object from after the base. Its own
-``.venv`` is installed offline from the frozen wheelhouse. Boundroom v0.5.3, as its own
+``.venv`` is installed offline from the frozen wheelhouse. Boundroom (v0.5.3 plus #300), as its own
 ``Tools/boundroom-sync.sh --sync`` wrote it (see ``target``), is copied in beside semver's code. Arm
 S's setup also adds ``automation/queue/slices.json``. All of it is one setup commit: the sync and the
 queue are the only difference between the arms. Git reads an empty global config, gh an empty config
@@ -52,6 +52,7 @@ from automation.supervisor.run_next import format_value_list
 from . import sandbox
 from .sandbox import run_validations_contained
 from .common import (
+    sync_pin_error,
     SUPERVISOR_MIRROR,
     SUPERVISOR_RELEASE,
     SUPERVISOR_UPSTREAM,
@@ -1017,6 +1018,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"stop: the task set's status is {data.get('status')!r}, not 'frozen'; a real session needs a frozen task set.",
             file=sys.stderr,
         )
+        return 2
+    pin_error = None if args.fake else sync_pin_error(data)
+    if pin_error:
+        print(f"stop: {pin_error}; recheck and refreeze it first.", file=sys.stderr)
         return 2
     task, solution = merged_task(args.tasks, args.solutions, args.task)
     claude_bin = str(write_fake_claude(args.session_dir / "fake-claude-bin", args.fake)) if args.fake else args.claude_bin

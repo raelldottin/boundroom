@@ -57,9 +57,9 @@ run them as scripts: run as a script, `select.py` would shadow the standard libr
    and with every object after the base pruned, so the human solution can't be found in it.
 2. The clone's own `.venv`, installed offline from the wheelhouse (below), excluded from Git through
    `.git/info/exclude`.
-3. **Boundroom v0.5.3 beside semver's code.** Boundroom's own `Tools/boundroom-sync.sh --sync` runs
-   once per pilot or selection, from a clean checkout of the release commit
-   `b193297829c68d2243e5e32d1517cf0b51568813`, into a staging directory, with `--pin`,
+3. **Boundroom v0.5.3 plus #300 beside semver's code.** Boundroom's own `Tools/boundroom-sync.sh --sync` runs
+   once per pilot or selection, from a clean checkout of `main` at #300's merge,
+   `2136eb910780c1e79c6598c84ddf734c95a5217c` (v2.1; v2 used the v0.5.3 release commit `b193297`), into a staging directory, with `--pin`,
    `--expect-remote` and the source's quality gate (`make reusable-check`). The staged files are
    copied into each clone, and the script's own `--check` confirms the clone matches the manifest.
    The optional `benchmark` component is left out (`--omit benchmark`). v0.5.3 already has #279's
@@ -92,7 +92,7 @@ scope stops a correct change, that is a real cost of the method.
 
 PyPI is reached once, by `wheelhouse.py build`, outside any sandbox. After that, every install is
 `uv pip install --offline --no-index --find-links <wheelhouse> --require-hashes`. The hashes below
-are the ones in semver's `uv.lock` at the tasks' bases and in Boundroom's `uv.lock` at b193297; a
+are the ones in semver's `uv.lock` at the tasks' bases and in Boundroom's `uv.lock` at b193297, unchanged at 2136eb9; a
 test checks `wheelhouse.v2.json` pins exactly these.
 
 | Group | Package | Version | Wheel | sha256 |
@@ -214,7 +214,7 @@ profile (`sandbox.PROFILE`; the parameters are the session's own directories):
    uv run python -m automation.benchmark.trackr.wheelhouse build --dest ~/trackr-v2/wheelhouse
    uv run python -m automation.benchmark.trackr.pilot --yes \
      --out ~/trackr-v2/pilot-r1 --cache-dir ~/trackr-v2/cache --wheelhouse ~/trackr-v2/wheelhouse \
-     --budget-total 56.10 --cap-usd 4.50 --timeout 1800 --model claude-opus-5-5
+     --budget-total 53.34 --cap-usd 4.50 --timeout 1800 --model claude-opus-5-5
    ```
 
    `wheelhouse build` reaches PyPI once and fails unless every wheel matches `wheelhouse.v2.json`.
@@ -228,6 +228,26 @@ profile (`sandbox.PROFILE`; the parameters are the session's own directories):
   pilot checks that `claude --help` lists every flag the arms use.
 - **Six tasks with one repeat** measure cost, censoring and blinding, not effectiveness.
 - **One machine:** the wheelhouse is for CPython 3.12 on macOS arm64.
+
+## v2.1: what changed after run r1 (owner decisions, 2026-11-26)
+
+Run r1 was stopped by the agent after 6 sessions and $2.65, and it is void: two defects biased it, one
+against each arm. `tasks.v2.json` records both amendments, the void run and the budget.
+
+- **U+ couldn't commit.** U+ chains commands (`pytest … ; git add … && git commit …`). A chained
+  command doesn't match the sandbox's `excludedCommands`, so it ran inside the sandbox, where
+  `Edit(.git/**)` denied `.git/index.lock`. U+ committed nothing in its 3 sessions, and the checker
+  scores the final commit. U+ now denies only `.git/config`, `.git/hooks` and `.git/info`. A $0.10
+  probe with real Claude Code confirmed that a chained commit goes through and writes to hooks and
+  config are still denied. S keeps the supervisor's own rule; its allowlist runs git on its own.
+- **S failed an honest handoff.** v0.5.3 failed a slice whose handoff listed the supervisor's own
+  queue write in `dirty_paths_outside_scope`, as `base.md` asks. On pr485 that was an in-scope fix
+  that passed the hidden tests. #300 fixed it, and S now runs `main` at #300's merge. The sandboxed
+  oracle and green-base checks were rerun with the new sync: 6 of 6 pass, and the gates still reject
+  the same 2 human solutions. The pilot and the driver refuse a real run with a task set checked
+  against another supervisor than the one they sync.
+- **Budget.** Of the $60, v1 spent $3.90, run r1 $2.65 and the probe $0.10, so the rerun's budget
+  stop is $53.34. The cap per session, the timeout and the model are unchanged.
 
 ## v1: void
 
