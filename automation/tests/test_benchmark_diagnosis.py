@@ -1,22 +1,27 @@
-"""The session diagnosis, against what the pinned Hermes really leaves on disk.
+"""The session diagnosis's shell, against what the pinned Hermes really leaves on disk.
 
 Each case builds the files one session would leave - controls receipt, log, usage report,
-stream, witness receipt - plus a ``state.db`` with the three tables the diagnosis reads, at
-the columns pinned Hermes ``b6a87db`` declares them with. The cases are the failure modes the
-plan phase could be in: never reaching the model, waiting on a call that never completed,
-answering without acting, a tool that never returned, working until the budget, exiting
-without the artifact, and succeeding.
+stream, witness receipt, activity snapshot - plus a ``state.db`` with the three tables the
+diagnosis reads, at the columns pinned Hermes ``b6a87db`` declares them with. What the evidence
+can decide is the pure core's job and is tested in ``test_benchmark_diagnosis_core``; here are
+the reads, the snapshot the adapter takes before a budget kill, and whole sessions end to end.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
+import os
+import shlex
+import signal
 import sqlite3
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any, Optional
+from unittest import mock
 
 from automation.benchmark import diagnosis
 from automation.benchmark.adapter import AGENT_SESSIONS_DIR, SubmissionResult
@@ -56,15 +61,18 @@ class Session:
         self.dir = root / AGENT_SESSIONS_DIR
         self.dir.mkdir(parents=True, exist_ok=True)
         self.stem = stem
+        launched = diagnosis.launch_time(stem)[0]
+        assert launched is not None, f"fixture stem {stem!r} carries no launch time"
+        self.launch: float = launched
         self.home = root / f"hermes-home-{stem}"
         self.home.mkdir()
-        controls = {
+        self.controls = {
             "runner": "hermes",
             "transport": transport,
             "slice_id": f"task-1a2b:{phase_name}",
             "hermes_home": str(self.home),
         }
-        self.file(".controls.json", json.dumps(controls))
+        self.file(".controls.json", json.dumps(self.controls))
         self.file(".log", "")
 
     def file(self, suffix: str, text: str) -> None:
@@ -87,17 +95,17 @@ class Session:
                 conn.execute(
                     "INSERT INTO sessions (id, source, started_at, api_call_count, last_activity_at,"
                     " last_activity_description, last_activity_provenance) VALUES (?,?,?,?,?,?,?)",
-                    ("s1", "cli", LAUNCH + 3, calls, LAUNCH + at, description, "unknown" if description else None),
+                    ("s1", "cli", self.launch + 3, calls, self.launch + at, description, "unknown" if description else None),
                 )
             if calls:
                 conn.execute(
                     "INSERT INTO session_model_usage VALUES (?,?,?,?,?,?,?,?)",
-                    ("s1", "z-ai/glm-5.3", "nvidia", calls, 900, 40, LAUNCH + 60, LAUNCH + 60 * calls),
+                    ("s1", "z-ai/glm-5.3", "nvidia", calls, 900, 40, self.launch + 60, self.launch + 60 * calls),
                 )
             for role, at, has_calls in messages:
                 conn.execute(
                     "INSERT INTO messages (session_id, role, tool_calls, timestamp) VALUES (?,?,?,?)",
-                    ("s1", role, '[{"name": "terminal"}]' if has_calls else None, LAUNCH + at),
+                    ("s1", role, '[{"name": "terminal"}]' if has_calls else None, self.launch + at),
                 )
 
     def witness(self, *created_at: str) -> None:
@@ -105,319 +113,357 @@ class Session:
         self.file(".sandbox.json", json.dumps({"observed": True, "containers": containers}))
 
 
-def diagnose(session: Session, result: Optional[dict[str, Any]]) -> dict[str, Any]:
-    return diagnosis.diagnose_session(session.dir, session.stem, result)
+def old_store(path: Path) -> None:
+    """A ``state.db`` from before ``sessions.last_activity_description`` existed."""
+    with contextlib.closing(sqlite3.connect(path)) as conn, conn:
+        conn.execute(
+            "CREATE TABLE sessions (id TEXT, started_at REAL, ended_at REAL, end_reason TEXT,"
+            " api_call_count INTEGER, message_count INTEGER, tool_call_count INTEGER, last_activity_at REAL)"
+        )
+        conn.execute(
+            "CREATE TABLE messages (id INTEGER, role TEXT, timestamp REAL, tool_name TEXT, finish_reason TEXT, tool_calls TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE session_model_usage (model TEXT, billing_provider TEXT, api_call_count INTEGER,"
+            " reasoning_tokens INTEGER, output_tokens INTEGER, first_seen REAL, last_seen REAL)"
+        )
+        conn.execute("INSERT INTO sessions VALUES ('s1', ?, NULL, NULL, 0, 1, 0, ?)", (LAUNCH + 3, LAUNCH + 3))
 
 
-class VerdictTests(unittest.TestCase):
-    def test_a_plan_that_wrote_its_artifact_is_completed(self) -> None:
+class GatherEvidenceTests(unittest.TestCase):
+    """Every read the diagnosis makes, into one ``SessionEvidence``."""
+
+    def test_every_source_a_session_left_is_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Session(Path(tmp), transport="stream-json")
+            session.ledger(calls=1, messages=(("assistant", 60, True),))
+            session.file(".log", "turn\n")
+            session.file(".usage.json", json.dumps({"model": "z-ai/glm-5.3", "api_calls": 1}))
+            # A bad line between two good ones is skipped, not the end; JSON that is not an
+            # event is skipped; a killed session's half-written last line is dropped.
+            session.file(
+                ".stream.jsonl",
+                '{"type": "system"}\nnot json\n{"type": "text"}\n[1, 2]\n3\n{"type": "te',
+            )
+            session.witness("2026-10-12T12:57:30Z")
+            session.file(".activity.json", json.dumps({"captured_at": LAUNCH + 1080, "row": None}))
+            store = {"credential_pool": {"nvidia": [{"source": "env:NVIDIA_API_KEY", "last_status": None}]}}
+            (session.home / diagnosis.AUTH_STORE_FILENAME).write_text(json.dumps(store), encoding="utf-8")
+            evidence = diagnosis.gather_evidence(session.dir, STEM)
+            ledger = diagnosis.read_ledger(str(session.home))
+        self.assertTrue(ledger["available"])
+        self.assertEqual(
+            diagnosis.SessionEvidence(
+                stem=STEM,
+                controls_present=True,
+                transport="stream-json",
+                slice_id="task-1a2b:plan",
+                usage_report_present=True,
+                log_bytes=5,
+                events=[{"type": "system"}, {"type": "text"}],
+                ledger=ledger,
+                sandbox_receipt={
+                    "observed": True,
+                    "containers": [{"task_id": "t0", "container_id": "c0", "created_at": "2026-10-12T12:57:30Z"}],
+                },
+                snapshot={"captured_at": LAUNCH + 1080, "row": None},
+                credential_pool=[
+                    {"provider": "nvidia", "source": "env:NVIDIA_API_KEY", "last_status": None, "last_error_code": None}
+                ],
+            ),
+            evidence,
+        )
+
+    def test_a_session_that_left_nothing_but_its_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = diagnosis.gather_evidence(Path(tmp), STEM)
+        self.assertEqual(
+            diagnosis.SessionEvidence(
+                stem=STEM,
+                controls_present=False,
+                transport=None,
+                slice_id="",
+                usage_report_present=False,
+                log_bytes=None,
+                events=None,
+                ledger={"available": False, "reason": "controls receipt names no hermes_home"},
+                sandbox_receipt=None,
+                snapshot=None,
+                credential_pool=None,
+            ),
+            evidence,
+        )
+
+    def test_an_empty_file_is_not_an_absent_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
-            session.ledger(calls=3, messages=(("assistant", 50, True), ("tool", 55, False), ("assistant", 120, False)))
-            session.file(".usage.json", json.dumps({"model": "z-ai/glm-5.3", "api_calls": 3}))
-            record = diagnose(session, phase(0, 130.0, True))
-        self.assertEqual(diagnosis.COMPLETED, record["verdict"])
-        self.assertEqual("plan", record["phase"])
-        self.assertEqual(42025, record["pid"])
-        self.assertEqual(3.0, record["timeline_seconds"]["turn_started"])
-        self.assertEqual(50.0, record["timeline_seconds"]["first_tool_call"])
-        self.assertEqual(900, record["observed"]["reasoning_tokens"])
+            session.file(".stream.jsonl", "")
+            empty = diagnosis.gather_evidence(session.dir, STEM)
+            (session.dir / f"{STEM}.log").unlink()
+            session.file(".stream.jsonl", "not json\n")
+            absent = diagnosis.gather_evidence(session.dir, STEM)
+        self.assertEqual(((0, []), (None, [])), ((empty.log_bytes, empty.events), (absent.log_bytes, absent.events)))
 
-    def test_a_session_whose_hermes_never_opened_its_store_did_not_start(self) -> None:
-        """The home exists, run_agent.sh made it; no state.db means Hermes never got that far."""
+    def test_a_stream_that_was_never_written_is_not_an_empty_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.EVIDENCE_UNAVAILABLE, record["verdict"])
-        self.assertTrue(any("never created state.db" in item for item in record["missing_evidence"]))
+            session.file(".stream.jsonl", "")
+            empty = diagnosis.gather_evidence(session.dir, STEM).events
+            (session.dir / f"{STEM}.stream.jsonl").unlink()
+            absent = diagnosis.gather_evidence(session.dir, STEM).events
+        self.assertEqual(([], None), (empty, absent))
 
-    def test_an_empty_ledger_is_not_read_as_a_startup_stall(self) -> None:
-        """Hermes swallows a failed turn-start write, so an empty store has two readings."""
+    def test_a_controls_receipt_without_a_slice_id_reads_as_an_empty_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
-            session.ledger(row=False)
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.NO_TURN_START_RECORDED, record["verdict"])
-        self.assertIn("never started", record["explanation"])
-        self.assertIn("persistence failed", record["explanation"])
-        self.assertNotIn("never reached the model", record["explanation"])
-        self.assertTrue(record["terminated"]["by_budget"])
+            session.file(".controls.json", json.dumps({"slice_id": None}))
+            evidence = diagnosis.gather_evidence(session.dir, STEM)
+        self.assertEqual(("", True, None), (evidence.slice_id, evidence.controls_present, evidence.transport))
 
-    def test_a_failed_turn_start_write_with_later_evidence_is_not_a_startup_stall(self) -> None:
-        """The session row was swallowed, but a completed call and a tool call were persisted."""
+    def test_a_symlinked_receipt_is_followed(self) -> None:
+        """``_load_json`` follows symlinks; ``judge.py`` imports it, so that is pinned, not changed."""
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
-            session.ledger(row=False, calls=2, messages=(("assistant", 60, True), ("tool", 70, False)))
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(0, record["observed"]["session_rows"])
-        self.assertEqual(diagnosis.ACTIVE_UNTIL_BUDGET, record["verdict"])
+            elsewhere = Path(tmp) / "elsewhere"
+            elsewhere.mkdir()
+            target = elsewhere / "controls.json"
+            target.write_text(json.dumps(session.controls), encoding="utf-8")
+            link = session.dir / f"{STEM}.controls.json"
+            link.unlink()
+            link.symlink_to(target)
+            loaded = diagnosis._load_json(link)
+            evidence = diagnosis.gather_evidence(session.dir, STEM)
+        self.assertEqual(session.controls, loaded)
+        self.assertEqual((True, "oneshot", "task-1a2b:plan"), (evidence.controls_present, evidence.transport, evidence.slice_id))
 
-    def test_a_turn_with_no_completed_call_names_what_it_cannot_split(self) -> None:
-        """A provider stall and one long reasoning call look the same, and the verdict says so."""
+    def test_unreadable_json_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.json"
+            path.write_text("{", encoding="utf-8")
+            self.assertEqual((None, None), (diagnosis._load_json(path), diagnosis._load_json(Path(tmp) / "absent.json")))
+
+
+class MalformedFileTests(unittest.TestCase):
+    """A receipt of the wrong shape fails the diagnosis loudly, as it always has."""
+
+    def test_controls_that_are_not_an_object_raise(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
-            session.ledger(row=True, calls=0)
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.NO_COMPLETED_MODEL_CALL, record["verdict"])
-        self.assertIn("reasoning", record["explanation"])
-        self.assertIn("never answered", record["explanation"])
-        self.assertEqual(3.0, record["timeline_seconds"]["turn_started"])
-        self.assertIsNone(record["timeline_seconds"]["first_completed_model_call"])
+            session.file(".controls.json", "[1]")
+            with self.assertRaisesRegex(AttributeError, "'list' object has no attribute 'get'"):
+                diagnosis.diagnose_session(session.dir, STEM)
+            with self.assertRaisesRegex(AttributeError, "'list' object has no attribute 'get'"):
+                diagnosis.diagnose_sessions(session.dir, [])
 
-    def test_a_provider_refusal_still_reads_as_no_completed_call(self) -> None:
-        """The refusal itself is the lane's provider classifier's job; this says how far it got."""
+    def test_a_snapshot_that_is_not_an_object_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
-            session.ledger(row=True, calls=0)
-            session.file(".log", "❌ API failed after 3 retries — Connection error.\n")
-            record = diagnose(session, phase(1, 40.0, False))
-        self.assertEqual(diagnosis.NO_COMPLETED_MODEL_CALL, record["verdict"])
-        self.assertFalse(any(item.startswith("session log") for item in record["missing_evidence"]))
+            session.file(".activity.json", "[1]")
+            with self.assertRaisesRegex(AttributeError, "'list' object has no attribute 'get'"):
+                diagnosis.diagnose_session(session.dir, STEM)
 
-    def test_a_model_that_answered_without_tools_is_named(self) -> None:
+
+class ReadLedgerTests(unittest.TestCase):
+    def test_each_reason_the_ledger_cannot_be_read(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.ledger(calls=2, messages=(("assistant", 200, False),))
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.NO_TOOL_CALL_RECORDED, record["verdict"])
+            home = Path(tmp) / "home"
+            gone = Path(tmp) / "gone"
+            corrupt = Path(tmp) / "corrupt"
+            for directory in (home, corrupt):
+                directory.mkdir()
+            (corrupt / "state.db").write_bytes(b"not a database, not even close" * 100)
+            cases = [
+                ("no home named", None, "controls receipt names no hermes_home"),
+                ("an empty home named", "", "controls receipt names no hermes_home"),
+                ("a home that is gone", str(gone), f"{gone} is gone, so its state.db cannot be read"),
+                ("no store in the home", str(home), f"{home} exists but Hermes never created state.db in it"),
+                ("a store that is not a database", str(corrupt), "DatabaseError: file is not a database"),
+            ]
+            for name, hermes_home, reason in cases:
+                with self.subTest(name):
+                    self.assertEqual({"available": False, "reason": reason}, diagnosis.read_ledger(hermes_home))
 
-    def test_a_killed_oneshot_with_completed_calls_and_no_messages_claims_no_inactivity(self) -> None:
-        """A tool requested and stalled before Hermes flushed its message leaves exactly this."""
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.ledger(calls=1)
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.NO_TOOL_CALL_RECORDED, record["verdict"])
-        self.assertEqual((1, 0), (record["observed"]["completed_model_calls"], record["observed"]["messages"]))
-        self.assertIn("stalling", record["explanation"])
-        self.assertNotIn("never called", record["explanation"])
-
-    def test_a_tool_call_that_never_returned_is_named(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.ledger(calls=2, messages=(("assistant", 60, True), ("tool", 70, False), ("assistant", 90, True)))
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.TOOL_CALL_UNANSWERED, record["verdict"])
-        self.assertEqual((2, 1), (record["observed"]["tool_calls"], record["observed"]["tool_results"]))
-
-    def test_a_session_working_when_the_budget_ran_out(self) -> None:
+    def test_the_three_tables_timestamps_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
             session.ledger(
-                calls=9, messages=(("assistant", 60, True), ("tool", 70, False), ("assistant", 1070, True), ("tool", 1075, False))
+                calls=2, messages=(("assistant", 30, True), ("tool", 40, False)), activity=(50, "receiving stream response")
             )
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.ACTIVE_UNTIL_BUDGET, record["verdict"])
-        self.assertEqual(1075.0, record["timeline_seconds"]["last_activity"])
-        self.assertEqual(1080.0, record["terminated"]["at_seconds"])
-
-    def test_an_incomplete_artifact_on_exit_is_named(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.ledger(calls=4, messages=(("assistant", 60, True), ("tool", 70, False)))
-            record = diagnose(session, phase(0, 300.0, False))
-        self.assertEqual(diagnosis.EXITED_WITHOUT_ARTIFACT, record["verdict"])
-
-
-class MissingEvidenceTests(unittest.TestCase):
-    def test_an_oneshot_kill_names_every_absent_source_and_why(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            record = diagnose(session, phase(124, 1080.0, False))
-        missing = "\n".join(record["missing_evidence"])
-        self.assertIn("session log: 0 bytes - --oneshot writes nothing until the turn returns", missing)
-        self.assertIn("usage report: absent - --oneshot writes it only when the turn returns", missing)
-        self.assertIn("sandbox observation", missing)
-
-    def test_an_empty_event_stream_is_reported_rather_than_read_as_silence(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp), transport="stream-json")
-            session.file(".stream.jsonl", "")
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(0, record["observed"]["stream_events"])
-        self.assertIn("event stream: empty - not even system/init was flushed", record["missing_evidence"])
-        self.assertEqual(diagnosis.EVIDENCE_UNAVAILABLE, record["verdict"])
-
-    def test_a_stream_that_only_initialised_has_started_but_completed_no_call(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp), transport="stream-json")
-            session.file(
-                ".stream.jsonl",
-                json.dumps({"type": "system", "subtype": "init", "timestamp": (LAUNCH + 6) * 1000}) + '\n{"type": "te',
-            )
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(1, record["observed"]["stream_events"])
-        self.assertEqual(6.0, record["timeline_seconds"]["first_stream_event"])
-        self.assertEqual(diagnosis.NO_COMPLETED_MODEL_CALL, record["verdict"])
-
-    def test_a_home_read_off_its_runner_is_said_to_be_gone(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.home.rmdir()
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertTrue(any("is gone" in item for item in record["missing_evidence"]))
-        self.assertEqual(diagnosis.EVIDENCE_UNAVAILABLE, record["verdict"])
-
-    def test_without_a_phase_result_the_session_is_described_not_judged(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.ledger(calls=2, messages=(("assistant", 60, True), ("tool", 70, False)))
-            record = diagnose(session, None)
-        self.assertIsNone(record["terminated"])
-        self.assertEqual(diagnosis.FAILED, record["verdict"])
-
-
-class ActivityDescriptionTests(unittest.TestCase):
-    """The last persisted activity label, verbatim from pinned Hermes ``b6a87db``'s streaming path."""
-
-    def activity(self, description: str, at: float = 1025.0) -> dict[str, Any]:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp), transport="stream-json")
-            session.ledger(row=True, calls=0, activity=(at, description))
-            return diagnose(session, phase(124, 1080.0, False))["last_persisted_activity"]
-
-    def test_a_stream_still_delivering_chunks_reads_as_receiving(self) -> None:
-        record = self.activity("receiving stream response")
-        self.assertEqual("receiving_chunks", record["state"])
-        self.assertEqual(1025.0, record["at_seconds"])
-        self.assertEqual("receiving stream response", record["description"])
-
-    def test_a_stream_that_never_sent_a_chunk_reads_as_awaiting_the_first(self) -> None:
-        for description in (
-            "waiting for provider response (streaming)",
-            "waiting for stream response (120s, first_chunk)",
-            "⏳ waiting on z-ai/glm-5.3 — 60s waiting for the first stream chunk (auto-reconnect: stream stale watchdog in 120s)",
-        ):
-            with self.subTest(description=description):
-                self.assertEqual("awaiting_first_chunk", self.activity(description)["state"])
-
-    def test_a_stream_that_went_quiet_after_chunks_is_told_apart(self) -> None:
-        for description in (
-            "waiting for stream response (90s, post_chunk)",
-            "⏳ waiting on z-ai/glm-5.3 — stream open; 60s without stream output",
-        ):
-            with self.subTest(description=description):
-                self.assertEqual("silent_after_chunks", self.activity(description)["state"])
-
-    def test_a_stale_stream_or_retry_reads_as_reconnecting(self) -> None:
-        for description in (
-            "stale stream detected after 181s, reconnecting",
-            "stream retry 2/5 after ReadTimeout",
-            "⚠ no output from provider for 181s — reconnecting...",
-        ):
-            with self.subTest(description=description):
-                self.assertEqual("reconnecting", self.activity(description)["state"])
-
-    def test_a_backoff_between_attempts_reads_as_retry_backoff(self) -> None:
-        for description in (
-            "retry backoff (2/3), 30s remaining",
-            "error retry backoff (1/3), 45s remaining",
-            "empty response retry backoff (1/2), 12s remaining",
-            "auto-recovery wait (1/4), 270s remaining",
-            "API error recovery (attempt 2/3)",
-            "⏳ waiting on provider — retrying in 60s (attempt 2/3)",
-        ):
-            with self.subTest(description=description):
-                self.assertEqual("retry_backoff", self.activity(description)["state"])
-
-    def test_a_non_streaming_call_is_told_apart(self) -> None:
-        for description in ("waiting for non-streaming API response", "stale non-streaming call killed after 300s"):
-            with self.subTest(description=description):
-                self.assertEqual("non_streaming", self.activity(description)["state"])
-
-    def test_no_chunks_yet_is_not_read_as_no_chunk_ever(self) -> None:
-        """Hermes writes it under 60s since the last chunk or the stream's opening, so it settles nothing."""
-        self.assertEqual("other", self.activity("waiting for stream response (30s, no chunks yet)")["state"])
-        self.assertEqual("other", self.activity("starting API call #1")["state"])
-
-    def test_a_description_never_persisted_is_not_one_that_was_cleared(self) -> None:
-        """NULL: nothing was ever written. '': the turn's finally - SIGTERM's too - wiped it."""
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.ledger(row=True)
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.ACTIVITY_NEVER_PERSISTED, record["last_persisted_activity"]["state"])
-        self.assertEqual("state_db_after_exit", record["last_persisted_activity"]["source"])
-        self.assertFalse(any(item.startswith("activity description") for item in record["missing_evidence"]))
-        self.assertEqual(diagnosis.ACTIVITY_CLEARED, self.activity("")["state"])
-
-    def test_the_pre_sigterm_snapshot_wins_over_the_cleared_row(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp), transport="stream-json")
-            session.ledger(row=True, activity=(1080.0, ""))
-            row = {
-                "last_activity_at": LAUNCH + 1025,
-                "last_activity_description": "receiving stream response",
-                "last_activity_provenance": "unknown",
-            }
-            session.file(".activity.json", json.dumps({"captured_at": LAUNCH + 1080, "row": row}))
-            record = diagnose(session, phase(124, 1080.0, False))
-        activity = record["last_persisted_activity"]
-        self.assertEqual(
-            ("pre_sigterm_snapshot", "receiving_chunks", 1025.0), (activity["source"], activity["state"], activity["at_seconds"])
-        )
-        self.assertFalse(any(item.startswith("activity snapshot") for item in record["missing_evidence"]))
-
-    def test_a_budget_kill_without_a_snapshot_says_the_label_may_be_gone(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.ledger(row=True, activity=(1080.0, ""))
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.ACTIVITY_CLEARED, record["last_persisted_activity"]["state"])
-        self.assertTrue(any("SIGTERM may have cleared" in item for item in record["missing_evidence"]))
-
-    def test_a_failed_snapshot_is_named_and_the_row_is_used(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.ledger(row=True, activity=(1080.0, ""))
-            session.file(".activity.json", json.dumps({"captured_at": LAUNCH + 1080, "error": "OperationalError: locked"}))
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual("state_db_after_exit", record["last_persisted_activity"]["source"])
-        self.assertIn("activity snapshot: OperationalError: locked", record["missing_evidence"])
-
-    def test_a_store_without_the_column_is_named_missing_not_a_crash(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
             with contextlib.closing(sqlite3.connect(session.home / "state.db")) as conn, conn:
-                conn.execute(
-                    "CREATE TABLE sessions (id TEXT, started_at REAL, ended_at REAL, end_reason TEXT,"
-                    " api_call_count INTEGER, message_count INTEGER, tool_call_count INTEGER, last_activity_at REAL)"
-                )
-                conn.execute(
-                    "CREATE TABLE messages (id INTEGER, role TEXT, timestamp REAL, tool_name TEXT,"
-                    " finish_reason TEXT, tool_calls TEXT)"
-                )
-                conn.execute(
-                    "CREATE TABLE session_model_usage (model TEXT, billing_provider TEXT, api_call_count INTEGER,"
-                    " reasoning_tokens INTEGER, output_tokens INTEGER, first_seen REAL, last_seen REAL)"
-                )
-                conn.execute("INSERT INTO sessions VALUES ('s1', ?, NULL, NULL, 0, 1, 0, ?)", (LAUNCH + 3, LAUNCH + 3))
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(diagnosis.NO_COMPLETED_MODEL_CALL, record["verdict"])
-        self.assertEqual(diagnosis.ACTIVITY_UNAVAILABLE, record["last_persisted_activity"]["state"])
-        self.assertIn(
-            "activity description: this state.db predates sessions.last_activity_description", record["missing_evidence"]
+                for at, calls in ((41, ""), (42, "[]"), (43, "null")):
+                    conn.execute(
+                        "INSERT INTO messages (session_id, role, content, tool_calls, tool_name, timestamp, finish_reason)"
+                        " VALUES ('s1', 'assistant', 'SECRET-PROSE', ?, 'terminal', ?, 'stop')",
+                        (calls, LAUNCH + at),
+                    )
+            ledger = diagnosis.read_ledger(str(session.home))
+        no_calls = {"role": "assistant", "tool_name": "terminal", "finish_reason": "stop", "has_tool_calls": 0}
+        self.assertEqual(
+            {
+                "available": True,
+                "sessions": [
+                    {
+                        "id": "s1",
+                        "started_at": LAUNCH + 3,
+                        "ended_at": None,
+                        "end_reason": None,
+                        "api_call_count": 2,
+                        "message_count": 0,
+                        "tool_call_count": 0,
+                        "last_activity_at": LAUNCH + 50,
+                        "last_activity_description": "receiving stream response",
+                        "last_activity_provenance": "unknown",
+                    }
+                ],
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "timestamp": LAUNCH + 30,
+                        "tool_name": None,
+                        "finish_reason": None,
+                        "has_tool_calls": 1,
+                    },
+                    {"role": "tool", "timestamp": LAUNCH + 40, "tool_name": None, "finish_reason": None, "has_tool_calls": 0},
+                    {**no_calls, "timestamp": LAUNCH + 41},
+                    {**no_calls, "timestamp": LAUNCH + 42},
+                    {**no_calls, "timestamp": LAUNCH + 43},
+                ],
+                "usage": [
+                    {
+                        "model": "z-ai/glm-5.3",
+                        "billing_provider": "nvidia",
+                        "api_call_count": 2,
+                        "reasoning_tokens": 900,
+                        "output_tokens": 40,
+                        "first_seen": LAUNCH + 60,
+                        "last_seen": LAUNCH + 120,
+                    }
+                ],
+                "has_activity_description": True,
+            },
+            ledger,
         )
 
-    def test_the_summary_prints_the_label_beside_its_state(self) -> None:
+    def test_a_store_older_than_the_activity_column_is_read_without_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp), transport="stream-json")
-            session.ledger(row=True, activity=(1025.0, "receiving stream response"))
-            lines = diagnosis.summarize(diagnose(session, phase(124, 1080.0, False)))
-        self.assertIn("last activity receiving_chunks at 1025.0s (state_db_after_exit): 'receiving stream response'", lines)
+            old_store(Path(tmp) / "state.db")
+            ledger = diagnosis.read_ledger(tmp)
+        self.assertEqual(
+            {
+                "available": True,
+                "sessions": [
+                    {
+                        "id": "s1",
+                        "started_at": LAUNCH + 3,
+                        "ended_at": None,
+                        "end_reason": None,
+                        "api_call_count": 0,
+                        "message_count": 1,
+                        "tool_call_count": 0,
+                        "last_activity_at": LAUNCH + 3,
+                    }
+                ],
+                "messages": [],
+                "usage": [],
+                "has_activity_description": False,
+            },
+            ledger,
+        )
+
+
+def pool_entry(source: str, requests: int, status: Optional[str] = None, code: Optional[int] = None, **extra: Any) -> dict:
+    """One ``credential_pool`` row in the shape pinned Hermes (b6a87db) writes to auth.json."""
+    return {
+        "id": source[-6:],
+        "label": source.split(":", 1)[-1],
+        "auth_type": "api_key",
+        "priority": 0,
+        "source": source,
+        "access_token": None,
+        "request_count": requests,
+        "last_status": status,
+        "last_error_code": code,
+        **extra,
+    }
+
+
+class CredentialPoolTests(unittest.TestCase):
+    """A session the second key served must not look like one the first key served."""
+
+    def _pool(self, store: Any) -> Optional[list[dict[str, Any]]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            if store is not None:
+                (Path(tmp) / diagnosis.AUTH_STORE_FILENAME).write_text(json.dumps(store), encoding="utf-8")
+            return diagnosis.read_credential_pool(tmp)
+
+    def test_a_rotation_shows_the_throttled_key_and_the_one_that_took_over(self) -> None:
+        store = {
+            "credential_pool": {
+                "openrouter": [pool_entry("env:OPENROUTER_API_KEY", 1)],
+                "nvidia": [
+                    pool_entry("env:NVIDIA_API_KEY", 3, "exhausted", 429),
+                    "not an entry",
+                    pool_entry("env:NVIDIA_API_KEY_2", 5),
+                ],
+                "broken": {"source": "env:NOT_A_LIST"},
+            }
+        }
+        self.assertEqual(
+            [
+                {"provider": "nvidia", "source": "env:NVIDIA_API_KEY", "last_status": "exhausted", "last_error_code": 429},
+                {"provider": "nvidia", "source": "env:NVIDIA_API_KEY_2", "last_status": None, "last_error_code": None},
+                {"provider": "openrouter", "source": "env:OPENROUTER_API_KEY", "last_status": None, "last_error_code": None},
+            ],
+            self._pool(store),
+        )
+
+    def test_nothing_but_names_and_counters_is_copied(self) -> None:
+        """Hermes can label a row from a token's claims; neither the label nor a token leaves."""
+        entry = pool_entry(
+            "env:NVIDIA_API_KEY", 1, label="someone@example.com", access_token="nvapi-SECRET", refresh_token="r-SECRET"
+        )
+        recorded = json.dumps(self._pool({"credential_pool": {"nvidia": [entry]}}))
+        for value in ("SECRET", "someone@example.com"):
+            self.assertNotIn(value, recorded)
+
+    def test_no_store_or_no_pool_is_none_not_an_empty_pool(self) -> None:
+        for name, store in (
+            ("no store", None),
+            ("no pool", {"providers": {}}),
+            ("a store that is a list", [1]),
+            ("a pool that is a list", {"credential_pool": []}),
+        ):
+            with self.subTest(name):
+                self.assertIsNone(self._pool(store))
+        self.assertEqual((None, None), (diagnosis.read_credential_pool(None), diagnosis.read_credential_pool("")))
 
 
 class ActivitySnapshotTests(unittest.TestCase):
     """The read the adapter takes just before SIGTERM, which Hermes answers by clearing the label."""
 
+    def snapshot(self, session: Session) -> dict[str, Any]:
+        return json.loads((session.dir / f"{session.stem}.activity.json").read_text(encoding="utf-8"))
+
     def test_the_session_launched_since_is_snapshotted_beside_its_controls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
             session.ledger(row=True, activity=(1025.0, "receiving stream response"))
+            before = time.time()
             diagnosis.snapshot_activity(session.dir, frozenset())
-            snapshot = json.loads((session.dir / f"{STEM}.activity.json").read_text(encoding="utf-8"))
-        self.assertEqual("receiving stream response", snapshot["row"]["last_activity_description"])
-        self.assertNotIn("error", snapshot)
+            after = time.time()
+            snapshot = self.snapshot(session)
+        captured = snapshot.pop("captured_at")
+        self.assertTrue(before <= captured <= after, (before, captured, after))
+        self.assertEqual(
+            {
+                "row": {
+                    "last_activity_at": LAUNCH + 1025,
+                    "last_activity_description": "receiving stream response",
+                    "last_activity_provenance": "unknown",
+                }
+            },
+            snapshot,
+        )
 
     def test_sessions_announced_before_launch_are_left_alone(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -426,12 +472,49 @@ class ActivitySnapshotTests(unittest.TestCase):
             diagnosis.snapshot_activity(session.dir, frozenset({STEM}))
             self.assertFalse((session.dir / f"{STEM}.activity.json").exists())
 
-    def test_a_missing_store_is_written_down_not_raised(self) -> None:
+    def test_two_new_sessions_are_not_told_apart_so_neither_is_snapshotted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = [Session(Path(tmp), stem=RESEARCH_STEM), Session(Path(tmp))]
+            for session in sessions:
+                session.ledger(row=True)
+            diagnosis.snapshot_activity(sessions[0].dir, frozenset())
+            self.assertEqual([], sorted(path.name for path in sessions[0].dir.glob("*.activity.json")))
+
+    def test_each_failure_is_written_down_not_raised(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = [("no home named", None), ("no store in the home", "missing"), ("a store that is not a database", "corrupt")]
+            for index, (name, kind) in enumerate(cases):
+                with self.subTest(name):
+                    session = Session(Path(tmp) / str(index))
+                    if kind is None:
+                        session.file(".controls.json", json.dumps({"transport": "oneshot"}))
+                    elif kind == "corrupt":
+                        (session.home / "state.db").write_bytes(b"not a database, not even close" * 100)
+                    diagnosis.snapshot_activity(session.dir, frozenset())
+                    snapshot = self.snapshot(session)
+                    error = {
+                        None: "FileNotFoundError: controls receipt names no HERMES_HOME",
+                        "missing": f"FileNotFoundError: {session.home / 'state.db'} does not exist",
+                        "corrupt": "DatabaseError: file is not a database",
+                    }[kind]
+                    self.assertEqual(["captured_at", "error"], sorted(snapshot))
+                    self.assertEqual(error, snapshot["error"])
+
+    def test_an_empty_sessions_table_is_a_null_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             session = Session(Path(tmp))
+            session.ledger(row=False)
             diagnosis.snapshot_activity(session.dir, frozenset())
-            snapshot = json.loads((session.dir / f"{STEM}.activity.json").read_text(encoding="utf-8"))
-        self.assertIn("does not exist", snapshot["error"])
+            snapshot = self.snapshot(session)
+        self.assertEqual({"row": None}, {key: value for key, value in snapshot.items() if key != "captured_at"})
+
+    def test_a_snapshot_that_cannot_be_written_never_raises_into_the_kill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Session(Path(tmp))
+            session.ledger(row=True)
+            (session.dir / f"{STEM}.activity.json").mkdir()
+            self.assertIsNone(diagnosis.snapshot_activity(session.dir, frozenset()))
+            self.assertTrue((session.dir / f"{STEM}.activity.json").is_dir())
 
     def test_the_budget_kill_snapshots_before_it_signals(self) -> None:
         """The real kill path, with a child that clears its label on SIGTERM the way Hermes does.
@@ -439,13 +522,14 @@ class ActivitySnapshotTests(unittest.TestCase):
         The child's handler blanks ``last_activity_description`` and then drops a marker, and the
         test's ``killpg`` waits for that marker after delivering SIGTERM. So a snapshot taken after
         the signal reliably reads ``''``, and only one taken before it keeps the label.
-        """
-        import os
-        import signal
-        import sys
-        import time
-        from unittest import mock
 
+        Under load a one-second budget can expire before the child has started at all, so the
+        shell writes the controls receipt before it execs the child, the child installs its
+        handler before anything else and then announces itself, and the test's ``Popen`` (the
+        child-process boundary) returns only once that announcement exists. The budget starts
+        after the child is ready, and the real ``snapshot_activity`` runs unwrapped. Nothing is
+        left to a race.
+        """
         from automation.benchmark import adapter
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -471,31 +555,57 @@ class ActivitySnapshotTests(unittest.TestCase):
 
             child = Path(tmp) / "child.py"
             child.write_text(
-                "import json, os, signal, sqlite3, sys, time\n"
+                "import signal\n"
                 "def clear(*_):\n"
+                "    import sqlite3, sys\n"
                 f"    with sqlite3.connect({str(database)!r}) as conn:\n"
                 "        conn.execute(\"UPDATE sessions SET last_activity_description = '',"
                 " last_activity_provenance = 'unknown'\")\n"
                 f"    open({str(cleared)!r}, 'w').close()\n"
                 "    sys.exit(143)\n"
                 "signal.signal(signal.SIGTERM, clear)\n"
-                f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
-                f"open({str(controls)!r}, 'w').write(json.dumps({{'hermes_home': {str(home)!r}}}))\n"
-                "time.sleep(30)\n",
+                "import os, time\n"
+                f"open({str(pid_file) + '.tmp'!r}, 'w').write(str(os.getpid()))\n"
+                f"os.replace({str(pid_file) + '.tmp'!r}, {str(pid_file)!r})\n"
+                "time.sleep(120)\n",
                 encoding="utf-8",
             )
+            receipt = json.dumps({"hermes_home": str(home)})
+            command = (
+                f"printf '%s' {shlex.quote(receipt)} > {shlex.quote(str(controls))}"
+                f" && exec {shlex.quote(sys.executable)} {shlex.quote(str(child))}"
+            )
+
+            def await_child(timeout: float = 120) -> None:
+                deadline = time.monotonic() + timeout
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+
+            real_popen = adapter.subprocess.Popen
+
+            class PopenOnceTheChildIsReady(real_popen):
+                """Start this test's child, then return only once it is ready; pass anything else through."""
+
+                def __init__(self, args: Any, *rest: Any, **kwargs: Any) -> None:
+                    super().__init__(args, *rest, **kwargs)
+                    if args == command:
+                        await_child()
+
             real_killpg = os.killpg
 
             def killpg_then_await_clear(pgid: int, signum: int) -> None:
                 real_killpg(pgid, signum)
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 120
                 while signum == signal.SIGTERM and not cleared.exists() and time.monotonic() < deadline:
                     time.sleep(0.01)
 
             env = {"PATH": "/usr/bin:/bin", "BOUNDROOM_HERMES_USAGE_DIR": str(sessions)}
             try:
-                with mock.patch.object(adapter.os, "killpg", killpg_then_await_clear):
-                    returncode = adapter._subprocess_runner(f"exec {sys.executable} {child}", Path(tmp), env, 2)
+                with (
+                    mock.patch.object(adapter.subprocess, "Popen", PopenOnceTheChildIsReady),
+                    mock.patch.object(adapter.os, "killpg", killpg_then_await_clear),
+                ):
+                    returncode = adapter._subprocess_runner(command, Path(tmp), env, 1)
                 snapshot = json.loads((sessions / f"{STEM}.activity.json").read_text(encoding="utf-8"))
                 handler_ran = cleared.exists()
                 with contextlib.closing(sqlite3.connect(database)) as conn:
@@ -508,107 +618,33 @@ class ActivitySnapshotTests(unittest.TestCase):
         self.assertEqual("stream retry 1/5 after ReadTimeout", snapshot["row"]["last_activity_description"])
 
 
-class ContainerProvenanceTests(unittest.TestCase):
-    def test_research_containers_are_not_credited_to_plan(self) -> None:
-        """Run 38248084765: one lane-wide witness, its research container copied into plan's receipt."""
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.witness("2026-10-12T12:21:57.317312761Z")
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual([], record["containers"])
-        self.assertEqual(1, record["containers_from_other_sessions"])
-        self.assertIsNone(record["timeline_seconds"]["first_container"])
+class WholeSessionTests(unittest.TestCase):
+    """Run 38248084765's lane C, research then plan, from the files to the operator's lines."""
 
-    def test_a_container_created_inside_the_window_is_this_sessions(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.witness("2026-10-12T12:21:57.317312761Z", "2026-10-12T12:57:30.5Z", "2026-10-12T13:20:00Z")
-            record = diagnose(session, phase(124, 1080.0, False))
-        self.assertEqual(["c1"], [c["container_id"] for c in record["containers"]])
-        self.assertEqual(46.5, record["containers"][0]["at_seconds"])
-        self.assertEqual(2, record["containers_from_other_sessions"])
-
-    def test_sessions_are_matched_to_phases_by_slice_id_not_order(self) -> None:
+    def test_a_lane_killed_at_its_plan_budget_reads_end_to_end(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             research = Session(Path(tmp), stem=RESEARCH_STEM, phase_name="research")
+            research.ledger(
+                calls=3,
+                messages=(("assistant", 60, True), ("tool", 70, False), ("assistant", 2100, True), ("tool", 2140, False)),
+                activity=(2155, ""),
+            )
+            research.file(".log", "research notes\n")
+            research.file(".usage.json", json.dumps({"model": "z-ai/glm-5.3", "api_calls": 3}))
+            row = {
+                "last_activity_at": research.launch + 2150,
+                "last_activity_description": "receiving stream response",
+                "last_activity_provenance": "unknown",
+            }
+            research.file(".activity.json", json.dumps({"captured_at": research.launch + 2160, "row": row}))
             plan = Session(Path(tmp))
             for session in (research, plan):
                 session.witness("2026-10-12T12:21:57.317312761Z")
             records = diagnosis.diagnose_sessions(
                 research.dir, [phase(124, 1080.0, False), phase(124, 2160.0, True, name="research")]
             )
-        self.assertEqual(["research", "plan"], [r["phase"] for r in records])
-        self.assertEqual(2160.0, records[0]["terminated"]["at_seconds"])
-        self.assertEqual(1, len(records[0]["containers"]))
-        self.assertEqual(0, len(records[1]["containers"]))
-
-
-def pool_entry(source: str, requests: int, status: Optional[str] = None, code: Optional[int] = None, **extra: Any) -> dict:
-    """One ``credential_pool`` row in the shape pinned Hermes (b6a87db) writes to auth.json."""
-    return {
-        "id": source[-6:],
-        "label": source.split(":", 1)[-1],
-        "auth_type": "api_key",
-        "priority": 0,
-        "source": source,
-        "access_token": None,
-        "request_count": requests,
-        "last_status": status,
-        "last_error_code": code,
-        **extra,
-    }
-
-
-class CredentialPoolTests(unittest.TestCase):
-    """A session the second key served must not look like one the first key served."""
-
-    def _record(self, store: Optional[dict]) -> dict[str, Any]:
-        with tempfile.TemporaryDirectory() as tmp:
-            session = Session(Path(tmp))
-            session.ledger(calls=2)
-            if store is not None:
-                (session.home / diagnosis.AUTH_STORE_FILENAME).write_text(json.dumps(store), encoding="utf-8")
-            return diagnose(session, phase(0, 130.0, True))
-
-    def test_a_rotation_shows_the_throttled_key_and_the_one_that_took_over(self) -> None:
-        store = {
-            "credential_pool": {
-                "nvidia": [
-                    pool_entry("env:NVIDIA_API_KEY", 3, "exhausted", 429),
-                    pool_entry("env:NVIDIA_API_KEY_2", 5),
-                ]
-            }
-        }
-        self.assertEqual(
-            [
-                {
-                    "provider": "nvidia",
-                    "source": "env:NVIDIA_API_KEY",
-                    "last_status": "exhausted",
-                    "last_error_code": 429,
-                },
-                {
-                    "provider": "nvidia",
-                    "source": "env:NVIDIA_API_KEY_2",
-                    "last_status": None,
-                    "last_error_code": None,
-                },
-            ],
-            self._record(store)["credential_pool"],
-        )
-
-    def test_nothing_but_names_and_counters_is_copied(self) -> None:
-        """Hermes can label a row from a token's claims; neither the label nor a token leaves."""
-        entry = pool_entry(
-            "env:NVIDIA_API_KEY", 1, label="someone@example.com", access_token="nvapi-SECRET", refresh_token="r-SECRET"
-        )
-        recorded = json.dumps(self._record({"credential_pool": {"nvidia": [entry]}})["credential_pool"])
-        for value in ("SECRET", "someone@example.com"):
-            self.assertNotIn(value, recorded)
-
-    def test_no_store_or_no_pool_is_none_not_an_empty_pool(self) -> None:
-        self.assertIsNone(self._record(None)["credential_pool"])
-        self.assertIsNone(self._record({"providers": {}})["credential_pool"])
+        expected = [[line.replace("{plan_home}", str(plan.home)) for line in lines] for lines in GOLDEN_LANE]
+        self.assertEqual(expected, [diagnosis.summarize(record) for record in records])
 
 
 class ReadOnlyTests(unittest.TestCase):
@@ -619,7 +655,7 @@ class ReadOnlyTests(unittest.TestCase):
             session.witness("2026-10-12T12:57:30Z")
             files = sorted(Path(tmp).rglob("*"))
             before = {path: path.read_bytes() for path in files if path.is_file()}
-            diagnose(session, phase(124, 1080.0, False))
+            diagnosis.diagnose_session(session.dir, session.stem, phase(124, 1080.0, False))
             after = {path: path.read_bytes() for path in sorted(Path(tmp).rglob("*")) if path.is_file()}
         self.assertEqual(before, after)
 
@@ -632,7 +668,7 @@ class ReadOnlyTests(unittest.TestCase):
                     "INSERT INTO messages (session_id, role, content, timestamp) VALUES ('s1', 'assistant', 'SECRET-PROSE', ?)",
                     (LAUNCH + 9,),
                 )
-            record = diagnose(session, phase(124, 1080.0, False))
+            record = diagnosis.diagnose_session(session.dir, session.stem, phase(124, 1080.0, False))
         self.assertNotIn("SECRET-PROSE", json.dumps(record))
 
 
@@ -654,6 +690,31 @@ class CellRecordTests(unittest.TestCase):
             cell = lanes_module.Cell("C", 1, "abishekvashok__cmatrix.5c082c6")
             provenance = lanes_module.run_cell(cell, Path(tmp), Adapter(), Path(tmp))
         self.assertEqual([diagnosis.NO_TURN_START_RECORDED], [d["verdict"] for d in provenance["session_diagnoses"]])
+
+
+GOLDEN_LANE = [
+    [
+        "session       20261012T122043Z-3852 pid 3852 (research, oneshot)",
+        "verdict       active_until_budget: tools ran and returned; the budget ended it (last recorded activity at 2155.0s)"
+        " after a valid artifact",
+        "timeline      turn_started 3.0s, first_completed_model_call 60.0s, last_completed_model_call 180.0s,"
+        " first_model_output 60.0s, first_tool_call 60.0s, first_tool_result 70.0s, last_activity 2155.0s,"
+        " first_container 74.3s",
+        "containers    1 in this session's window, 0 from other sessions",
+        "last activity receiving_chunks at 2150.0s (pre_sigterm_snapshot): 'receiving stream response'",
+    ],
+    [
+        "session       20261012T125644Z-42025 pid 42025 (plan, oneshot)",
+        "verdict       evidence_unavailable: no session ledger and no event stream, so nothing here can say how far the"
+        " session got",
+        "timeline      nothing timestamped",
+        "containers    0 in this session's window, 1 from other sessions",
+        "missing       session log: 0 bytes - --oneshot writes nothing until the turn returns",
+        "missing       usage report: absent - --oneshot writes it only when the turn returns",
+        "missing       session ledger: {plan_home} exists but Hermes never created state.db in it",
+        "missing       activity snapshot: none taken before the budget kill, so SIGTERM may have cleared the label",
+    ],
+]
 
 
 if __name__ == "__main__":

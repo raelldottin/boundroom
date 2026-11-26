@@ -30,7 +30,7 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any, Generator, Iterable, Optional
 
 from .cleanroom import NETWORK_MODE, WORKSPACE_DIR, CleanroomError, DockerRun, _subprocess_docker
 
@@ -112,6 +112,62 @@ def _violations(record: dict[str, object], image_id: str, workspace: Path) -> li
     return failures
 
 
+def container_record(raw: dict[str, Any], *, requested_image: str, image_id: str, workspace: Path) -> dict[str, Any]:
+    """One `docker inspect` answer as the receipt keeps it, judged against this cell.
+
+    ``workspace`` is resolved here, as the mount source is. The cleanup fields start at
+    "not yet answered"; the witness fills them in once the session has exited.
+    """
+    workspace = Path(workspace).resolve()
+    mounts = raw.get("mounts") or []
+    mount = next((entry for entry in mounts if entry.get("Destination") == WORKSPACE_DIR), None)
+    labels = {key: value for key, value in (raw.get("labels") or {}).items() if key.startswith("hermes")}
+    record: dict[str, object] = {
+        "task_id": labels.get(TASK_ID_LABEL),
+        "container_id": raw.get("container_id"),
+        "created_at": raw.get("created_at"),
+        "requested_image": requested_image,
+        "image_ref": raw.get("image_ref"),
+        "image_id": raw.get("image_id"),
+        "network_mode": raw.get("network_mode"),
+        "workspace_mount": (
+            {"source": mount.get("Source"), "destination": mount.get("Destination"), "rw": mount.get("RW")} if mount else None
+        ),
+        "labels": labels,
+        "existed_in_baseline": False,
+        "removed_after_exit": None,
+        "cleanup_attempted": False,
+        "removed_by_harness": False,
+        "removed_after_cleanup": None,
+        "violations": [],
+    }
+    record["violations"] = _violations(record, image_id, workspace)
+    return record
+
+
+def witness_receipt(containers: list[dict[str, object]], baseline: Iterable[str]) -> dict[str, Any]:
+    """One structure, whatever happened: no container, one, or one per backend."""
+    default = [record for record in containers if record.get("task_id") == DEFAULT_TASK_ID]
+    session = [record for record in containers if _is_session_scoped(record)]
+    removed = [record.get("removed_after_exit") for record in default]
+    return {
+        "observed": bool(containers),
+        # The backend every ordinary terminal, file and code_execution call resolves to.
+        # A session that only ever created the system prompt's probe backend has not
+        # shown that the tools the model calls run in the cleanroom.
+        "default_backend_verified": bool(default) and not any(record["violations"] for record in default),
+        # The backend an agent turn's own tool calls resolve to under per-session
+        # isolation. A different path through the mount logic, so a separate fact.
+        "session_backend_verified": bool(session) and not any(record["violations"] for record in session),
+        # The direct runtime reading of `docker_persist_across_processes: false`: the
+        # container is gone once the process that made it is, so nothing can attach to
+        # it next time. Null until the session has exited.
+        "default_backend_removed_after_exit": all(removed) if removed and None not in removed else None,
+        "existing_containers": sorted(baseline),
+        "containers": containers,
+    }
+
+
 class SandboxWitness:
     """Every container Docker handed one agent session, recorded as that session runs."""
 
@@ -146,25 +202,7 @@ class SandboxWitness:
     @property
     def receipt(self) -> dict[str, Any]:
         """One structure, whatever happened: no container, one, or one per backend."""
-        default = [record for record in self.containers if record.get("task_id") == DEFAULT_TASK_ID]
-        session = [record for record in self.containers if _is_session_scoped(record)]
-        removed = [record.get("removed_after_exit") for record in default]
-        return {
-            "observed": bool(self.containers),
-            # The backend every ordinary terminal, file and code_execution call resolves to.
-            # A session that only ever created the system prompt's probe backend has not
-            # shown that the tools the model calls run in the cleanroom.
-            "default_backend_verified": bool(default) and not any(record["violations"] for record in default),
-            # The backend an agent turn's own tool calls resolve to under per-session
-            # isolation. A different path through the mount logic, so a separate fact.
-            "session_backend_verified": bool(session) and not any(record["violations"] for record in session),
-            # The direct runtime reading of `docker_persist_across_processes: false`: the
-            # container is gone once the process that made it is, so nothing can attach to
-            # it next time. Null until the session has exited.
-            "default_backend_removed_after_exit": all(removed) if removed and None not in removed else None,
-            "existing_containers": sorted(self._baseline),
-            "containers": self.containers,
-        }
+        return witness_receipt(self.containers, self._baseline)
 
     def wrap(self, runner):
         """The session runner, with the witness watching for as long as the session runs."""
@@ -208,32 +246,9 @@ class SandboxWitness:
             self._record(json.loads(stdout.strip() or "{}"))
 
     def _record(self, raw: dict[str, Any]) -> None:
-        mounts = raw.get("mounts") or []
-        mount = next((entry for entry in mounts if entry.get("Destination") == WORKSPACE_DIR), None)
-        labels = {key: value for key, value in (raw.get("labels") or {}).items() if key.startswith("hermes")}
-        record: dict[str, object] = {
-            "task_id": labels.get(TASK_ID_LABEL),
-            "container_id": raw.get("container_id"),
-            "created_at": raw.get("created_at"),
-            "requested_image": self._image,
-            "image_ref": raw.get("image_ref"),
-            "image_id": raw.get("image_id"),
-            "network_mode": raw.get("network_mode"),
-            "workspace_mount": (
-                {"source": mount.get("Source"), "destination": mount.get("Destination"), "rw": mount.get("RW")} if mount else None
-            ),
-            "labels": labels,
-            "existed_in_baseline": False,
-            "removed_after_exit": None,
-            "cleanup_attempted": False,
-            "removed_by_harness": False,
-            "removed_after_cleanup": None,
-            "violations": [],
-        }
-        violations = _violations(record, self._image_id, self._workspace)
-        record["violations"] = violations
+        record = container_record(raw, requested_image=self._image, image_id=self._image_id, workspace=self._workspace)
         self.containers.append(record)
-        self.violations.extend(violations)
+        self.violations.extend(record["violations"])
         self._flush()
         self._release()
 
