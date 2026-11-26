@@ -42,7 +42,13 @@ from .adapter import (
     CommandRunner,
     _default_command_template,
     _subprocess_runner,
+    REFUSED_FILENAME,
+    NotARegularFile,
     agent_environment,
+    copy_regular_tree,
+    describe_copy_error,
+    read_agent_file,
+    write_refused,
 )
 from .diagnosis import _load_json
 from .instances import TaskSpec, task_spec
@@ -68,6 +74,14 @@ MAX_SCORE = 10
 MAX_REASONS = 5
 MAX_REASON_CHARS = 300
 MAX_FAILING_TESTS_SHOWN = 20
+# A verdict is one small JSON object; anything larger is not one.
+MAX_VERDICT_BYTES = 64 * 1024
+# The unpacked size a submission may claim before it is extracted: generous for source code,
+# and a cap on what a model-written archive can make the harness write to disk.
+MAX_SUBMISSION_BYTES = 256 * 1024 * 1024
+# The members a submission may hold, counted the same way: each one is a file, directory or
+# header the harness writes or walks.
+MAX_SUBMISSION_MEMBERS = 20_000
 
 STOP = "stop"
 CONTINUE = "continue"
@@ -96,16 +110,27 @@ class Verdict:
         }
 
 
+def _read_verdict(path: Path) -> tuple[Optional[bytes], Verdict, Optional[str]]:
+    """The verdict file's bytes, if they could be read; the verdict they make, or the one that says why not; and why it was refused, if it was."""
+    try:
+        raw = read_agent_file(Path(path), MAX_VERDICT_BYTES)
+    except FileNotFoundError:
+        return None, Verdict(error="verdict_missing"), None
+    except NotARegularFile as refusal:
+        return None, Verdict(error="verdict_not_a_regular_file"), refusal.reason
+    except OSError:
+        return None, Verdict(error="verdict_unreadable"), None
+    return raw, _verdict_from_bytes(raw), None
+
+
 def parse_verdict(path: Path) -> Verdict:
     """Read a judge's ``verdict.json``. Anything malformed is an error, never a pass."""
+    return _read_verdict(path)[1]
+
+
+def _verdict_from_bytes(raw: bytes) -> Verdict:
     try:
-        text = Path(path).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return Verdict(error="verdict_missing")
-    except OSError:
-        return Verdict(error="verdict_unreadable")
-    try:
-        data = json.loads(text)
+        data = json.loads(raw.decode("utf-8"))
     except ValueError:
         return Verdict(error="verdict_not_json")
     if not isinstance(data, dict):
@@ -176,9 +201,25 @@ Give at most {MAX_REASONS} reasons. Then end the session with a one-line reply.
 """
 
 
+class _SubmissionTooLarge(Exception):
+    pass
+
+
 def _extract_submission(submission: Path, destination: Path) -> None:
     destination.mkdir(parents=True)
     with tarfile.open(submission, "r:gz") as tar:
+        # Sized from the headers before anything is written: a model-written archive could
+        # otherwise unpack far more than it weighs. Stopped at the first header that passes the
+        # cap: reading the next header means decompressing the member before it, so summing
+        # every header first would inflate a gzip bomb just to learn it is too big.
+        total = 0
+        for count, member in enumerate(tar, start=1):
+            if count > MAX_SUBMISSION_MEMBERS:
+                raise _SubmissionTooLarge()
+            if member.isfile():
+                total += member.size
+                if total > MAX_SUBMISSION_BYTES:
+                    raise _SubmissionTooLarge()
         # The data filter refuses absolute paths, `..`, links out of the tree and device files:
         # the archive is model-written, so it is read as untrusted.
         tar.extractall(destination, filter="data")
@@ -205,6 +246,10 @@ class Judge:
 
     def judge(self, task: TaskSpec, submission: Path, score: InstanceScore, failing: Sequence[str], record_dir: Path) -> Verdict:
         record_dir.mkdir(parents=True, exist_ok=True)
+        # What an earlier run left in the same record directory must not stand in for this
+        # session's answer, even when this run stops before a session starts.
+        (record_dir / VERDICT_FILENAME).unlink(missing_ok=True)
+        (record_dir / REFUSED_FILENAME).unlink(missing_ok=True)
         workspace = Path(tempfile.mkdtemp(prefix="judge-"))
         control = Path(tempfile.mkdtemp(prefix="judge-control-"))
         try:
@@ -212,12 +257,11 @@ class Judge:
             subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
             try:
                 _extract_submission(Path(submission), workspace / SUBMISSION_DIR)
+            except _SubmissionTooLarge:
+                return Verdict(error="submission_too_large")
             except (OSError, EOFError, zlib.error, tarfile.TarError):
                 # A truncated or corrupt gzip stream raises EOFError or zlib.error, not TarError.
                 return Verdict(error="submission_unreadable")
-            # A verdict left by an earlier run in the same run directory must not stand in
-            # for this session's answer in the record.
-            (record_dir / VERDICT_FILENAME).unlink(missing_ok=True)
             # The session's reports go to the throwaway control directory and are copied into
             # the record afterwards, so no path the judge is handed leads to the run directory,
             # where the lanes' own directories and earlier rounds' records name the lanes.
@@ -238,12 +282,25 @@ class Judge:
             # The lanes' own session seam, so the command and slice id are built as theirs are.
             phase = run_phase(context, "judge", judge_prompt(task, score, failing), {"role": "judge"}, self._timeout)
             returncode = phase.returncode
-            if sessions_dir.is_dir():
-                shutil.copytree(sessions_dir, record_dir / AGENT_SESSIONS_DIR, dirs_exist_ok=True)
-            verdict_path = workspace / VERDICT_FILENAME
-            if verdict_path.is_file():
-                shutil.copyfile(verdict_path, record_dir / VERDICT_FILENAME)
-            verdict = parse_verdict(verdict_path)
+            # Copied and read without following links: the session wrote both, and the harness
+            # reads them outside its sandbox. What was left out is recorded beside them.
+            try:
+                refused = [
+                    {**entry, "path": AGENT_SESSIONS_DIR if entry["path"] == "." else f"{AGENT_SESSIONS_DIR}/{entry['path']}"}
+                    for entry in copy_regular_tree(sessions_dir, record_dir / AGENT_SESSIONS_DIR)
+                ]
+                raw, verdict, verdict_refusal = _read_verdict(workspace / VERDICT_FILENAME)
+                if verdict_refusal is not None:
+                    refused.append({"path": VERDICT_FILENAME, "reason": verdict_refusal})
+                if raw is not None:
+                    (record_dir / VERDICT_FILENAME).write_bytes(raw)
+            except (OSError, RecursionError) as failure:
+                # Out of descriptors, recursion or disk: this cell's error, never a pass, and not
+                # a crash of the stop gate.
+                (record_dir / VERDICT_FILENAME).unlink(missing_ok=True)
+                write_refused(record_dir / REFUSED_FILENAME, [], describe_copy_error(failure))
+                return Verdict(error="judge_record_unreadable", returncode=returncode)
+            write_refused(record_dir / REFUSED_FILENAME, refused)
             error = verdict.error
             if error is None and returncode != 0:
                 # A session that timed out or failed may have left a half-considered verdict.
