@@ -6,6 +6,10 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+### Added
+
+- `automation/examples/demo_reject.py` (`make demo-reject` in Boundroom) shows the supervisor rejecting a slice from its git diff, whatever the handoff claims, with no agent and no API key. It builds a temporary repository with one slice scoped to `docs/workflows/`, commits a scripted change to three files including `README.md`, and runs `evaluate_handoff.py --dry-run` on a handoff that claims one. It also says what the supervisor doesn't check: it doesn't compare the handoff's `files_touched` with the diff. A consumer's sync copies it into `automation/examples/` once, as a template that later syncs don't update, and `uv run python automation/examples/demo_reject.py` runs it against the consumer's synced supervisor without changing the checkout. Because that copy stays put while the supervisor moves, the demo first checks that the copied schemas still accept its queue and handoff and that `evaluate_handoff.py --help` lists the flags it passes; if not, it exits 2 and says the demo is older than the synced supervisor. Exit 1 means only that the supervisor decided something else; any failure of the demo itself exits 2.
+
 ### Changed
 
 - The benchmark's `lanes` reads the commit once, when the experiment starts, and records it in every cell's `run.json` and on the experiment's trace span. It used to run `git rev-parse` for each cell, so a commit made during a long run changed the `repo_automation_sha` of the cells after it. The cell clock, the environment fingerprint and the commit, and the clock that times each phase, can now be passed in, so the benchmark's tests check provenance and phase budgets exactly. Nothing else in `run.json`, `lane-comparison.json` or the `lanes` command changes.
