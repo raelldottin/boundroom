@@ -27,6 +27,7 @@ import argparse
 import json
 import sys
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal, Optional, Sequence
 
@@ -306,86 +307,119 @@ def _commits(handoff: dict[str, Any], kind: Optional[str], report: Optional[dict
     return {"base": {"sha": None, "source": base_source}, "head": head}
 
 
-def next_action(handoff: dict[str, Any], kind: Optional[str], report: Optional[dict[str, Any]]) -> dict[str, str]:
-    """Derive one safe next step for a person from the supervisor's fields.
+@dataclass(frozen=True)
+class NextAction:
+    """The facts one safe next step rests on, as the inputs gave them: nothing clipped or escaped."""
 
-    Every branch ends with a person deciding. None of them tells anyone, person or agent,
-    to run the next slice: continuation is the supervisor's decision under its own gates.
-    """
+    kind: str
+    decision: Optional[str] = None
+    reason: str = ""
+    next_slice: Optional[str] = None
+    dry_run: Optional[bool] = None
+    open_questions: tuple[str, ...] = ()
+    failing_validations: tuple[str, ...] = ()
+    outside_paths: tuple[str, ...] = ()
+    missing_manual_proofs: tuple[str, ...] = ()
+    missing_proof_level: Optional[bool] = None
+
+
+def decide_next_action(handoff: dict[str, Any], kind: Optional[str], report: Optional[dict[str, Any]]) -> NextAction:
+    """Choose one safe next step for a person from the supervisor's fields."""
     if report is None or kind is None:
-        return {
-            "kind": "get_independent_evidence",
-            "text": (
-                "Not independently verified. Get the supervisor's own evidence first: its decision report "
-                "from run_next.py, or evaluate_handoff.py --dry-run for this slice. Then a person reviews it."
-            ),
-        }
+        return NextAction("get_independent_evidence")
 
     decision = report["decision"]
-    reason = safe(clip(report["reason"]))
     if decision == "stop":
-        return {
-            "kind": "queue_stop",
-            "text": (
-                "No action: queue stop. The supervisor found no eligible queued slice after this one. "
-                "A person reviews and approves this slice's changes."
-            ),
-        }
+        return NextAction("queue_stop", decision)
     if decision == "continue":
-        next_slice = report["next_slice_id"]
-        named = f" The supervisor's report names `{safe(clip(next_slice))}` as the eligible next slice." if next_slice else ""
-        return {
-            "kind": "human_review",
-            "text": (
-                f"A person reviews and approves this slice's changes.{named} Whether anything runs next is "
-                "the supervisor's decision under its own gates; this summary starts nothing."
-            ),
-        }
+        return NextAction("human_review", decision, next_slice=report["next_slice_id"])
     if decision == "stop_for_review":
-        return {
-            "kind": "human_review",
-            "text": f"A person reviews and approves this slice's changes. The supervisor stopped: {reason}",
-        }
+        return NextAction("human_review", decision, reason=report["reason"])
     if decision == "accept":
-        dry_run = " The evaluation was a dry run, so the queue was not changed." if report["dry_run"] else ""
-        return {"kind": "human_review", "text": f"A person reviews and approves this slice's changes.{dry_run}"}
+        return NextAction("human_review", decision, dry_run=report["dry_run"])
     if decision == "stop_blocked":
-        questions = handoff.get("open_questions", [])
-        asked = f" The agent's open questions: {_names(questions)}." if questions else ""
-        return {
-            "kind": "resolve_blocker",
-            "text": f"A person resolves what blocked the slice, then decides whether to re-queue it.{asked}",
-        }
+        return NextAction("resolve_blocker", decision, open_questions=tuple(handoff.get("open_questions", [])))
 
     # stop_failed or reject: the most specific finding first, so the reviewer fixes the cause
     # rather than the symptom the later checks would report once it is gone.
-    requeue = " A person decides whether to re-queue the slice."
     failing = sorted(
         set(report["required_validation_failures"])
         | {replay["command"] for replay in report["supervisor_validation_replays"] if not replay["success"]}
     )
     if failing:
-        noun = "validation" if len(failing) == 1 else "validations"
-        return {"kind": "fix_validation", "text": f"Fix the failing {noun}: {_names(failing)}.{requeue}"}
+        return NextAction("fix_validation", decision, failing_validations=tuple(failing))
     outside = sorted(
         set(report["files_touched_outside_scope"])
         | set(report.get("dirty_paths_outside_scope", []))
         | set(report.get("out_of_scope_files", []))
     )
     if outside:
-        return {
-            "kind": "fix_scope",
-            "text": f"Revert or move the changes outside the slice's allowed paths: {_names(outside)}.{requeue}",
-        }
+        return NextAction("fix_scope", decision, outside_paths=tuple(outside))
     if report["missing_manual_proofs"] or report["missing_proof_level"]:
+        return NextAction(
+            "provide_proof",
+            decision,
+            missing_manual_proofs=tuple(report["missing_manual_proofs"]),
+            missing_proof_level=report["missing_proof_level"],
+        )
+    return NextAction("investigate_failure", decision, reason=report["reason"])
+
+
+_REQUEUE = " A person decides whether to re-queue the slice."
+_APPROVE = "A person reviews and approves this slice's changes."
+
+
+def render_next_action(action: NextAction) -> str:
+    """Word a next step for a person, with every input-written value clipped and escaped.
+
+    Every branch ends with a person deciding. None of them tells anyone, person or agent,
+    to run the next slice: continuation is the supervisor's decision under its own gates.
+    """
+    if action.kind == "get_independent_evidence":
+        return (
+            "Not independently verified. Get the supervisor's own evidence first: its decision report "
+            "from run_next.py, or evaluate_handoff.py --dry-run for this slice. Then a person reviews it."
+        )
+    if action.kind == "queue_stop":
+        return f"No action: queue stop. The supervisor found no eligible queued slice after this one. {_APPROVE}"
+    if action.kind == "human_review":
+        if action.decision == "continue":
+            named = (
+                f" The supervisor's report names `{safe(clip(action.next_slice))}` as the eligible next slice."
+                if action.next_slice
+                else ""
+            )
+            return (
+                f"{_APPROVE}{named} Whether anything runs next is "
+                "the supervisor's decision under its own gates; this summary starts nothing."
+            )
+        if action.decision == "stop_for_review":
+            return f"{_APPROVE} The supervisor stopped: {safe(clip(action.reason))}"
+        dry_run = " The evaluation was a dry run, so the queue was not changed." if action.dry_run else ""
+        return f"{_APPROVE}{dry_run}"
+    if action.kind == "resolve_blocker":
+        asked = f" The agent's open questions: {_names(action.open_questions)}." if action.open_questions else ""
+        return f"A person resolves what blocked the slice, then decides whether to re-queue it.{asked}"
+    if action.kind == "fix_validation":
+        noun = "validation" if len(action.failing_validations) == 1 else "validations"
+        return f"Fix the failing {noun}: {_names(action.failing_validations)}.{_REQUEUE}"
+    if action.kind == "fix_scope":
+        return f"Revert or move the changes outside the slice's allowed paths: {_names(action.outside_paths)}.{_REQUEUE}"
+    if action.kind == "provide_proof":
         parts = []
-        if report["missing_manual_proofs"]:
-            parts.append(f"provide the missing manual proof: {_names(report['missing_manual_proofs'])}")
-        if report["missing_proof_level"]:
+        if action.missing_manual_proofs:
+            parts.append(f"provide the missing manual proof: {_names(action.missing_manual_proofs)}")
+        if action.missing_proof_level:
             parts.append("reach the slice's required proof level")
         text = "; ".join(parts)
-        return {"kind": "provide_proof", "text": f"{text[0].upper()}{text[1:]}.{requeue}"}
-    return {"kind": "investigate_failure", "text": f"Investigate the failure the supervisor reported: {reason}{requeue}"}
+        return f"{text[0].upper()}{text[1:]}.{_REQUEUE}"
+    return f"Investigate the failure the supervisor reported: {safe(clip(action.reason))}{_REQUEUE}"
+
+
+def next_action(handoff: dict[str, Any], kind: Optional[str], report: Optional[dict[str, Any]]) -> dict[str, str]:
+    """The summary's ``next_action`` block: the step ``decide_next_action`` chooses, worded for a person."""
+    action = decide_next_action(handoff, kind, report)
+    return {"kind": action.kind, "text": render_next_action(action)}
 
 
 def build_summary(

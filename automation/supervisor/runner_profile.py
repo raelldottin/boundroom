@@ -19,18 +19,19 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import posixpath
 import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Generator, Mapping, Optional
+from typing import Any, Callable, Generator, Iterable, Iterator, Mapping, Optional
 
 PROFILES = ("parent", "bounded", "edits", "unbounded", "custom")
-CEILINGS = ("bounded", "edits", "unbounded")
 # Ordered by what runs without anyone's approval.
-_RANK = {"bounded": 0, "edits": 1, "unbounded": 2}
+CEILINGS = ("bounded", "edits", "unbounded")
+_RANK = {name: rank for rank, name in enumerate(CEILINGS)}
 MODES = {"bounded": "dontAsk", "edits": "acceptEdits", "unbounded": "bypassPermissions"}
 DEFAULT_BUDGET_USD = 5
 
@@ -100,14 +101,12 @@ def _ps(field: str, pid: str) -> str:
 def _harness(comm: str, args: str) -> Optional[str]:
     """The harness a process is, by the same rule as ``run_agent.sh``'s ``harness_named_by``."""
     words = args.split()
-    first = words[0].rsplit("/", 1)[-1] if words else ""
+    first = posixpath.basename(words[0]) if words else ""
     second = ""
     if len(words) > 1 and (first in ("node", "nodejs", "bun", "deno", "python", "python3") or first.startswith("python3.")):
-        second = words[1].rsplit("/", 1)[-1]
-    for candidate in (comm.rsplit("/", 1)[-1], first, second):
-        if candidate in ("codex", "claude", "hermes"):
-            return candidate
-    return None
+        second = posixpath.basename(words[1])
+    candidates = (posixpath.basename(comm), first, second)
+    return next((candidate for candidate in candidates if candidate in ("codex", "claude", "hermes")), None)
 
 
 def launch_mode(args: str) -> str:
@@ -120,28 +119,38 @@ def launch_mode(args: str) -> str:
         if word == "--permission-mode" and index + 1 < len(words):
             mode = words[index + 1]
         elif word.startswith("--permission-mode="):
-            mode = word.split("=", 1)[1]
+            mode = word.removeprefix("--permission-mode=")
     return mode
 
 
-def parent_launch_mode(start_pid: Optional[int] = None) -> Optional[str]:
+MAX_ANCESTORS = 64  # bounded, so a ps that reports a cycle can't hang the supervisor
+
+
+def _ancestry(pid: str, ps: Callable[[str, str], str]) -> Iterator[tuple[str, str]]:
+    """Each ancestor's ``(comm, args)``, nearest first, asking ``ps`` only as far as the caller reads."""
+    for _ in range(MAX_ANCESTORS):
+        if not pid or pid == "0":
+            return
+        yield ps("comm", pid), ps("args", pid)
+        pid = ps("ppid", pid)
+
+
+def _nearest_claude_mode(ancestry: Iterable[tuple[str, str]]) -> Optional[str]:
+    """The nearest harness's launch mode if that harness is Claude Code, else None."""
+    named = ((_harness(comm, args), args) for comm, args in ancestry)
+    harness, args = next(((harness, args) for harness, args in named if harness is not None), (None, ""))
+    return launch_mode(args) if harness == "claude" else None
+
+
+def parent_launch_mode(start_pid: Optional[int] = None, ps: Optional[Callable[[str, str], str]] = None) -> Optional[str]:
     """The nearest enclosing harness's launch mode if it is Claude Code, else None.
 
     Nearest, as ``run_agent.sh`` picks the runner: Claude Code driving Hermes driving this is
-    Hermes's call, and Hermes has no Claude permission mode to match.
+    Hermes's call, and Hermes has no Claude permission mode to match. ``ps`` answers
+    ``ps -o <field>= -p <pid>``, the one thing this reads from outside the process.
     """
     pid = str(start_pid if start_pid is not None else os.getppid())
-    for _ in range(64):  # bounded, so a ps that reports a cycle can't hang the supervisor
-        if not pid or pid == "0":
-            return None
-        args = _ps("args", pid)
-        harness = _harness(_ps("comm", pid), args)
-        if harness == "claude":
-            return launch_mode(args)
-        if harness is not None:
-            return None
-        pid = _ps("ppid", pid)
-    return None
+    return _nearest_claude_mode(_ancestry(pid, ps or _ps))  # looked up per call, so the module's _ps stays the seam
 
 
 # --- choosing the profile -------------------------------------------------------------------------
@@ -191,7 +200,6 @@ def choose(flags: Mapping[str, Any], environ: Mapping[str, str], parent_mode: An
     else:
         ceiling, ceiling_source = "edits", "default"
 
-    sandbox = False
     if requested == "parent":
         resolved = _resolve_parent(parent_mode, reasons)
         # The fallback, for no parent or a mode this code doesn't know, is bounded with the sandbox (PS-17).
@@ -214,7 +222,7 @@ def choose(flags: Mapping[str, Any], environ: Mapping[str, str], parent_mode: An
         effective, mode = "custom", None
         reasons.append("custom is the operator's own settings file and isn't capped")
     else:
-        effective = resolved if _RANK[resolved] <= _RANK[ceiling] else ceiling
+        effective = min((resolved, ceiling), key=_RANK.__getitem__)
         if effective != resolved:
             reasons.append(f"the ceiling ({ceiling}, {ceiling_source}) lowered {resolved} to {effective}")
         mode = MODES[effective]
@@ -265,8 +273,9 @@ def _resolve_parent(parent_mode: Optional[str], reasons: list[str]) -> str:
 def _owned_prefix(entry: str) -> str:
     """A supervisor-owned entry as the path prefix the policy matches (``a/``, ``a/**`` and ``a`` alike)."""
     prefix = PurePosixPath(entry.strip()).as_posix()  # drops "./" and doubled slashes, as policy.py does
-    while prefix.endswith("/**") or prefix.endswith("/"):
-        prefix = prefix[:-3] if prefix.endswith("/**") else prefix[:-1]
+    while prefix.endswith("/**"):
+        prefix = prefix[:-3]
+    prefix = prefix.rstrip("/")  # only "/" and "//" still end in one: PurePosixPath dropped the rest
     # As policy.normalize_repo_path reads it, so "./automation/handoffs/" covers the handoff too.
     return PurePosixPath(prefix).as_posix() if prefix else "."
 
@@ -289,10 +298,9 @@ def _owned_denies(owned: list[str], handoff: Optional[str], repo_root: Optional[
         if not handoff or not _covers(prefix, handoff) or repo_root is None:
             deny.append(f"Edit({entry})")
             continue
-        base = repo_root if prefix == "." else repo_root / prefix
-        if base.is_file():
-            continue  # the entry is the handoff itself
-        for directory, subdirectories, files in os.walk(base) if base.is_dir() else []:
+        base = repo_root / prefix  # pathlib drops a "." component, so "." walks the whole repository
+        # Walking a file, such as an entry that is the handoff itself, or a missing path yields nothing.
+        for directory, subdirectories, files in os.walk(base):
             subdirectories[:] = sorted(name for name in subdirectories if name != ".git")  # .git is denied whole
             for name in sorted(files):
                 relative = (Path(directory) / name).relative_to(repo_root).as_posix()

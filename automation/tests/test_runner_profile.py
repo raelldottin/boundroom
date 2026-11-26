@@ -13,8 +13,9 @@ import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
+import automation.tests.fake_ps  # noqa: F401  (the ps double on PATH, as conftest.py does under pytest)
 from automation.supervisor import runner_profile as rp
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +30,23 @@ POLICY = {"supervisor_owned_paths": ["automation/queue/**", "AGENTS.md"]}
 
 def choose(requested: str, parent: Optional[str] = None, **environ: str) -> rp.RunnerProfile:
     return rp.choose({"runner_profile": requested}, environ, parent)
+
+
+Process = tuple[str, str, str]  # (ppid, comm, args)
+
+
+def stub_ps(table: dict[str, Process]) -> Callable[[str, str], str]:
+    """A stand-in for ``ps -o <field>= -p <pid>``: an unknown pid answers nothing, as ``ps`` does."""
+    fields = ("ppid", "comm", "args")
+    return lambda field, pid: table[pid][fields.index(field)] if pid in table else ""
+
+
+def chain(*processes: tuple[str, str]) -> dict[str, Process]:
+    """A process table of ``(comm, args)``, nearest first from pid 200; the last one's parent is pid 0."""
+    return {
+        str(200 + depth): (str(201 + depth) if depth + 1 < len(processes) else "0", comm, args)
+        for depth, (comm, args) in enumerate(processes)
+    }
 
 
 class TempCase(unittest.TestCase):
@@ -70,20 +88,76 @@ class ParentResolutionTests(TempCase):
             with self.subTest(args=args):
                 self.assertEqual(expected, rp.launch_mode(args))
 
+    def test_a_permission_mode_flag_without_a_value_leaves_the_default(self) -> None:
+        self.assertEqual("default", rp.launch_mode("claude --permission-mode"))
+
+    def walk(self, table: dict[str, Process], start: int = 200) -> Optional[str]:
+        return rp.parent_launch_mode(start, ps=stub_ps(table))
+
     def test_ps16_the_nearest_claude_ancestor_decides(self) -> None:
+        table = chain(
+            ("python3", "python3 run_next.py"),
+            ("/opt/claude/versions/2.1.3", "claude --permission-mode acceptEdits"),
+            ("claude", "claude --permission-mode plan"),
+        )
+        self.assertEqual("acceptEdits", self.walk(table))
+
+    def test_claude_is_known_by_its_command_name_its_program_or_its_script(self) -> None:
+        self.assertEqual("plan", self.walk(chain(("/usr/local/bin/claude", "x --permission-mode plan"))))
+        self.assertEqual("plan", self.walk(chain(("2.1.3", "/usr/local/bin/claude --permission-mode plan"))))
+        self.assertEqual("acceptEdits", self.walk(chain(("node", "node /x/claude --permission-mode acceptEdits"))))
+        self.assertEqual("default", self.walk(chain(("node", "node /x/claude"))))
+
+    def test_ps17_no_claude_ancestor_or_a_nearer_harness_means_unknown(self) -> None:
+        self.assertIsNone(self.walk(chain(("-zsh", "-zsh"), ("/usr/bin/login", "/usr/bin/login -fpl someone"))))
+        nearer_hermes = chain(
+            ("python3.12", "python3.12 /opt/hermes/bin/hermes chat"),
+            ("/opt/claude/versions/2.1.3", "claude --dangerously-skip-permissions"),
+        )
+        self.assertIsNone(self.walk(nearer_hermes))
+
+    def test_only_an_interpreter_names_its_script_as_the_harness(self) -> None:
+        # A shell running a file called claude is not Claude Code, and an interpreter with no script names nothing.
+        self.assertIsNone(self.walk(chain(("sh", "sh claude"), ("launchd", "/sbin/launchd"))))
+        self.assertIsNone(self.walk(chain(("node", "node"))))
+
+    def test_the_walk_stops_at_pid_0_or_an_empty_parent(self) -> None:
+        bypass = ("1", "claude", "claude --dangerously-skip-permissions")
+        for root_parent in ("0", ""):
+            with self.subTest(root_parent=root_parent):
+                table = {"200": (root_parent, "python3", "python3 run_next.py"), root_parent: bypass}
+                self.assertIsNone(self.walk(table))
+
+    def test_the_walk_reads_at_most_64_ancestors(self) -> None:
+        claude = ("claude", "claude --permission-mode acceptEdits")
+        self.assertEqual("acceptEdits", self.walk(chain(*[("sh", "sh")] * 63, claude)))
+        self.assertIsNone(self.walk(chain(*[("sh", "sh")] * 64, claude)))
+
+    def test_a_cycle_in_the_process_table_ends_the_walk(self) -> None:
+        table = {"200": ("201", "sh", "sh"), "201": ("200", "sh", "sh")}
+        self.assertIsNone(self.walk(table))
+
+    def test_a_ps_that_knows_no_process_means_no_parent(self) -> None:
+        # The real ps double, which exits 1 without a tree: that is an empty answer, not an error.
+        os.environ.pop("FAKE_PS_TREE", None)
+        self.assertIsNone(rp.parent_launch_mode(200))
+
+    def test_the_real_ps_is_read_through_its_fields(self) -> None:
         start = self.tree(
             ("python3", "python3 run_next.py"), ("/opt/claude/versions/2.1.3", "claude --permission-mode acceptEdits")
         )
         self.assertEqual("acceptEdits", rp.parent_launch_mode(int(start)))
 
-    def test_ps17_no_claude_ancestor_or_a_nearer_harness_means_unknown(self) -> None:
-        start = self.tree(("-zsh", "-zsh"), ("/usr/bin/login", "/usr/bin/login -fpl someone"))
-        self.assertIsNone(rp.parent_launch_mode(int(start)))
-        start = self.tree(
-            ("/opt/hermes/venv/bin/python3", "/opt/hermes/venv/bin/python3 /opt/hermes/venv/bin/hermes chat"),
-            ("/opt/claude/versions/2.1.3", "claude --dangerously-skip-permissions"),
-        )
-        self.assertIsNone(rp.parent_launch_mode(int(start)))
+    def test_the_process_tree_is_read_only_for_the_parent_profile(self) -> None:
+        # The ps double answers an unknown pid, such as this process's parent, with the tree's first line.
+        self.tree(("claude", "claude --permission-mode acceptEdits"))
+        record = rp.choose({"runner_profile": "parent"}, {}).record()
+        self.assertEqual(("acceptEdits", "edits"), (record["parent_mode"], record["effective"]))
+        # Any other profile never starts ps, the out-of-process dependency, so it costs no subprocess.
+        no_ps = AssertionError("ps was started for a profile that is not parent")
+        for flags in ({}, {"runner_profile": "edits"}, {"runner_profile": "bounded"}):
+            with self.subTest(flags=flags), unittest.mock.patch.object(rp.subprocess, "run", side_effect=no_ps):
+                self.assertIsNone(rp.choose(flags, {}).record()["parent_mode"])
 
 
 class ChoiceTests(unittest.TestCase):
@@ -171,31 +245,47 @@ class ChoiceTests(unittest.TestCase):
         )
         self.assertEqual(("bounded", "flag --runner-profile-ceiling"), (profile.effective, profile.ceiling_source))
 
-    def test_the_process_tree_is_read_only_for_the_parent_profile(self) -> None:
-        with unittest.mock.patch.object(rp, "parent_launch_mode", side_effect=AssertionError("walked the tree")):
-            rp.choose({}, {})
-        with unittest.mock.patch.object(rp, "parent_launch_mode", return_value="acceptEdits") as walk:
-            self.assertEqual("edits", rp.choose({"runner_profile": "parent"}, {}).effective)
-        walk.assert_called_once()
-
     def test_the_way_back_to_bypass_is_unbounded_and_isolated(self) -> None:
         profile = rp.choose({}, {"BOUNDROOM_CLAUDE_PROFILE": "unbounded", "BOUNDROOM_CLAUDE_ISOLATED": "1"}, None)
         self.assertEqual("bypassPermissions", profile.mode)
 
-    def test_ps21_the_record_names_every_step(self) -> None:
-        record = choose("parent", "bypassPermissions").record()
+    def test_a_parent_profile_gives_one_reason_for_its_resolution(self) -> None:
         self.assertEqual(
-            ("parent", "bypassPermissions", "unbounded", "edits", "edits", "acceptEdits"),
-            (
-                record["requested"],
-                record["parent_mode"],
-                record["resolved"],
-                record["ceiling"],
-                record["effective"],
-                record["permission_mode"],
-            ),
+            ("no Claude Code parent, or its flags couldn't be read: the fallback profile, bounded",),
+            choose("parent", None).reasons,
         )
-        self.assertTrue(record["reasons"])
+        self.assertEqual(
+            ("the parent runs default: headless, so every action is pre-approved or denied",), choose("parent", "default").reasons
+        )
+
+    def test_a_lowering_ceiling_says_so_and_a_profile_under_it_gives_no_reason(self) -> None:
+        self.assertEqual(
+            ("the ceiling (bounded, env BOUNDROOM_CLAUDE_PROFILE_CEILING) lowered edits to bounded",),
+            choose("edits", BOUNDROOM_CLAUDE_PROFILE_CEILING="bounded").reasons,
+        )
+        self.assertEqual((), choose("bounded").reasons)
+
+    def test_a_chosen_profile_cannot_be_changed_afterwards(self) -> None:
+        profile = choose("bounded")
+        with self.assertRaises(AttributeError):  # dataclasses.FrozenInstanceError
+            setattr(profile, "effective", "unbounded")  # what a careless caller would do; ty refuses the plain form
+
+    def test_ps21_the_record_names_every_step(self) -> None:
+        self.assertEqual(
+            {
+                "requested": "parent",
+                "requested_source": "flag --runner-profile",
+                "parent_mode": "bypassPermissions",
+                "resolved": "unbounded",
+                "ceiling": "edits",
+                "ceiling_source": "default",
+                "effective": "edits",
+                "permission_mode": "acceptEdits",
+                "sandbox": False,
+                "reasons": ["the parent runs bypassPermissions", "the ceiling (edits, default) lowered unbounded to edits"],
+            },
+            choose("parent", "bypassPermissions").record(),
+        )
 
 
 class SliceSettingsTests(TempCase):
@@ -315,6 +405,50 @@ class SliceSettingsTests(TempCase):
         # "/path" in an Edit rule is relative to the settings file; an absolute path needs "//".
         self.assertIn(f"Edit(/{outside})", outside_allow)
         self.assertNotIn(f"Edit({outside})", outside_allow)
+
+    FIXED_DENIES = [
+        "Edit(.git/**)",
+        "Edit(.claude/**)",
+        "Read(~/.ssh/**)",
+        "Read(~/.aws/**)",
+        "Read(~/.config/**)",
+        "WebFetch",
+        "WebSearch",
+    ]
+
+    def test_an_owned_glob_over_the_handoff_is_denied_file_by_file(self) -> None:
+        handoff = "automation/handoffs/h.json"
+        root = self.tmp / "repo"
+        # src/app.py sits outside the owned glob, so it must not be denied with the glob's files.
+        for name in ("automation/handoffs/a.json", "automation/handoffs/sub/b.json", handoff, "src/app.py"):
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text("{}", encoding="utf-8")
+        policy = {"supervisor_owned_paths": ["automation/handoffs/**"]}
+        deny = rp.slice_settings(SLICE, policy, choose("bounded"), handoff, root)["permissions"]["deny"]
+        self.assertEqual(["Edit(automation/handoffs/a.json)", "Edit(automation/handoffs/sub/b.json)", *self.FIXED_DENIES], deny)
+
+    def test_an_owned_entry_that_is_the_handoff_itself_is_not_denied(self) -> None:
+        handoff = "automation/handoffs/h.json"
+        root = self.tmp / "repo"
+        (root / "automation/handoffs").mkdir(parents=True)
+        (root / handoff).write_text("{}", encoding="utf-8")
+        deny = rp.slice_settings(SLICE, {"supervisor_owned_paths": [handoff]}, choose("bounded"), handoff, root)
+        self.assertEqual(self.FIXED_DENIES, deny["permissions"]["deny"])
+
+    def test_the_settings_file_holds_the_slice_settings(self) -> None:
+        profile = choose("bounded")
+        with rp.runner_environment(SLICE, POLICY, profile, {}) as env:
+            text = Path(env[rp.RUNNER_SETTINGS_ENV]).read_text(encoding="utf-8")
+        self.assertEqual(rp.slice_settings(SLICE, POLICY, profile), json.loads(text))
+
+    def test_every_runner_gets_the_default_budget(self) -> None:
+        with rp.runner_environment(SLICE, POLICY, choose("edits"), {}) as env:
+            self.assertEqual("5", env["BOUNDROOM_CLAUDE_RUNNER_BUDGET_USD"])
+
+    def test_a_settings_directory_already_gone_does_not_fail_the_run(self) -> None:
+        with rp.runner_environment(SLICE, POLICY, choose("edits"), {}) as env:
+            shutil.rmtree(Path(env[rp.RUNNER_SETTINGS_ENV]).parent)
+        self.assertFalse(Path(env[rp.RUNNER_SETTINGS_ENV]).exists())
 
     def test_without_a_handoff_an_owned_directory_stays_denied_whole(self) -> None:
         policy = {"supervisor_owned_paths": ["automation/handoffs/"]}

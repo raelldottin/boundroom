@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 import unicodedata
@@ -161,126 +160,44 @@ def test_a_claimed_head_commit_is_labelled_a_claim_unless_the_evaluator_recorded
     }
 
 
+def test_a_report_whose_kind_is_unknown_is_not_presented_as_verified():
+    summary = hs.build_summary(make_handoff(), "handoff.json", None, make_decision_report(), "report.json")
+
+    assert summary["verification"] == {
+        "status": "not_independently_verified",
+        "report_kind": None,
+        "label": "NOT INDEPENDENTLY VERIFIED: no supervisor report was given, so everything here is the agent's own claim.",
+    }
+    assert summary["supervisor_evidence"] is None
+    assert summary["next_action"]["kind"] == "get_independent_evidence"
+
+
 # ---------------------------------------------------------------------------
 # Next action
 # ---------------------------------------------------------------------------
+# What each report leads to, and its wording, is tested on the pure functions in
+# test_handoff_next_action.py; here only that the CLI prints the step the summary carries.
 
 FAILING_REPLAY = policy.ValidationReplayResult("make test", False, 1, "Supervisor replay failed with exit code 1.")
 
-NEXT_ACTION_CASES = [
-    pytest.param(None, {}, "get_independent_evidence", "Not independently verified.", id="no-report"),
-    pytest.param(make_decision_report(), {}, "queue_stop", "No action: queue stop.", id="stop"),
-    pytest.param(
-        make_decision_report(decision="continue", should_continue=True, next_slice_id="today-continue-ui-regression-coverage"),
-        {},
-        "human_review",
-        "names `today-continue-ui-regression-coverage` as the eligible next slice",
-        id="continue",
-    ),
-    pytest.param(
-        make_decision_report(decision="stop_for_review", stop_reason="Consecutive autonomous run limit reached."),
-        {},
-        "human_review",
-        "The supervisor stopped: Consecutive autonomous run limit reached.",
-        id="stop-for-review",
-    ),
-    pytest.param(make_evaluation_report(dry_run=True), {}, "human_review", "was a dry run", id="accept-dry-run"),
-    pytest.param(
-        make_decision_report(queue_status="blocked", decision="stop_blocked", stop_reason="Slice reported blocked status."),
-        {"status": "blocked", "open_questions": ["Which simulator runtime is approved?"]},
-        "resolve_blocker",
-        "The agent's open questions: `Which simulator runtime is approved?`",
-        id="stop-blocked",
-    ),
-    pytest.param(
-        make_decision_report(
-            queue_status="failed",
-            decision="stop_failed",
-            required_validation_failures=["make test"],
-            supervisor_validation_replays=[FAILING_REPLAY],
-        ),
-        {},
-        "fix_validation",
-        "Fix the failing validation: `make test`.",
-        id="stop-failed-validation",
-    ),
-    pytest.param(
-        # A replay that failed counts even when the report lists no required failure.
-        make_evaluation_report(
-            queue_status="failed",
-            decision="reject",
-            supervisor_validation_replays=[{"command": "git diff --check", "success": False, "exit_code": 2, "reason": "x"}],
-        ),
-        {},
-        "fix_validation",
-        "Fix the failing validation: `git diff --check`.",
-        id="reject-replay",
-    ),
-    pytest.param(
-        make_decision_report(queue_status="failed", decision="stop_failed", dirty_paths_outside_scope=["Makefile"]),
-        {},
-        "fix_scope",
-        "outside the slice's allowed paths: `Makefile`.",
-        id="stop-failed-scope",
-    ),
-    pytest.param(
-        make_evaluation_report(queue_status="failed", decision="reject", out_of_scope_files=["a.txt", "b.txt"]),
-        {},
-        "fix_scope",
-        "`a.txt`, `b.txt`",
-        id="reject-scope",
-    ),
-    pytest.param(
-        make_decision_report(queue_status="failed", decision="stop_failed", missing_manual_proofs=["screenshot"]),
-        {},
-        "provide_proof",
-        "Provide the missing manual proof: `screenshot`.",
-        id="missing-proof",
-    ),
-    pytest.param(
-        make_evaluation_report(queue_status="failed", decision="reject", missing_proof_level=True),
-        {},
-        "provide_proof",
-        "Reach the slice's required proof level.",
-        id="missing-proof-level",
-    ),
-    pytest.param(
-        run_next.make_failure_report(SLICE, "Agent command exited with code 3 for slice x.", 1, 1),
-        {"status": "failed"},
-        "investigate_failure",
-        "Investigate the failure the supervisor reported: Agent command exited with code 3",
-        id="failure-report",
-    ),
-]
 
+def test_the_text_summary_ends_with_the_next_action_the_json_carries(capsys, tmp_path):
+    report = make_decision_report(
+        queue_status="failed",
+        decision="stop_failed",
+        required_validation_failures=["make test"],
+        supervisor_validation_replays=[FAILING_REPLAY],
+    )
+    action = summarize_json(capsys, tmp_path, make_handoff(), report)["next_action"]
 
-@pytest.mark.parametrize(("report", "handoff_overrides", "kind", "phrase"), NEXT_ACTION_CASES)
-def test_next_action_follows_the_report(capsys, tmp_path, report, handoff_overrides, kind, phrase):
-    summary = summarize_json(capsys, tmp_path, make_handoff(**handoff_overrides), report)
-    action = summary["next_action"]
+    code, out, _ = summarize(capsys, "--handoff", str(tmp_path / "handoff.json"), "--report", str(tmp_path / "report.json"))
 
-    assert action["kind"] == kind
-    assert phrase in action["text"]
-    if kind not in ("get_independent_evidence", "queue_stop"):
-        assert "A person" in action["text"]
-    # Never an instruction to start the next slice, whatever the report decided.
-    assert not re.search(r"\b(run|start|launch)\b[^.]*\bnext slice\b", action["text"], re.IGNORECASE)
-    assert "automatically" not in action["text"].lower()
-
-    argv = ["--handoff", str(tmp_path / "handoff.json")] + (["--report", str(tmp_path / "report.json")] if report else [])
-    code, out, _ = summarize(capsys, *argv)
     assert code == 0
+    assert action == {
+        "kind": "fix_validation",
+        "text": "Fix the failing validation: `make test`. A person decides whether to re-queue the slice.",
+    }
     assert out.rstrip("\n").splitlines()[-1] == f"Next action: {action['text']}"
-
-
-def test_many_names_in_a_next_action_are_cut_with_a_count(capsys, tmp_path):
-    failures = [f"make check-{index}" for index in range(8)]
-    report = make_decision_report(queue_status="failed", decision="stop_failed", required_validation_failures=failures)
-
-    text = summarize_json(capsys, tmp_path, make_handoff(), report)["next_action"]["text"]
-
-    assert "`make check-4` (and 3 more)" in text
-    assert "make check-5" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +230,32 @@ def test_long_lists_and_long_text_are_truncated_with_a_count(capsys, tmp_path):
     assert summary["supervisor_evidence"]["validation_replays"]["total"] == 30
     assert len(summary["supervisor_evidence"]["validation_replays"]["items"]) == hs.MAX_LIST_ITEMS
     assert summary["agent_claims"]["summary"].endswith("... [1600 more characters]")
+
+
+def test_text_of_exactly_the_bound_is_kept_whole():
+    assert hs.clip("x" * 400) == "x" * 400
+    assert hs.clip("x" * 401) == "x" * 400 + "... [1 more characters]"
+
+
+def _render(handoff: dict[str, Any], report: dict[str, Any]) -> str:
+    return hs.render_text(hs.build_summary(handoff, "handoff.json", hs.DECISION_REPORT, report, "report.json"))
+
+
+def test_a_list_of_exactly_the_bound_says_nothing_was_cut():
+    def replays(count: int) -> list[policy.ValidationReplayResult]:
+        return [policy.ValidationReplayResult(f"make step-{index}", True, 0, "") for index in range(count)]
+
+    twenty = _render(make_handoff(), make_decision_report(supervisor_validation_replays=replays(20)))
+    assert "    - PASS `make step-19` (exit 0)\n  Required validation failures: none\n" in twenty
+    twenty_one = _render(make_handoff(), make_decision_report(supervisor_validation_replays=replays(21)))
+    assert "    - PASS `make step-19` (exit 0)\n    - ... 1 more not shown\n  Required validation failures: none\n" in twenty_one
+
+    change = {"contract": "C", "before": "old", "after": "new"}
+    proofs = [f"proof-{index}" for index in range(21)]
+    cut = _render(make_handoff(contract_status_changes=[{**change, "proof": proofs}]), make_decision_report())
+    assert f"    - C: old -> new (proof: {', '.join(proofs[:20])}, ... 1 more)\n" in cut
+    none = _render(make_handoff(contract_status_changes=[{**change, "proof": []}]), make_decision_report())
+    assert "    - C: old -> new (proof: none)\n" in none
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +305,7 @@ def test_a_lone_surrogate_is_refused_like_the_supervisor_refuses_it(capsys, tmp_
 
     code, out, err = summarize(capsys, "--handoff", str(handoff_path))
 
-    assert (code, out) == (hs.EX_INPUT, "")
+    assert (code, out) == (2, "")
     assert err.startswith("error: invalid handoff")
     assert unsafe_characters(err) == []
 
@@ -374,7 +317,7 @@ def test_a_path_that_is_not_utf8_is_printed_escaped(capsys, tmp_path):
 
     code, out, err = summarize(capsys, "--handoff", odd)
 
-    assert (code, out) == (hs.EX_INPUT, "")
+    assert (code, out) == (2, "")
     assert "handoff-\\udcff.json" in err
 
     text = hs.render_text(hs.build_summary(make_handoff(), odd))
@@ -389,7 +332,7 @@ def test_an_error_message_cannot_drive_the_terminal_either(capsys, tmp_path):
 
     code, out, err = summarize(capsys, "--handoff", str(EXAMPLE_HANDOFF), "--report", str(report_path))
 
-    assert (code, out) == (hs.EX_INPUT, "")
+    assert (code, out) == (2, "")
     assert err.startswith("error: the report is for slice")
     assert unsafe_characters(err) == []
 
@@ -414,6 +357,13 @@ INVALID_REPORTS = [
         "success",
         id="wrong-type",
     ),
+    # Strict: a number or a boolean written as a string is refused, not coerced.
+    pytest.param(
+        _report_with(changed_file_count="3"), "$.changed_file_count: Input should be a valid integer", id="count-string"
+    ),
+    pytest.param(
+        _report_with(missing_proof_level="true"), "$.missing_proof_level: Input should be a valid boolean", id="bool-string"
+    ),
     pytest.param(make_handoff(), "missing required property", id="a-handoff-passed-as-report"),
     pytest.param(_report_with(slice_id="another-slice"), "the report is for slice 'another-slice'", id="other-slice"),
 ]
@@ -425,7 +375,7 @@ def test_an_invalid_report_is_refused(capsys, tmp_path, payload, message):
 
     code, out, err = summarize(capsys, "--handoff", str(EXAMPLE_HANDOFF), "--report", str(report_path))
 
-    assert (code, out) == (hs.EX_INPUT, "")
+    assert (code, out) == (2, "")
     assert err.startswith("error: ")
     assert message in err
 
@@ -437,7 +387,7 @@ def test_an_invalid_handoff_is_refused(capsys, tmp_path):
 
     code, out, err = summarize(capsys, "--handoff", str(write(tmp_path, "handoff.json", handoff)))
 
-    assert (code, out) == (hs.EX_INPUT, "")
+    assert (code, out) == (2, "")
     assert err.startswith(f"error: invalid handoff {tmp_path / 'handoff.json'}:")
     assert "$: missing required property 'summary'" in err
     assert "$.status:" in err
@@ -464,23 +414,123 @@ def test_an_unreadable_handoff_is_refused(capsys, tmp_path, name, content, messa
 
     code, out, err = summarize(capsys, "--handoff", str(path))
 
-    assert (code, out) == (hs.EX_INPUT, "")
+    assert (code, out) == (2, "")
     assert message in err
 
 
-def test_an_oversized_input_is_refused_before_it_is_parsed(capsys, tmp_path, monkeypatch):
-    monkeypatch.setattr(hs, "MAX_INPUT_BYTES", 64)
+def test_an_input_of_5_mib_is_read_and_one_byte_more_is_refused_before_it_is_parsed(capsys, tmp_path):
+    limit = 5 * 1024 * 1024
+    at_limit = tmp_path / "at-limit.json"
+    at_limit.write_bytes(b"[]" + b" " * (limit - 2))
+    over = tmp_path / "over.json"
+    over.write_bytes(b"[]" + b" " * (limit - 1))
 
-    code, out, err = summarize(capsys, "--handoff", str(EXAMPLE_HANDOFF))
+    code, out, err = summarize(capsys, "--handoff", str(EXAMPLE_HANDOFF), "--report", str(at_limit))
+    assert (code, out) == (2, "")
+    assert err == f"error: invalid report {at_limit}: expected a JSON object\n"
 
-    assert (code, out) == (hs.EX_INPUT, "")
-    assert "handoff is larger than 64 bytes" in err
+    code, out, err = summarize(capsys, "--handoff", str(EXAMPLE_HANDOFF), "--report", str(over))
+    assert (code, out) == (2, "")
+    assert err == f"error: report is larger than 5242880 bytes: {over}\n"
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads a file whatever its mode")
+def test_a_handoff_without_read_permission_is_refused(capsys, tmp_path):
+    path = write(tmp_path, "handoff.json", make_handoff())
+    path.chmod(0)
+    try:
+        code, out, err = summarize(capsys, "--handoff", str(path))
+    finally:
+        path.chmod(0o600)
+
+    assert (code, out) == (2, "")
+    assert err.startswith(f"error: cannot read handoff {path}: ")  # then the system's own wording
 
 
 def test_the_handoff_is_required(capsys):
     with pytest.raises(SystemExit) as stop:
         hs.main([])
     assert stop.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# Text shape
+# ---------------------------------------------------------------------------
+
+
+def test_an_evaluation_summary_reads_in_full():
+    proof = {
+        "proof_type": "screenshot",
+        "path": "proofs/today.png",
+        "commit_sha": HEAD,
+        "created_at": "2026-04-21T15:30:00Z",
+        "slice_id": SLICE_ID,
+        "sha256": "c" * 64,
+    }
+    handoff = make_handoff(provided_proofs=[proof], recommended_next_slice="", recommended_next_reason="")
+    summary = hs.build_summary(handoff, "handoff.json", hs.EVALUATION_REPORT, make_evaluation_report(dry_run=True), "report.json")
+
+    expected = [
+        "Handoff review: today-nonfocus-add-to-focus",
+        "Verification: Independently checked by the supervisor's evaluation report (evaluate_handoff.py). "
+        "The agent's claims are shown separately.",
+        "Handoff: handoff.json",
+        "Report: report.json",
+        "",
+        "Supervisor evidence (independent), from the supervisor's evaluation report (evaluate_handoff.py):",
+        "  Decision: accept (queue status: done)",
+        "  Reason: Historical handoff evaluation passed all checks.",
+        "  Changed files (1):",
+        "    - docs/product/domains/today.md",
+        "  Files touched outside scope: none",
+        "  Changed files outside scope: none",
+        "  Validation replays (1):",
+        "    - PASS `git diff --check` (exit 0)",
+        "  Required validation failures: none",
+        "  Missing manual proofs: none",
+        "  Required proof level: not reported missing",
+        "  Dry run: yes, the queue was not changed",
+        "",
+        "Agent claims (from the handoff: the agent's own account, not verified by this summary):",
+        "  Status: done",
+        "  Summary: Added explicit Add to Focus action for Continue rows that do not already derive from Focus Three ownership.",
+        "  Files touched (2):",
+        "    - owlory_xcode/Owlory/Features/Today/TodayView.swift",
+        "    - docs/product/domains/today.md",
+        "  Validations reported passed (3):",
+        "    - make architecture",
+        "    - make test-domain DOMAIN=today",
+        "    - git diff --check",
+        "  Validations reported failed: none",
+        "  Proof level: domain-tested",
+        "  Missing proof levels (5):",
+        "    - running-app-smoke",
+        "    - flow-verified",
+        "    - screenshot-verified",
+        "    - device-verified",
+        "    - testflight-verified",
+        "  Evidence: provided proofs (1):",
+        f"    - screenshot proofs/today.png at commit {HEAD} (sha256 cccccccccccc..., created 2026-04-21T15:30:00Z)",
+        "  Evidence: contract status changes (1):",
+        "    - Today Continue Add to Focus interaction: Partially implemented -> "
+        "Partially implemented with direct action proof (proof: make test-domain DOMAIN=today)",
+        "  Dirty paths outside scope (reported): none",
+        "  Residual risks (1):",
+        "    - No manual simulator pass for the new interaction",
+        "  Open questions: none",
+        "  Recommended next slice (a recommendation, not a decision): none",
+        "  Verified commit (claimed): none",
+        "  Repository: clean, mirror not-checked, at 2026-04-21T15:30:00Z",
+        "",
+        "Commits:",
+        "  Base: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb (supervisor evaluation report)",
+        "  Head: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (supervisor evaluation report)",
+        "",
+        "Next action: A person reviews and approves this slice's changes. "
+        "The evaluation was a dry run, so the queue was not changed.",
+    ]
+
+    assert hs.render_text(summary) == "\n".join(expected) + "\n"
 
 
 # ---------------------------------------------------------------------------
