@@ -480,7 +480,7 @@ class ArmTests(TrackRTestCase):
         )
         settings = read_json(Path(options["--settings"]))
         self.assertEqual((settings["sandbox"]["enabled"], settings["sandbox"]["failIfUnavailable"]), (True, True))
-        self.assertIn("Edit(.git/**)", settings["permissions"]["deny"])
+        self.assertEqual(settings["permissions"]["deny"][:3], ["Edit(.git/config)", "Edit(.git/hooks/**)", "Edit(.git/info/**)"])
         self.assertNotIn("bypassPermissions", json.dumps(settings) + " ".join(argv))
         self.assertEqual((record["observed_cap_usd"], record["observed_model"]), (4.5, MODEL))
         self.assertTrue(record["presented_as_done"])
@@ -507,8 +507,16 @@ class ArmTests(TrackRTestCase):
 
 
 class GitEscapeTests(TrackRTestCase):
-    def test_both_arms_deny_edits_under_git(self) -> None:
-        self.assertIn("Edit(.git/**)", driver.unbounded_settings()["permissions"]["deny"])
+    def test_u_plus_denies_only_the_guarded_parts_of_git_so_a_chained_commit_works(self) -> None:
+        # Pilot v2 run r1: U+ chained `git add … && git commit …`, which runs inside the sandbox, where
+        # Edit(.git/**) denied .git/index.lock, so U+ could never commit. Only what runs code is denied.
+        deny = driver.unbounded_settings()["permissions"]["deny"]
+        self.assertNotIn("Edit(.git/**)", deny)
+        guarded = [rule for rule in deny if rule.startswith("Edit(.git/")]
+        self.assertEqual(guarded, ["Edit(.git/config)", "Edit(.git/hooks/**)", "Edit(.git/info/**)"])
+        self.assertEqual(guarded, [f"Edit(.git/{part})" if part == "config" else f"Edit(.git/{part}/**)" for part in driver.GIT_GUARDED])
+
+    def test_s_keeps_the_supervisors_own_git_deny(self) -> None:
         profile = runner_profile.choose({}, {})
         settings = runner_profile.slice_settings(
             driver.slice_record(make_task(self.base)), {"supervisor_owned_paths": []}, profile

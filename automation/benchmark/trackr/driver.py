@@ -117,8 +117,14 @@ REQUIRED_CLAUDE_FLAGS = (
 )
 # What a session may not change under .git: code there runs outside every sandbox, with the network.
 GIT_GUARDED = ("config", "hooks", "info")
-# Denied in both arms' settings.
-DENIED_EDITS = ("Edit(.git/**)", "Edit(.claude/**)")
+# Denied in U+'s settings: the guarded parts of .git, not all of it. A chained command such as
+# `git add … && git commit …` doesn't match the sandbox's excludedCommands, so it runs inside the
+# sandbox, and Edit(.git/**) there denied .git/index.lock: in pilot v2 run r1, U+ could never commit.
+# S keeps the supervisor's own Edit(.git/**); its allowlist runs git add and git commit on their own.
+DENIED_EDITS = (
+    *(f"Edit(.git/{part})" if part == "config" else f"Edit(.git/{part}/**)" for part in GIT_GUARDED),
+    "Edit(.claude/**)",
+)
 
 
 @dataclass
@@ -150,9 +156,10 @@ def unbounded_settings() -> dict[str, Any]:
     The shape is ``runner_profile.slice_settings``'s sandbox block, minus the slice allowlist and
     plus ``autoAllowBashIfSandboxed``, so a sandboxed Bash command needs no allow rule. ``git add``
     and ``git commit`` run outside the sandbox, as in the supervised profile, so a write block on
-    ``.git`` can't stop the commit the task asks for. Because they run outside it, edits under
-    ``.git/`` are denied: a planted hook or ``core.fsmonitor`` would otherwise run there, with the
-    network. The network is closed to sandboxed commands and the web tools are denied in both arms.
+    ``.git`` can't stop the commit the task asks for. Chained git commands run inside the sandbox,
+    so it may write ``.git`` there, except ``config``, ``hooks`` and ``info``: a planted hook or
+    ``core.fsmonitor`` would run outside the sandbox, with the network. The driver also compares
+    those three with their setup state after the session (an ``escape_attempt``). The network is closed to sandboxed commands and the web tools are denied in both arms.
     """
     return {
         "permissions": {

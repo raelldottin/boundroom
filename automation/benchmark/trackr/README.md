@@ -165,7 +165,9 @@ profile (`sandbox.PROFILE`; the parameters are the session's own directories):
   `allowed_paths`.
 - **`.git`.** `git add` and `git commit` run outside Claude Code's sandbox, so a session that planted
   a hook or `core.fsmonitor` could run code with the network. To stop that:
-  - both arms' settings deny edits under `.git/`;
+  - S's settings, from the supervisor, deny edits under `.git/`. U+'s deny edits to `.git/config`,
+    `.git/hooks` and `.git/info`: a chained `git add … && git commit …` runs inside Claude Code's
+    sandbox, and denying all of `.git` there blocked every U+ commit in run r1 (see v2.1 below);
   - every git command the driver runs uses `-c core.hooksPath=/dev/null -c core.fsmonitor=false`;
   - after the session, `.git/config`, `.git/hooks` and `.git/info` are compared with their state at
     setup. A change is recorded as an `escape_attempt`, and the oracle never runs that session's code.
