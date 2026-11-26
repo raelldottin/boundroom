@@ -18,7 +18,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Mapping, Optional
 
 LOCK_FILENAME = "jspace.lock.json"
 ROOT_ENV_VAR = "JSPACE_ROOT"
@@ -83,11 +83,24 @@ def checkout_revision(root: Path) -> Optional[str]:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def resolve(root: Optional[Path] = None, lock_path: Optional[Path] = None) -> JSpaceArtifact:
-    """Return the pinned artifact, or raise ``JSpaceUnavailable`` saying exactly what failed."""
+def resolve(
+    root: Optional[Path] = None,
+    lock_path: Optional[Path] = None,
+    *,
+    revision_of: Optional[Callable[[Path], Optional[str]]] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> JSpaceArtifact:
+    """Return the pinned artifact, or raise ``JSpaceUnavailable`` saying exactly what failed.
+
+    ``revision_of`` reads a checkout's revision and ``environ`` supplies ``JSPACE_ROOT`` when no
+    ``root`` is passed. Left out, they are this module's ``checkout_revision`` and ``os.environ``,
+    looked up at call time.
+    """
+    revision_of = revision_of or checkout_revision
+    environ = os.environ if environ is None else environ
     lock = load_lock(lock_path)
 
-    root_value = root if root is not None else os.environ.get(ROOT_ENV_VAR)
+    root_value = root if root is not None else environ.get(ROOT_ENV_VAR)
     if not root_value:
         raise JSpaceUnavailable(f"jspace_unavailable: set {ROOT_ENV_VAR} to a checkout of {lock['source']} at {lock['revision']}")
 
@@ -97,7 +110,7 @@ def resolve(root: Optional[Path] = None, lock_path: Optional[Path] = None) -> JS
 
     # Identity before content: a directory holding the right bytes under the wrong history
     # is still not the revision the run claims to have administered.
-    head = checkout_revision(resolved_root)
+    head = revision_of(resolved_root)
     if head is None:
         raise JSpaceUnavailable(f"jspace_unavailable: {resolved_root} is not a Git checkout, so its revision cannot be verified")
     if head != lock["revision"]:

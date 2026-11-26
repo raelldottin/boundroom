@@ -30,9 +30,10 @@ import contextlib
 import json
 import re
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 CONTROLS_SUFFIX = ".controls.json"
 USAGE_SUFFIX = ".usage.json"
@@ -306,6 +307,56 @@ def _containers_in_window(
     return own, others
 
 
+@dataclass(frozen=True)
+class SessionEvidence:
+    """Everything one session left behind that the diagnosis reads, read once by ``gather_evidence``.
+
+    ``sandbox_receipt`` and ``snapshot`` are kept as parsed, whatever their shape, so a malformed
+    file fails the diagnosis where it always has rather than here.
+    """
+
+    stem: str
+    controls_present: bool
+    transport: Any
+    slice_id: Any
+    usage_report_present: bool
+    log_bytes: Optional[int]
+    events: Optional[list[dict[str, Any]]]
+    ledger: dict[str, Any]
+    sandbox_receipt: Any
+    snapshot: Any
+    credential_pool: Optional[list[dict[str, Any]]]
+
+
+def gather_evidence(sessions_dir: Path, stem: str) -> SessionEvidence:
+    """Every read the diagnosis of one session needs, and no judgement."""
+    sessions_dir = Path(sessions_dir)
+    controls = _load_json(sessions_dir / f"{stem}{CONTROLS_SUFFIX}")
+    usage_report = _load_json(sessions_dir / f"{stem}{USAGE_SUFFIX}")
+    log_path = sessions_dir / f"{stem}{LOG_SUFFIX}"
+    log_bytes = log_path.stat().st_size if log_path.is_file() else None
+    events = _stream_events(sessions_dir / f"{stem}{STREAM_SUFFIX}")
+    hermes_home = (controls or {}).get("hermes_home")
+    return SessionEvidence(
+        stem=stem,
+        controls_present=controls is not None,
+        transport=(controls or {}).get("transport"),
+        slice_id=(controls or {}).get("slice_id") or "",
+        usage_report_present=usage_report is not None,
+        log_bytes=log_bytes,
+        events=events,
+        ledger=read_ledger(hermes_home),
+        sandbox_receipt=_load_json(sessions_dir / f"{stem}{SANDBOX_SUFFIX}"),
+        snapshot=_load_json(sessions_dir / f"{stem}{ACTIVITY_SUFFIX}"),
+        credential_pool=read_credential_pool(hermes_home),
+    )
+
+
+def phase_of(slice_id: str) -> Optional[str]:
+    """The ``:phase`` suffix run_phase writes into the slice id; None when it has no colon."""
+    return slice_id.rsplit(":", 1)[-1] if ":" in slice_id else None
+
+
 def diagnose_session(
     sessions_dir: Path,
     stem: str,
@@ -319,31 +370,35 @@ def diagnose_session(
     ``window_end`` bounds container attribution when there is no phase result to compute it
     from - the next session's launch, say.
     """
-    sessions_dir = Path(sessions_dir)
-    launched, pid = launch_time(stem)
-    controls = _load_json(sessions_dir / f"{stem}{CONTROLS_SUFFIX}")
-    usage_report = _load_json(sessions_dir / f"{stem}{USAGE_SUFFIX}")
-    log_path = sessions_dir / f"{stem}{LOG_SUFFIX}"
-    log_bytes = log_path.stat().st_size if log_path.is_file() else None
-    events = _stream_events(sessions_dir / f"{stem}{STREAM_SUFFIX}")
-    ledger = read_ledger((controls or {}).get("hermes_home"))
-    transport = (controls or {}).get("transport")
-    slice_id = (controls or {}).get("slice_id") or ""
+    return diagnose(gather_evidence(Path(sessions_dir), stem), phase_result, window_end)
+
+
+def diagnose(
+    evidence: SessionEvidence,
+    phase_result: Optional[dict[str, Any]] = None,
+    window_end: Optional[float] = None,
+) -> dict[str, Any]:
+    """``diagnose_session`` on evidence already read: no file, clock or environment is touched."""
+    launched, pid = launch_time(evidence.stem)
+    transport = evidence.transport
+    events = evidence.events
+    ledger = evidence.ledger
+    snapshot = evidence.snapshot
 
     if phase_result is not None and launched is not None:
         window_end = launched + float(phase_result.get("seconds") or 0) + float(phase_result.get("grace_seconds") or 0)
-    containers, foreign = _containers_in_window(_load_json(sessions_dir / f"{stem}{SANDBOX_SUFFIX}"), launched, window_end)
+    containers, foreign = _containers_in_window(evidence.sandbox_receipt, launched, window_end)
 
     missing: list[str] = []
-    if controls is None:
+    if not evidence.controls_present:
         missing.append("controls receipt: run_agent.sh never reached the Hermes launch")
-    if log_bytes is None:
+    if evidence.log_bytes is None:
         missing.append("session log: absent")
-    elif log_bytes == 0:
+    elif evidence.log_bytes == 0:
         missing.append(
             "session log: 0 bytes" + (" - --oneshot writes nothing until the turn returns" if transport == "oneshot" else "")
         )
-    if usage_report is None:
+    if not evidence.usage_report_present:
         missing.append(
             "usage report: absent"
             + (" - --oneshot writes it only when the turn returns" if transport == "oneshot" else " - this transport writes none")
@@ -359,7 +414,6 @@ def diagnose_session(
         missing.append("sandbox observation: no witness receipt, or no launch time to place it")
     if ledger["available"] and not ledger.get("has_activity_description"):
         missing.append("activity description: this state.db predates sessions.last_activity_description")
-    snapshot = _load_json(sessions_dir / f"{stem}{ACTIVITY_SUFFIX}")
     if snapshot is not None and snapshot.get("error"):
         missing.append(f"activity snapshot: {snapshot['error']}")
     elif snapshot is None and phase_result is not None and phase_result.get("returncode") == TIMEOUT_RETURNCODE:
@@ -425,8 +479,8 @@ def diagnose_session(
 
     verdict, explanation = _verdict(phase_result, ledger["available"], events, observed, timeline)
     return {
-        "session": stem,
-        "phase": slice_id.rsplit(":", 1)[-1] if ":" in slice_id else None,
+        "session": evidence.stem,
+        "phase": phase_of(evidence.slice_id),
         "pid": pid,
         "transport": transport,
         "launched_at": datetime.fromtimestamp(launched, timezone.utc).isoformat() if launched is not None else None,
@@ -442,7 +496,7 @@ def diagnose_session(
         ),
         "timeline_seconds": timeline,
         "observed": observed,
-        "credential_pool": read_credential_pool((controls or {}).get("hermes_home")),
+        "credential_pool": evidence.credential_pool,
         "last_persisted_activity": _last_persisted_activity(rows, launched, snapshot),
         "containers": containers,
         "containers_from_other_sessions": foreign,
@@ -580,14 +634,25 @@ def diagnose_sessions(sessions_dir: Path, phases: list[dict[str, Any]]) -> list[
     onto the wrong session. A session with no matching phase is still described.
     """
     sessions_dir = Path(sessions_dir)
-    stems = sorted(path.name[: -len(CONTROLS_SUFFIX)] for path in sessions_dir.glob(f"*{CONTROLS_SUFFIX}"))
+    stems = sorted(controls_stems(sessions_dir))
+    return judge_sessions([gather_evidence(sessions_dir, stem) for stem in stems], phases)
+
+
+def judge_sessions(evidence: Sequence[SessionEvidence], phases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``diagnose_sessions`` on evidence already read, judged in launch order whatever order it comes in.
+
+    A stem starts with its launch time, so sorting by stem is sorting by launch. A session whose
+    slice id names no phase matches no phase - not even a phase record that names none - and the
+    next session's launch bounds its containers.
+    """
     by_phase = {phase.get("phase"): phase for phase in phases}
+    ordered = sorted(evidence, key=lambda session: session.stem)
     records = []
-    for index, stem in enumerate(stems):
-        slice_id = (_load_json(sessions_dir / f"{stem}{CONTROLS_SUFFIX}") or {}).get("slice_id") or ""
-        phase = by_phase.get(slice_id.rsplit(":", 1)[-1]) if ":" in slice_id else None
-        next_launch = launch_time(stems[index + 1])[0] if index + 1 < len(stems) else None
-        records.append(diagnose_session(sessions_dir, stem, phase, window_end=next_launch))
+    for index, session in enumerate(ordered):
+        name = phase_of(session.slice_id)
+        phase = by_phase.get(name) if name is not None else None
+        next_launch = launch_time(ordered[index + 1].stem)[0] if index + 1 < len(ordered) else None
+        records.append(diagnose(session, phase, window_end=next_launch))
     return records
 
 
