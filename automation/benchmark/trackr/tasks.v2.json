@@ -1,0 +1,351 @@
+{
+  "schema": "boundroom.trackr.tasks/2",
+  "spec": "SPEC-012 Track R, pilot v2",
+  "design": "v2.1",
+  "status": "frozen",
+  "selection_rule": {
+    "task_set": "v2: python-semver pull requests merged after the model's training cutoff",
+    "candidates": [
+      516,
+      508,
+      507,
+      489,
+      485,
+      469
+    ],
+    "candidates_chosen_by": "the owner, from a research agent's list (2026-11-25); the rule does not widen the pool",
+    "order": "mergedAt, then number",
+    "keep_if": [
+      "files include at least one tests/test_*.py",
+      "15 or fewer files changed",
+      "not documentation only (some file is neither under docs/ nor a .rst/.md file nor under changelog.d/)",
+      "the merge commit's diff from its first parent is exactly the pull request's file list",
+      "under sandbox-exec, with the setup applied and the harness restored: hidden tests fail or error at base+setup and pass at head+setup",
+      "under sandbox-exec: every required check passes at the setup commit (green base)"
+    ],
+    "setup": "Boundroom 2136eb910780c1e79c6598c84ddf734c95a5217c (v0.5.3 plus #300) synced in by its own Tools/boundroom-sync.sh (--omit benchmark), plus an offline .venv from wheelhouse.v2.json",
+    "base_sha": "the first parent of the squash merge commit",
+    "head_sha": "the squash merge commit",
+    "hidden_tests": "tests/test_*.py files the pull request added or changed; other files it changed under tests/ are installed with them as support files",
+    "oracle": "copy the hidden tests and support files from head_sha into the clone, restore the harness, then, under sandbox-exec: .venv/bin/python -m pytest -q -p no:cacheprovider <hidden tests>. Fails at base: pytest exits 1 or 2. Passes at head: pytest exits 0 having run at least one test.",
+    "green_base_checks_without_a_scope": [
+      "git diff --check",
+      ".venv/bin/python -m pytest -q"
+    ],
+    "count": 6
+  },
+  "arms": {
+    "U+": "the task statement plus the allowed paths, required checks and file budget in S's exact words; arm U's settings; no gates",
+    "S": "the supervisor (run_next.py --single-slice, bounded profile)"
+  },
+  "model": "claude-opus-5-5",
+  "provenance": {
+    "target": "https://github.com/python-semver/python-semver.git",
+    "target_license": "BSD-3-Clause",
+    "candidates_sha256": "108fcb99a04a40f26e2376426a7d8e5a16ddc99590296201d4a62b600183d1fd",
+    "selected_at": "2026-11-25T11:31:46Z",
+    "selected_by": "automation/benchmark/trackr/select.py",
+    "selector_commit": "da61a67eddf85e94eeb1bc421b077ad0ac9e825b",
+    "sync": {
+      "release": "2136eb910780c1e79c6598c84ddf734c95a5217c",
+      "script": "Tools/boundroom-sync.sh",
+      "omit": [
+        "benchmark"
+      ],
+      "files": 58,
+      "sha256": "2aca76a5825a5945c2219ea0371df34236cfd99c4f16f3b90bdf703e4e426bad"
+    },
+    "model": "claude-opus-5-5",
+    "python": "3.12.16",
+    "uv": "uv 0.13.9 (Homebrew 2026-11-17 aarch64-apple-darwin)",
+    "platform": "Darwin arm64",
+    "containment": "/usr/bin/sandbox-exec (see sandbox.py)",
+    "model_sessions": 0
+  },
+  "scope_instructions": "Scopes are written by blinded agents, one per task, by the owner's decision (2026-11-25), not by a person. Each reads only the task's linked issue, or the pull request's title where no issue is linked, never the solution or solutions.v2.json, and fills in task_statement, allowed_paths, required_validations and max_files_changed. The checks available in the target are: git diff --check; .venv/bin/python -m pytest -q. The writer records by, when, inputs (saying no diff was seen) and leakage_ignored in scope_provenance.",
+  "tasks": [
+    {
+      "id": "pr469",
+      "number": 469,
+      "pr_title": "fix: next_version should bump version for build-only versions",
+      "linked_issue": null,
+      "scope_source": "the pull request's title only",
+      "base_sha": "a8bb4f89fc010b367d0925dc4da72c883d2d15d3",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "Version.next_version should bump the version for build-only versions.\n\nProblem: when a version carries only build metadata (no prerelease part), Version.next_version does not move it to a higher version, so the result is not the next version as its name says. Per the title, next_version should bump the version in this case. (The input gives only a title, so it has no concrete example; for illustration, calling next_version on something like \"1.2.3+build.1\" should produce a version that is higher than 1.2.3, not the same one.)\n\nDone looks like:\n- next_version bumps the version when the input version has build metadata but no prerelease, so the result is greater than the original version.\n- Existing next_version behaviour for versions with a prerelease or without build metadata stays the same.\n- Add tests that show the fix (they fail before the change and pass after it).\n- Add a changelog fragment in changelog.d/ (pr469.bugfix.rst, since there is no issue number).",
+      "allowed_paths": [
+        "src/semver/version.py",
+        "tests/",
+        "changelog.d/"
+      ],
+      "required_validations": [
+        "git diff --check",
+        ".venv/bin/python -m pytest -q"
+      ],
+      "max_files_changed": 4,
+      "scope_provenance": {
+        "by": "claude-code (for raelldottin): one blinded subagent per task, workflow run wf_b91d9c76-a0e",
+        "when": "2026-11-25",
+        "inputs": "the task's issue or PR title only (scopes-v2/pr469.desc.md) and a file listing of src/semver/, tests/, changelog.d/ and docs/usage/ at this task's own base commit; no diff, solution or later commit; two Read calls",
+        "leakage_ignored": "none",
+        "owner_decision": "agent-written scopes, by the owner's decision on 2026-11-25",
+        "rerun": "a first round (wf_dd87cbf4-363) was discarded unused: every writer got one listing from #516's base, which showed older tasks files their own fixes add (tests/test_issue484.py for #485). This round gives each writer its own base's listing."
+      },
+      "required_proof_level": "domain-tested",
+      "scope_notes": "The only input was the PR title. next_version is a Version method, so src/semver/version.py is the likely source file. The tests probably go in tests/test_bump.py, or wherever the existing next_version tests are. Budget: 1 source + 1 test + 1 fragment, plus 1 file of slack (for example a second test file, or a docs/usage example if a doctest needs to change). The exact bumped result for a build-only version, such as which part gets bumped and whether the build metadata is kept or dropped, is not in the input. The implementer has to decide it from next_version's existing semantics and docstring. docs/usage/ is not in scope because the input says nothing about documented behaviour."
+    },
+    {
+      "id": "pr485",
+      "number": 485,
+      "pr_title": "Fix #484: Increment old-style prerelease with dot",
+      "linked_issue": {
+        "number": 484,
+        "title": "New prerelease bump behaviour breaks consistency with old RC numbering",
+        "body": "### Which version of Python is the problem with?\n\n3.12\n\n### What semver version are you using?\n\n3.1.0\n\n### What OS are you using? (Add more in the Environment section)\n\nLinux\n\n### Situation\n\n#462 introduced a change to how prerelease versions are incremented. However, for existing automations using semver, this change can cause issues by reverting the prerelease version to an earlier number.\n\nAs an example adapted from a real situation found in production, we have a version string created from the previous semver release (version 3.0.4) which looks something like \"0.1.2-rc3\". \n```Pycon\n>>> import semver\n>>> v = semver.Version.parse(\"0.1.2-rc3\")\n>>> v.next_version(\"prerelease\")\nVersion(major=0, minor=1, patch=2, prerelease='rc.1', build=None)\n```\n\nThe example above sets the RC version backwards from version 3 to version 1, which can break existing CI automations which expect strictly increasing RC numbers.\n\n### How to reproduce\n\nExample snippet:\n\n```Pycon\n>>> import semver\n>>> v = semver.Version.parse(\"0.1.2-rc3\")\n>>> v.next_version(\"prerelease\")\nVersion(major=0, minor=1, patch=2, prerelease='rc.1', build=None)\n```\n\n### Expected behavior\n\nRC numbers created with the default settings should not ever decrease due to an internal API change. The expected output would be either \"0.1.2-rc4\" or \"0.1.2-rc.4\".\n\n### Environment\n\n_No response_",
+        "url": "https://github.com/python-semver/python-semver/issues/484",
+        "link": "the pull request's title"
+      },
+      "scope_source": "the linked issue",
+      "base_sha": "f53d13d13814a180a464763d6363bacb8a9f6c7f",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "Prerelease bump moves RC numbers backwards for prerelease tags without a dot (issue #484).\n\n#462 changed how prerelease versions are incremented. With semver 3.1.0 (Python 3.12, Linux), bumping a version string made under the old behaviour (semver 3.0.4) resets the prerelease number to an earlier value:\n\n>>> import semver\n>>> v = semver.Version.parse(\"0.1.2-rc3\")\n>>> v.next_version(\"prerelease\")\nVersion(major=0, minor=1, patch=2, prerelease='rc.1', build=None)\n\nThe RC number drops from 3 to 1. That breaks CI automations that expect RC numbers to keep going up.\n\nExpected: with the default settings, a prerelease bump must never lower the existing RC number. For \"0.1.2-rc3\", next_version(\"prerelease\") should return either \"0.1.2-rc4\" or \"0.1.2-rc.4\".\n\nDone when:\n- next_version(\"prerelease\") (and the prerelease bump behind it) continues from the existing number in a prerelease like \"rc3\" and never lowers it;\n- you add tests that show the fix, including the \"0.1.2-rc3\" example from the issue;\n- you add a changelog fragment changelog.d/484.bugfix.rst;\n- the existing tests still pass.",
+      "allowed_paths": [
+        "src/semver/version.py",
+        "tests/",
+        "changelog.d/",
+        "docs/usage/increase-parts-of-a-version_prereleases.rst"
+      ],
+      "required_validations": [
+        "git diff --check",
+        ".venv/bin/python -m pytest -q"
+      ],
+      "max_files_changed": 4,
+      "scope_provenance": {
+        "by": "claude-code (for raelldottin): one blinded subagent per task, workflow run wf_b91d9c76-a0e",
+        "when": "2026-11-25",
+        "inputs": "the task's issue or PR title only (scopes-v2/pr485.desc.md) and a file listing of src/semver/, tests/, changelog.d/ and docs/usage/ at this task's own base commit; no diff, solution or later commit; two Read calls",
+        "leakage_ignored": "none",
+        "owner_decision": "agent-written scopes, by the owner's decision on 2026-11-25",
+        "rerun": "a first round (wf_dd87cbf4-363) was discarded unused: every writer got one listing from #516's base, which showed older tasks files their own fixes add (tests/test_issue484.py for #485). This round gives each writer its own base's listing."
+      },
+      "required_proof_level": "domain-tested",
+      "scope_notes": "The issue does not name a source file. src/semver/version.py is the most plausible one, because it holds Version.next_version and the prerelease bump. tests/ is open because the issue does not say which test file. test_bump.py is the likely one. The prerelease docs page is allowed only in case the documented bump examples need to match the fixed behaviour; changing it is optional. Budget: 1 source file + 1 test file + 1 fragment + 1 file of slack, which also covers the optional docs file. The issue accepts either \"rc4\" or \"rc.4\" as the result, so the scope does not pick an output format."
+    },
+    {
+      "id": "pr489",
+      "number": 489,
+      "pr_title": "fix: validate and match prerelease token prefixes",
+      "linked_issue": null,
+      "scope_source": "the pull request's title only",
+      "base_sha": "1d515915d50b31f23fd1fb0f572ef608453e80e3",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "Prerelease token prefixes are not validated or matched correctly when bumping a prerelease (title: \"fix: validate and match prerelease token prefixes\"). When a caller passes a prerelease token, for example `Version.bump_prerelease(token=...)` or `next_version(\"prerelease\", prerelease_token=...)`, the library should check that the token is a valid prerelease prefix. It should also match that prefix against the version's existing prerelease, so a valid token is used consistently and an invalid one is rejected instead of producing a malformed or unexpected prerelease. The input is only the PR title. It gives no example, and it does not say which token values count as invalid or what error is raised. The maintainer must define those cases in the tests, and the fix must fit the existing token validation behaviour in the library. Done means: prerelease token prefixes are validated, and bumping matches the existing prerelease prefix correctly; tests show the fix (valid and invalid tokens, and both a matching and a non-matching existing prerelease); existing tests still pass; and a changelog fragment is added in changelog.d/ (pr489.bugfix.rst, since there is no issue number).",
+      "allowed_paths": [
+        "src/semver/version.py",
+        "tests/",
+        "changelog.d/"
+      ],
+      "required_validations": [
+        "git diff --check",
+        ".venv/bin/python -m pytest -q"
+      ],
+      "max_files_changed": 4,
+      "scope_provenance": {
+        "by": "claude-code (for raelldottin): one blinded subagent per task, workflow run wf_b91d9c76-a0e",
+        "when": "2026-11-25",
+        "inputs": "the task's issue or PR title only (scopes-v2/pr489.desc.md) and a file listing of src/semver/, tests/, changelog.d/ and docs/usage/ at this task's own base commit; no diff, solution or later commit; two Read calls",
+        "leakage_ignored": "none",
+        "owner_decision": "agent-written scopes, by the owner's decision on 2026-11-25",
+        "rerun": "a first round (wf_dd87cbf4-363) was discarded unused: every writer got one listing from #516's base, which showed older tasks files their own fixes add (tests/test_issue484.py for #485). This round gives each writer its own base's listing."
+      },
+      "required_proof_level": "domain-tested",
+      "scope_notes": "The input is only the PR title. The prerelease bump logic lives in src/semver/version.py (Version.bump_prerelease / next_version), so that is the only source file allowed. The tests most likely go in tests/test_bump.py or tests/test_bump_token_validation.py, so the whole tests/ directory is allowed. The budget is 1 source file + up to 2 test files + 1 fragment = 4. docs/usage/increase-parts-of-a-version_prereleases.rst is left out because the title does not say documented behaviour changes. The fragment is named pr489.bugfix.rst because no issue number is given."
+    },
+    {
+      "id": "pr508",
+      "number": 508,
+      "pr_title": "Use the integer index protocol for Version subscripts",
+      "linked_issue": null,
+      "scope_source": "the pull request's title only",
+      "base_sha": "f3c7138120d7f49e190bd7c555c6e7eb155b482d",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "Use the integer index protocol for Version subscripts.\n\nSubscripting a semver Version (for example `Version.parse(\"1.2.3\")[0]`) should accept index values through Python's integer index protocol (objects that implement `__index__`), not only plain `int` instances. Indexing with a plain int must keep working as it does today.\n\nDone when:\n- Version subscripts accept index values through the integer index protocol;\n- tests show the fix: an index object that implements `__index__` (but is not an `int`) works the same way as the equivalent plain int, and the existing indexing tests still pass;\n- a changelog fragment is added in changelog.d/ (pr508.<type>.rst, since there is no issue number), following changelog.d/README.rst;\n- `git diff --check` and the test suite pass.",
+      "allowed_paths": [
+        "src/semver/version.py",
+        "tests/",
+        "changelog.d/",
+        "docs/usage/access-parts-through-index.rst"
+      ],
+      "required_validations": [
+        "git diff --check",
+        ".venv/bin/python -m pytest -q"
+      ],
+      "max_files_changed": 4,
+      "scope_provenance": {
+        "by": "claude-code (for raelldottin): one blinded subagent per task, workflow run wf_b91d9c76-a0e",
+        "when": "2026-11-25",
+        "inputs": "the task's issue or PR title only (scopes-v2/pr508.desc.md) and a file listing of src/semver/, tests/, changelog.d/ and docs/usage/ at this task's own base commit; no diff, solution or later commit; two Read calls",
+        "leakage_ignored": "none",
+        "owner_decision": "agent-written scopes, by the owner's decision on 2026-11-25",
+        "rerun": "a first round (wf_dd87cbf4-363) was discarded unused: every writer got one listing from #516's base, which showed older tasks files their own fixes add (tests/test_issue484.py for #485). This round gives each writer its own base's listing."
+      },
+      "required_proof_level": "domain-tested",
+      "scope_notes": "The input is the PR title only. The \"integer index protocol\" is read as Python's `__index__` / `operator.index` protocol. Subscripting is implemented by the Version class in src/semver/version.py, and tests/test_index.py is the natural home for the new tests. docs/usage/access-parts-through-index.rst documents index access, so it is allowed in case the documented behaviour needs a note, but it is optional. Budget: 1 source file + 1 test file + 1 fragment + 1 file of slack (for the optional doc). The fragment name is assumed to be pr508.<type>.rst because no issue is given. The title doesn't say whether this is a bugfix or a feature, so the fragment type is left to the implementer. The title says nothing about slices, negative indices, bool, or which errors are raised for invalid indices, so those behaviours are left unchanged and unspecified."
+    },
+    {
+      "id": "pr507",
+      "number": 507,
+      "pr_title": "Deprecate cross-type Version equality in semver 3",
+      "linked_issue": {
+        "number": 506,
+        "title": "Version equality with strings and tuples violates the hash contract",
+        "body": "### Which version of Python is the problem with?\n\n3.14\n\n### What semver version are you using?\n\n3.1.0 (main source)\n\n### What OS are you using? (Add more in the Environment section)\n\nWindows\n\n### Situation\n\n`Version.parse(\"1.2.3\")` compares equal to both the string `\"1.2.3\"` and tuple `(1, 2, 3)`, but its hash differs from theirs. Looking up an equal string or tuple in a set/dict keyed by the `Version` fails. String equality is documented in `docs/usage/determine-version-equality.rst`; `Version` is also documented as usable as a dict key.\n\n### How to reproduce\n\n```python\nfrom semver import Version\nv = Version.parse(\"1.2.3\")\nprint(v == \"1.2.3\", \"1.2.3\" in {v}, {v: \"hit\"}.get(\"1.2.3\"))\nprint(v == (1, 2, 3), (1, 2, 3) in {v})\n```\n\nOutput on `main` commit `f3c7138120d7f49e190bd7c555c6e7eb155b482d`:\n\n```text\nTrue False None\nTrue False\n```\n\n### Expected behavior\n\nPython requires equal hashable objects to have equal hashes. Either an equal string/tuple should find the `Version` key, or cross-type equality should be reconsidered so the equality/hash contract holds. `Version.__hash__` currently hashes its version-parts tuple, which cannot match both the equal string and tuple hashes.\n\n### Environment\n\nPython 3.14.8 on Windows/amd64; reproduced from the current repository source at `f3c7138120d7f49e190bd7c555c6e7eb155b482d`.",
+        "url": "https://github.com/python-semver/python-semver/issues/506",
+        "link": "'Relates to' in the pull request's body"
+      },
+      "scope_source": "the linked issue",
+      "base_sha": "b6e83e3e40d3a7570386e8d694ae8011477a55c1",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "Issue #506: Version equality with strings and tuples violates Python's hash contract.\n\nProblem: `Version.parse(\"1.2.3\")` compares equal to the string \"1.2.3\" and to the tuple (1, 2, 3), but its hash is different from theirs. Python requires equal hashable objects to have equal hashes, so looking up an equal string or tuple in a set or dict keyed by the `Version` fails. String equality is documented in docs/usage/determine-version-equality.rst, and `Version` is also documented as usable as a dict key.\n\nReproduction (on main):\n\n    from semver import Version\n    v = Version.parse(\"1.2.3\")\n    print(v == \"1.2.3\", \"1.2.3\" in {v}, {v: \"hit\"}.get(\"1.2.3\"))\n    print(v == (1, 2, 3), (1, 2, 3) in {v})\n\nCurrent output:\n\n    True False None\n    True False\n\nExpected: the equality/hash contract holds for `Version`. The issue accepts either fix: make an equal string or tuple find the `Version` key, or reconsider cross-type equality so that objects which compare equal always hash equal. The issue notes that `Version.__hash__` currently hashes its version-parts tuple, and one hash cannot match both the equal string's hash and the equal tuple's hash.\n\nDone when:\n- For every type `Version` compares equal to, `a == b` implies `hash(a) == hash(b)`, or the equality is changed so the contract holds.\n- Add tests that show the fix, covering the string and tuple cases from the reproduction (equality, set membership, dict lookup).\n- If documented equality behaviour changes, update docs/usage/determine-version-equality.rst to match.\n- Add a changelog fragment in changelog.d/ named 506.<type>.rst (for example 506.bugfix.rst), following changelog.d/README.rst.\n- Existing tests still pass.",
+      "allowed_paths": [
+        "src/semver/version.py",
+        "tests/",
+        "changelog.d/",
+        "docs/usage/determine-version-equality.rst"
+      ],
+      "required_validations": [
+        "git diff --check",
+        ".venv/bin/python -m pytest -q"
+      ],
+      "max_files_changed": 5,
+      "scope_provenance": {
+        "by": "claude-code (for raelldottin): one blinded subagent per task, workflow run wf_b91d9c76-a0e",
+        "when": "2026-11-25",
+        "inputs": "the task's issue or PR title only (scopes-v2/pr507.desc.md) and a file listing of src/semver/, tests/, changelog.d/ and docs/usage/ at this task's own base commit; no diff, solution or later commit; two Read calls",
+        "leakage_ignored": "none",
+        "owner_decision": "agent-written scopes, by the owner's decision on 2026-11-25",
+        "rerun": "a first round (wf_dd87cbf4-363) was discarded unused: every writer got one listing from #516's base, which showed older tasks files their own fixes add (tests/test_issue484.py for #485). This round gives each writer its own base's listing."
+      },
+      "required_proof_level": "domain-tested",
+      "scope_notes": "The input names Version.__hash__ and Version equality, both in src/semver/version.py. The doc file is allowed because the issue cites documented string equality and dict-key use, and one acceptable fix is to change cross-type equality. Budget: 1 source file, 1 test file, 1 doc, 1 fragment, plus 1 file of slack. The issue leaves the fix open (match the hashes or change the equality), so the scope does not pick one. Fragment number: issue #506."
+    },
+    {
+      "id": "pr516",
+      "number": 516,
+      "pr_title": "Fix hash contract: equal Versions must hash equal (#515)",
+      "linked_issue": {
+        "number": 515,
+        "title": "Equal Version objects can have different hashes (zero-padded prerelease)",
+        "body": "### Which version of Python is the problem with?\r\n\r\n3.13\r\n\r\n### What semver version are you using?\r\n\r\n3.1.2 (also reproduced on `master`)\r\n\r\n### What OS are you using? (Add more in the Environment section)\r\n\r\nWindows (platform-independent)\r\n\r\n### Situation\r\n\r\nTwo `Version` objects that compare equal can have different hashes when a numeric\r\nprerelease identifier is zero-padded. This violates Python's requirement that\r\n`a == b` implies `hash(a) == hash(b)`, breaking `set`/`dict` behavior even when\r\nonly `Version` objects are involved.\r\n\r\nThis is related to #506 (cross-type hash contract), but is a distinct, same-type\r\nviolation: no `str`/`tuple` comparison is involved, so it can be fixed without\r\ntouching documented cross-type equality.\r\n\r\n### How to reproduce\r\n\r\n```python\r\nfrom semver import Version\r\n\r\na = Version(1, 2, 3, prerelease=\"007\")\r\nb = Version(1, 2, 3, prerelease=\"7\")\r\n\r\nprint(a == b)              # True\r\nprint(hash(a) == hash(b))  # False  <-- inconsistent\r\n\r\nprint({a, b})              # {1.2.3-007, 1.2.3-7}: two \"equal\" items in one set\r\nprint(b in {a})            # False, despite a == b\r\nprint({a: \"x\"}.get(b))     # None\r\n```\r\n\r\nOutput:\r\n\r\n```text\r\nTrue\r\nFalse\r\n{Version(major=1, minor=2, patch=3, prerelease='007', build=None),\r\n Version(major=1, minor=2, patch=3, prerelease='7', build=None)}\r\nFalse\r\nNone\r\n```\r\n\r\nRoot cause: `__eq__` -> `compare()` -> `_nat_cmp` normalizes leading zeros\r\n(`identifier.lstrip(\"0\") or \"0\"`), so `\"007\"` and `\"7\"` get the same comparison\r\nkey `(0, 1, \"7\")`. `__hash__` hashes `self.to_tuple()[:4]`, which keeps the raw\r\nprerelease string, so the hashes differ.\r\n\r\nThe state is only reachable because `Version.__init__` accepts\r\n`prerelease=\"007\"` unvalidated, while `Version.parse(\"1.2.3-007\")` correctly\r\nraises `ValueError` (SemVer 2.0.0 spec section 9 forbids leading zeros in\r\nnumeric identifiers).\r\n\r\n### Expected behavior\r\n\r\n`hash(a) == hash(b)` whenever `a == b`; `{a, b}` has length 1; dict lookups hit.\r\n\r\nPossible fixes, either resolves it:\r\n\r\n1. Normalize the prerelease inside `__hash__` using the same `prerelease_key`\r\n   logic as `_nat_cmp`.\r\n2. Reject leading-zero numeric prerelease identifiers in `__init__`, matching\r\n   `parse`'s strictness (breaking change).\r\n\r\n### Environment\r\n\r\nsemver 3.1.2 from PyPI, CPython 3.13 on Windows/amd64; `__hash__` and\r\n`_nat_cmp` are identical on current `master`.\r\n",
+        "url": "https://github.com/python-semver/python-semver/issues/515",
+        "link": "GitHub closing reference"
+      },
+      "scope_source": "the linked issue",
+      "base_sha": "49a14e0872c877ae20fdcaa207a25975173ad14b",
+      "scope_status": "new: needs a blinded scope",
+      "task_statement": "Equal Version objects can have different hashes when a numeric prerelease identifier is zero-padded (issue #515).\n\nPython requires that a == b implies hash(a) == hash(b). Version breaks that rule even when only Version objects are compared:\n\n```python\nfrom semver import Version\na = Version(1, 2, 3, prerelease=\"007\")\nb = Version(1, 2, 3, prerelease=\"7\")\na == b              # True\nhash(a) == hash(b)  # False\n{a, b}              # two \"equal\" items in one set\nb in {a}            # False\n{a: \"x\"}.get(b)     # None\n```\n\nCause, as the issue reports it: equality goes through compare(), and its natural comparison strips leading zeros from numeric prerelease identifiers, so \"007\" and \"7\" get the same comparison key. __hash__ hashes the raw prerelease string, so the hashes differ. Version.parse(\"1.2.3-007\") already raises ValueError (SemVer 2.0.0 section 9 forbids leading zeros), but Version.__init__ accepts prerelease=\"007\" without checking it.\n\nThe issue suggests two fixes: (1) normalize the prerelease in __hash__ the same way comparison does, or (2) reject leading-zero numeric prerelease identifiers in __init__, as parse does. Option 2 is a breaking change. This is separate from #506 (hashes across types). The fix must not change the documented equality between Version and str or tuple.\n\nDone when:\n- hash(a) == hash(b) whenever two Version objects compare equal, including when a prerelease is zero-padded; {a, b} has length 1; dict and set lookups with an equal Version find the entry.\n- Add tests that show the fix, using the example above (equal hashes, set length 1, membership and dict lookup).\n- Add a changelog fragment in changelog.d/ named 515.<type>.rst.\n- Existing tests still pass.",
+      "allowed_paths": [
+        "src/semver/version.py",
+        "tests/",
+        "changelog.d/"
+      ],
+      "required_validations": [
+        "git diff --check",
+        ".venv/bin/python -m pytest -q"
+      ],
+      "max_files_changed": 4,
+      "scope_provenance": {
+        "by": "claude-code (for raelldottin): one blinded subagent per task, workflow run wf_b91d9c76-a0e",
+        "when": "2026-11-25",
+        "inputs": "the task's issue or PR title only (scopes-v2/pr516.desc.md) and a file listing of src/semver/, tests/, changelog.d/ and docs/usage/ at this task's own base commit; no diff, solution or later commit; two Read calls",
+        "leakage_ignored": "none. The issue's own root-cause analysis and its two proposed fixes are part of the input, so they are kept. Nothing from the actual PR #516 solution was available.",
+        "owner_decision": "agent-written scopes, by the owner's decision on 2026-11-25",
+        "rerun": "a first round (wf_dd87cbf4-363) was discarded unused: every writer got one listing from #516's base, which showed older tasks files their own fixes add (tests/test_issue484.py for #485). This round gives each writer its own base's listing."
+      },
+      "required_proof_level": "domain-tested",
+      "scope_notes": "Version.__hash__, compare() and _nat_cmp all live in src/semver/version.py, the only source file needed. Budget: 1 source file, 1 test file (a new tests/test_issue515.py, or an addition to tests/test_semver.py or tests/test_compare.py), 1 fragment, plus 1 file of slack. Leave docs/usage/ out of scope: the fix should keep the documented behaviour unchanged. If the implementer picks option 2 (rejecting the value in __init__), that is a breaking change. Name the fragment type to match, and the maintainer might then want docs/usage/create-a-version.rst updated, which would mean widening the scope. Option 1 (normalizing in the hash) is the non-breaking route."
+    }
+  ],
+  "audit": [
+    {
+      "number": 469,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 485,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 489,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 508,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 507,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    },
+    {
+      "number": 516,
+      "decision": "kept",
+      "reasons": [
+        "passes every check"
+      ]
+    }
+  ],
+  "frozen_at": "2026-11-26",
+  "amendments": [
+    {
+      "date": "2026-11-26",
+      "by": "the owner (decision), recorded by the agent",
+      "after_sessions": 6,
+      "change": "Arm U+ denies edits only to .git/config, .git/hooks/** and .git/info/**, not .git/**.",
+      "reason": "In run r1, U+ chained `git add … && git commit …`. A chained command doesn't match the sandbox's excludedCommands, so it ran inside the sandbox, where Edit(.git/**) denied .git/index.lock, and U+ committed nothing in any of its 3 sessions. S was unaffected: its dontAsk allowlist runs git on its own. A $0.10 probe with real Claude Code showed the narrowed rule lets a chained commit through and still denies writes to .git/hooks and .git/config. S keeps the supervisor's own Edit(.git/**)."
+    },
+    {
+      "date": "2026-11-26",
+      "by": "the owner (decision), recorded by the agent",
+      "after_sessions": 6,
+      "change": "Arm S runs Boundroom 2136eb910780c1e79c6598c84ddf734c95a5217c (main at #300's merge: v0.5.3 plus #300) instead of the v0.5.3 release commit b193297829c68d2243e5e32d1517cf0b51568813.",
+      "reason": "In run r1, v0.5.3 failed pr485's S session, whose fix was in scope and passed the hidden tests, because its handoff listed the supervisor's own queue write (automation/queue/slices.json) in dirty_paths_outside_scope, as base.md asks. #300 fixes that. The sandboxed oracle and green-base checks were rerun with the new sync: 6 of 6 pass, and the gates still reject the same 2 human solutions (pr469, pr516)."
+    }
+  ],
+  "void_runs": [
+    {
+      "run": "r1",
+      "started_at": "2026-11-26T09:02:36Z",
+      "model_sessions": 6,
+      "completed": 5,
+      "interrupted": 1,
+      "cost_usd": 2.65,
+      "stopped_by": "the agent, after finding both defects above",
+      "reason": "Both defects biased the result, one against each arm, so none of its sessions is used. The record is kept outside the repository at the run's output directory, and on #297."
+    }
+  ],
+  "budget": {
+    "total_usd": 60.0,
+    "spent_before_v2_1_usd": {
+      "v1": 3.9,
+      "v2_r1": 2.65,
+      "sandbox_probe": 0.1
+    },
+    "v2_1_budget_total_usd": 53.34
+  }
+}
