@@ -127,14 +127,17 @@ class FileModeTests(ExporterCase):
         self.assertEqual("S-1", by_name["claim"]["attributes"]["slice_id"])
 
     def test_a_file_dir_inside_the_repository_is_refused(self) -> None:
-        inside = self.settings(telemetry="file", telemetry_file_dir=str(REPO_ROOT / "spans"))
+        spans = REPO_ROOT / f"spans-never-written-{os.getpid()}"
+        # Whatever a regression writes there is removed, so it can't outlive this test.
+        self.addCleanup(shutil.rmtree, spans, ignore_errors=True)
+        inside = self.settings(telemetry="file", telemetry_file_dir=str(spans))
         handle = telemetry.configure(inside, repo_root=REPO_ROOT, run_id="r")
         self.assertFalse(handle.enabled)
         self.assertIn("outside the repository", handle.messages[0])
-        required = self.settings(telemetry="file", telemetry_file_dir=str(REPO_ROOT / "spans"), telemetry_required=True)
+        required = self.settings(telemetry="file", telemetry_file_dir=str(spans), telemetry_required=True)
         with self.assertRaises(telemetry.TelemetryRefused):
             telemetry.configure(required, repo_root=REPO_ROOT, run_id="r")
-        self.assertFalse((REPO_ROOT / "spans").exists())
+        self.assertFalse(spans.exists())
 
     def test_required_checks_the_file_dir_is_writable_before_starting(self) -> None:
         blocked = self.tmp / "not-a-dir"

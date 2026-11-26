@@ -12,7 +12,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
+import os
 import re
+import shutil
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -253,10 +255,14 @@ class TestTheGenerator:
         assert written.read_text(encoding="utf-8") == "# EOF\n", "check writes nothing"
 
     def test_a_run_recorded_inside_the_repository_stops_the_generator(self):
-        inside = REPO_ROOT / "telemetry-sample-never-written"
-        with pytest.raises(SystemExit, match="telemetry didn't start"):
-            generator.record(generator.Run("sync", "ok", 1), "inside", inside)
-        assert not inside.exists()
+        inside = REPO_ROOT / f"telemetry-sample-never-written-{os.getpid()}"
+        try:
+            with pytest.raises(SystemExit, match="telemetry didn't start"):
+                generator.record(generator.Run("sync", "ok", 1), "inside", inside)
+            assert not inside.exists()
+        finally:
+            # Whatever a regression writes there is removed, so it can't outlive this test.
+            shutil.rmtree(inside, ignore_errors=True)
 
     def test_a_metric_telemetry_couldnt_record_stops_the_generator(self):
         broken = generator.Run("sync", "ok", 1, changes={"synced": "not a number"})  # type: ignore[dict-item]
