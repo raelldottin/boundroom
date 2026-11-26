@@ -178,13 +178,15 @@ def run(
     dry_run: bool = True,
     env: Optional[dict[str, str]] = None,
     flags: tuple[str, ...] = (),
+    telemetry_off: bool = True,
 ) -> Result:
-    """Write *document* to *handoff_path* and run the CLI on it, with *flags* added."""
+    """Write *document* to *handoff_path* and run the CLI on it, with *flags* added and, unless
+    *telemetry_off* is False, telemetry turned off."""
     base = base or repo.base
     handoff_path.parent.mkdir(parents=True, exist_ok=True)
     handoff_path.write_text(handoff_text(document), encoding="utf-8")
     argv = ["--slice-id", slice_id, "--handoff", str(handoff_path), "--base-sha", base, "--head-sha", head]
-    argv += ["--queue", queue, "--no-telemetry", *flags] + (["--dry-run"] if dry_run else [])
+    argv += ["--queue", queue, *(["--no-telemetry"] if telemetry_off else []), *flags] + (["--dry-run"] if dry_run else [])
     completed = subprocess.run(
         [sys.executable, str(repo.path / EVALUATE_HANDOFF), *argv],
         cwd=repo.path,  # manual proofs are looked up under the working directory
@@ -440,6 +442,25 @@ class TestExitCodes:
         assert (result.code, result.report) == (78, None)
         assert re.search(r"^stop: telemetry: .*required", result.stderr, re.MULTILINE), result.stderr
         assert (repo.path / QUEUE).read_bytes() == before
+
+    def test_a_required_telemetry_destination_that_cannot_be_used_is_refused(self, tmp_path):
+        # File mode with its directory inside the repository: the exporter can't use it, and
+        # required telemetry turns that into a refusal, offline.
+        repo = Repo(tmp_path / "repo")
+        [head] = repo.commits(({"docs/a.md": "a\n"}, None))
+        before = (repo.path / QUEUE).read_bytes()
+        flags = ("--telemetry", "file", "--telemetry-file-dir", str(repo.path / "spans"), "--telemetry-required")
+        result = run(repo, tmp_path / "h.json", handoff(head), head, dry_run=False, flags=flags, telemetry_off=False)
+        assert (result.code, result.report) == (78, None)
+        assert re.search(r"^stop: telemetry: .*required", result.stderr, re.MULTILINE), result.stderr
+        assert (repo.path / QUEUE).read_bytes() == before
+
+
+def test_a_slice_with_nothing_for_the_supervisor_to_replay_is_accepted(tmp_path):
+    repo = Repo(tmp_path / "repo", required_validations=["make test-domain DOMAIN=docs"])
+    [head] = repo.commits(({"docs/a.md": "a\n"}, None))
+    document = handoff(head, validations_passed=["make test-domain DOMAIN=docs"])
+    assert assert_accepted(run(repo, tmp_path / "h.json", document, head))["supervisor_validation_replays"] == []
 
 
 REQUIRED_FLAGS = ("--slice-id", "--handoff", "--base-sha", "--head-sha")
