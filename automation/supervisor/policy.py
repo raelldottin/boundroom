@@ -5,6 +5,7 @@ import json
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
+from operator import itemgetter
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -60,24 +61,31 @@ class CompletionDecision:
     missing_proof_level: bool = False
 
 
-PROOF_LADDER = {
-    "doc-only": 0,
-    "domain-tested": 1,
-    "build-tested": 2,
-    "running-app-smoke": 3,
-    "flow-verified": 4,
-    "screenshot-verified": 5,
-    "device-verified": 6,
-    "testflight-verified": 7,
-}
+_PROOF_LEVELS: tuple[str, ...] = (
+    "doc-only",
+    "domain-tested",
+    "build-tested",
+    "running-app-smoke",
+    "flow-verified",
+    "screenshot-verified",
+    "device-verified",
+    "testflight-verified",
+)
+PROOF_LADDER = {level: rank for rank, level in enumerate(_PROOF_LEVELS)}
 
 
 def meets_proof_level(achieved: str, required: str) -> bool:
+    """Whether *achieved* is at or above *required* on ``PROOF_LADDER``.
+
+    Nothing required is always met, and an achieved level off the ladder never meets anything. An
+    unknown *required* level ranks as ``doc-only``, so any known level meets it: the queue schema
+    keeps an unknown level out of a validated queue.
+    """
     if not required:
         return True
-    if not achieved:
+    if not achieved or achieved not in PROOF_LADDER:
         return False
-    return PROOF_LADDER.get(achieved, -1) >= PROOF_LADDER.get(required, 0)
+    return PROOF_LADDER[achieved] >= PROOF_LADDER.get(required, 0)
 
 
 def verified_commits(head: str, handoff_commit_parent: Optional[str]) -> set[str]:
@@ -90,82 +98,157 @@ def verified_commits(head: str, handoff_commit_parent: Optional[str]) -> set[str
     return {head} | ({handoff_commit_parent} if handoff_commit_parent else set())
 
 
-def verify_manual_proofs(
+@dataclass(frozen=True)
+class ProofFile:
+    """What the supervisor saw on disk for one proof path a handoff named.
+
+    ``problem`` is a location problem (``"invalid path"``, ``"outside approved proof root"`` or
+    ``"missing file"``), or empty. ``sha256`` is the digest of the file's bytes, or None when the file
+    could not be read.
+    """
+
+    problem: str = ""
+    sha256: Optional[str] = None
+
+
+# Observed proof files, keyed by each path string exactly as the handoff wrote it.
+ProofFacts = Mapping[str, ProofFile]
+
+
+def counted_proofs(
+    slice_record: dict[str, Any], handoff: dict[str, Any], post_run_commit_sha: str, handoff_commit_parent: Optional[str]
+) -> dict[str, dict[str, Any]]:
+    """The provided proof that counts for each required proof type, by type.
+
+    A proof counts when it names this slice and one of ``verified_commits``; of several that count
+    for one type, the last wins.
+    """
+    proof_commits = verified_commits(post_run_commit_sha, handoff_commit_parent)
+    required_proofs = slice_record.get("manual_proof", [])
+    return {
+        proof.get("proof_type"): proof
+        for proof in handoff.get("provided_proofs", [])
+        if proof.get("proof_type") in required_proofs
+        and proof.get("slice_id") == slice_record.get("slice_id")
+        and proof.get("commit_sha") in proof_commits
+    }
+
+
+def observe_proof_files(
+    proof_root: Path,
     slice_record: dict[str, Any],
     handoff: dict[str, Any],
     post_run_commit_sha: str,
     handoff_commit_parent: Optional[str] = None,
-) -> tuple[list[str], bool]:
-    """Missing proofs, and whether the proof level falls short.
+) -> dict[str, ProofFile]:
+    """Look at the file of each proof that counts (``counted_proofs``), and nothing else.
 
-    A proof names the commit it verified, one of ``verified_commits``.
+    This is the file-reading half of the proof check; ``check_manual_proofs`` decides from what it
+    returns. A path resolves against *proof_root*, symlinks followed, and is in the approved place
+    only inside ``<proof_root, resolved>/automation/proofs/<slice_id>``. That directory itself is not
+    resolved, so a symlinked ``automation/proofs`` doesn't move the approved place. A file is read
+    only when its proof records a sha256 to compare it with.
+    """
+    return {
+        path: _observe_proof_file(proof_root, slice_record.get("slice_id", ""), path, bool(proof.get("sha256", "")))
+        for proof in counted_proofs(slice_record, handoff, post_run_commit_sha, handoff_commit_parent).values()
+        for path in [proof.get("path", "")]
+        if isinstance(path, str)
+    }
+
+
+def _observe_proof_file(proof_root: Path, slice_id: str, path: str, read_contents: bool) -> ProofFile:
+    try:
+        resolved = (proof_root / path).resolve()
+    except Exception:
+        return ProofFile(problem="invalid path")
+    try:
+        resolved.relative_to(proof_root.resolve() / "automation" / "proofs" / slice_id)
+    except ValueError:
+        return ProofFile(problem="outside approved proof root")
+    if not resolved.exists():
+        return ProofFile(problem="missing file")
+    if not read_contents:
+        return ProofFile()
+    try:
+        return ProofFile(sha256=hashlib.sha256(resolved.read_bytes()).hexdigest())
+    except Exception:
+        return ProofFile()
+
+
+def check_manual_proofs(
+    slice_record: dict[str, Any],
+    handoff: dict[str, Any],
+    post_run_commit_sha: str,
+    handoff_commit_parent: Optional[str],
+    proof_facts: ProofFacts,
+) -> tuple[list[str], bool]:
+    """Missing proofs, and whether the proof level falls short, decided from *proof_facts* alone.
+
+    The proof that counts for each type is ``counted_proofs``'. *proof_facts* come from
+    ``observe_proof_files`` over the same arguments, and a proof path without a fact fails closed as
+    a missing file.
     """
     proof_commits = verified_commits(post_run_commit_sha, handoff_commit_parent)
     required_proofs = slice_record.get("manual_proof", [])
-    required_level = slice_record.get("required_proof_level", "")
-
-    provided_proofs = handoff.get("provided_proofs", [])
-    verified_sha = handoff.get("verified_commit_sha", "")
-
-    missing_proofs = []
+    missing_proofs: list[str] = []
 
     if required_proofs:
+        verified_sha = handoff.get("verified_commit_sha", "")
         if not verified_sha:
             missing_proofs.append("Missing verified_commit_sha (required when the slice requires manual proof)")
         elif verified_sha not in proof_commits:
             missing_proofs.append("Invalid verified_commit_sha (does not match supervisor-observed HEAD)")
 
-    provided_by_type = {}
-    for p in provided_proofs:
-        if p.get("slice_id") != slice_record.get("slice_id"):
+    provided_by_type = counted_proofs(slice_record, handoff, post_run_commit_sha, handoff_commit_parent)
+    for required in required_proofs:
+        if required not in provided_by_type:
+            missing_proofs.append(required)
             continue
-        if p.get("commit_sha") not in proof_commits:
-            continue
-        provided_by_type[p.get("proof_type")] = p
+        problem = _proof_problem(provided_by_type[required], proof_facts)
+        if problem:
+            missing_proofs.append(f"{required} ({problem})")
 
-    repo_root = Path.cwd().resolve()
-    slice_id = slice_record.get("slice_id", "")
-
-    for req in required_proofs:
-        if req not in provided_by_type:
-            missing_proofs.append(req)
-        else:
-            p = provided_by_type[req]
-            path_str = p.get("path", "")
-            try:
-                proof_path = Path(path_str).resolve()
-            except Exception:
-                missing_proofs.append(f"{req} (invalid path)")
-                continue
-
-            expected_dir = repo_root / "automation" / "proofs" / slice_id
-            try:
-                proof_path.relative_to(expected_dir)
-            except ValueError:
-                missing_proofs.append(f"{req} (outside approved proof root)")
-                continue
-
-            if not proof_path.exists():
-                missing_proofs.append(f"{req} (missing file)")
-                continue
-
-            expected_sha256 = p.get("sha256", "")
-            if expected_sha256:
-                try:
-                    actual_sha256 = hashlib.sha256(proof_path.read_bytes()).hexdigest()
-                    if actual_sha256 != expected_sha256:
-                        missing_proofs.append(f"{req} (sha256 mismatch)")
-                except Exception:
-                    missing_proofs.append(f"{req} (could not read file for sha256)")
-            else:
-                missing_proofs.append(f"{req} (missing sha256 in metadata)")
-
-    achieved_level = handoff.get("proof_level", "")
-    missing_level = False
-    if required_level and not meets_proof_level(achieved_level, required_level):
-        missing_level = True
-
+    required_level = slice_record.get("required_proof_level", "")
+    missing_level = bool(required_level) and not meets_proof_level(handoff.get("proof_level", ""), required_level)
     return missing_proofs, missing_level
+
+
+def _proof_problem(proof: dict[str, Any], proof_facts: ProofFacts) -> str:
+    """Why one provided proof doesn't count, or "" when it does: location, then metadata, then content."""
+    path = proof.get("path", "")
+    if not isinstance(path, str):
+        return "invalid path"
+    observed = proof_facts.get(path, ProofFile(problem="missing file"))
+    if observed.problem:
+        return observed.problem
+    expected_sha256 = proof.get("sha256", "")
+    if not expected_sha256:
+        return "missing sha256 in metadata"
+    if observed.sha256 is None:
+        return "could not read file for sha256"
+    if observed.sha256 != expected_sha256:
+        return "sha256 mismatch"
+    return ""
+
+
+def verify_manual_proofs(
+    slice_record: dict[str, Any],
+    handoff: dict[str, Any],
+    post_run_commit_sha: str,
+    handoff_commit_parent: Optional[str] = None,
+    *,
+    proof_root: Optional[Path] = None,
+) -> tuple[list[str], bool]:
+    """Missing proofs, and whether the proof level falls short, checked against the files under *proof_root*.
+
+    A proof names the commit it verified, one of ``verified_commits``. Without *proof_root*, the
+    proof root is the current directory, as it always was.
+    """
+    proof_facts = observe_proof_files(
+        Path.cwd() if proof_root is None else proof_root, slice_record, handoff, post_run_commit_sha, handoff_commit_parent
+    )
+    return check_manual_proofs(slice_record, handoff, post_run_commit_sha, handoff_commit_parent, proof_facts)
 
 
 SUPERVISOR_VALIDATION_REPLAY_COMMANDS: dict[str, list[str]] = {
@@ -329,19 +412,14 @@ def dependencies_satisfied(slice_record: dict[str, Any], queue_data: dict[str, A
 
 
 def select_next_slice(queue_data: dict[str, Any]) -> Optional[dict[str, Any]]:
-    candidates: list[tuple[int, int, dict[str, Any]]] = []
-    for index, slice_record in enumerate(queue_data["slices"]):
-        if slice_record["status"] != "queued":
-            continue
-        if not dependencies_satisfied(slice_record, queue_data):
-            continue
-        candidates.append((slice_record["priority"], index, slice_record))
-
-    if not candidates:
-        return None
-
-    candidates.sort(key=lambda item: (item[0], item[1]))
-    return candidates[0][2]
+    """The queued slice with met dependencies and the lowest priority number; the earlier one on a tie."""
+    candidates = [
+        slice_record
+        for slice_record in queue_data["slices"]
+        if slice_record["status"] == "queued" and dependencies_satisfied(slice_record, queue_data)
+    ]
+    # min keeps the first of equal keys, so a tie goes to the earlier slice.
+    return min(candidates, key=itemgetter("priority"), default=None)
 
 
 def blocked_slice_reports(queue_data: dict[str, Any]) -> list[BlockedSliceReport]:
@@ -394,10 +472,7 @@ def git_dirty_paths(repo_root: Path) -> list[str]:
                 ) from error
             stderr_text = (error.stderr or "").strip() or "(empty)"
             raise ConfigError(f"git command failed in {repo_root}: {' '.join(command)}\nstderr: {stderr_text}") from error
-        for raw_line in result.stdout.splitlines():
-            if not raw_line:
-                continue
-            dirty_paths.append(normalize_repo_path(raw_line))
+        dirty_paths.extend(normalize_repo_path(line) for line in result.stdout.splitlines() if line)
 
     return sorted(set(dirty_paths))
 
@@ -425,7 +500,10 @@ def git_handoff_commit_parent(repo_root: Path, base_sha: str, handoff: Optional[
         return None
     parent_sha = parent.stdout.strip()
     descends = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", base_sha, parent_sha], cwd=repo_root, capture_output=True, text=True
+        ["git", "merge-base", "--is-ancestor", base_sha, parent_sha],
+        cwd=repo_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     changed = subprocess.run(
         ["git", "diff", "--name-only", "--relative", "--no-renames", parent_sha, head],
@@ -844,9 +922,7 @@ def next_slice_eligibility(
 
 
 def latest_handoff_for_slice(handoff_dir: Path, slice_id: str) -> Optional[dict[str, Any]]:
-    latest_match: Optional[dict[str, Any]] = None
-    latest_key: Optional[str] = None
-
+    matches: list[tuple[str, dict[str, Any]]] = []
     for candidate in sorted(handoff_dir.glob("*.json")):
         try:
             payload = load_handoff(candidate)
@@ -859,12 +935,11 @@ def latest_handoff_for_slice(handoff_dir: Path, slice_id: str) -> Optional[dict[
         if payload["slice_id"] != slice_id:
             continue
 
-        sort_key = f"{payload.get('timestamp', '')}:{candidate.name}"
-        if latest_key is None or sort_key > latest_key:
-            latest_key = sort_key
-            latest_match = payload
+        matches.append((f"{payload.get('timestamp', '')}:{candidate.name}", payload))
 
-    return latest_match
+    # The latest key wins; of equal keys (a timestamp with a colon can make two), max keeps the first.
+    latest = max(matches, key=lambda match: match[0], default=None)
+    return latest[1] if latest else None
 
 
 def load_legacy_handoff_for_context(handoff_path: Path) -> Optional[dict[str, Any]]:
@@ -908,12 +983,20 @@ def evaluate_completion(
     dirty_paths_after_run: list[str],
     completed_autonomous_runs: int,
     run_limit: int,
-    validation_replays: list[ValidationReplayResult] = [],
+    validation_replays: Optional[list[ValidationReplayResult]] = None,
     post_run_commit_sha: str = "",
     committed_paths: Optional[list[str]] = None,
     handoff_path: Optional[str] = None,
     handoff_commit_parent: Optional[str] = None,
+    *,
+    proof_facts: Optional[ProofFacts] = None,
 ) -> CompletionDecision:
+    """Judge a finished run: the first gate that fails decides, and a run that passes them all
+    goes to the queue rules (``next_slice_eligibility``).
+
+    *proof_facts* are the proof files ``observe_proof_files`` saw. With them this is a pure
+    function of its arguments; without them, the proof gate looks under the current directory.
+    """
     validation_replays = validation_replays or []
     supervisor_owned_paths = queue_data["policy"]["supervisor_owned_paths"]
     # What the run changed, as the supervisor sees it: paths it left dirty, plus paths its commits
@@ -1036,7 +1119,14 @@ def evaluate_completion(
         )
 
     if handoff["status"] == "done":
-        missing_proofs, missing_level = verify_manual_proofs(slice_record, handoff, post_run_commit_sha, handoff_commit_parent)
+        if proof_facts is None:
+            missing_proofs, missing_level = verify_manual_proofs(
+                slice_record, handoff, post_run_commit_sha, handoff_commit_parent
+            )
+        else:
+            missing_proofs, missing_level = check_manual_proofs(
+                slice_record, handoff, post_run_commit_sha, handoff_commit_parent, proof_facts
+            )
         if missing_proofs or missing_level:
             return CompletionDecision(
                 queue_status="failed",
