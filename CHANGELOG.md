@@ -6,6 +6,10 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+### Fixed
+
+- A handoff that lists the supervisor's own queue write in `dirty_paths_outside_scope` no longer fails its slice. Claiming a slice rewrites `automation/queue/slices.json`, so a runner that reported everything `git status` showed outside its scope, as `base.md` asks, had a correct, in-scope slice recorded as `failed` with "Files changed outside the slice's allowed_paths were detected." The supervisor now judges the reported paths by the same scope rule as `files_touched`: paths it owns, the run's own handoff and the slice's allowed paths are dropped, and anything else, including another slice's handoff, still fails the slice. Found in the Track R pilot (SPEC-012).
+
 ## 0.5.3 (2026-11-23)
 
 ### Added
