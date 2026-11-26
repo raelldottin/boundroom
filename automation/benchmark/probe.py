@@ -40,7 +40,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .adapter import (
     AGENT_SESSIONS_DIR,
@@ -52,10 +52,11 @@ from .adapter import (
     audited_inherited_environment,
     probe_sandbox,
 )
+from .cleanroom import CleanroomReceipt
 from .cleanroom import prepare as prepare_cleanroom
 from .diagnosis import diagnose_sessions
 from .diagnosis import summarize as summarize_diagnosis
-from .instances import task_spec
+from .instances import TaskSpec, task_spec
 from .lanes import _agent_sessions
 from .run import resolve_agent_env
 from .strategies import (
@@ -319,6 +320,29 @@ def _refuse_pre_existing(path: Path) -> None:
         raise FileExistsError(f"refusing to overwrite pre-existing probe output: {path}")
 
 
+# Makes the session's workspace and the run's control directory for a task, given whether the
+# cleanroom will fill the workspace. ``make_probe_dirs`` is the one a probe uses.
+WorkspaceFactory = Callable[[TaskSpec, bool], tuple[Path, Path]]
+
+
+def make_probe_dirs(task: TaskSpec, cleanroom: bool, *, parent: Optional[Path] = None) -> tuple[Path, Path]:
+    """The session's workspace and the run's control directory, made fresh under ``parent``.
+
+    ``parent`` defaults to the system temporary directory. Nothing here removes either one.
+    """
+    # Same workspace construction as a cell, down to the name: the agent's shell prompt shows
+    # its own working directory, so `pb-probe-abishekvashok__cmatrix.5c082c6-x` would hand back
+    # the instance id the envelope stopped naming.
+    workspace = Path(tempfile.mkdtemp(prefix=f"pb-probe-{task.public_id}-", dir=parent))
+    if not cleanroom:
+        # run_agent.sh refuses a non-git repo root. A cleanroom workspace gets its worktree
+        # from the image; this branch is the synthetic repo, and nothing it measures describes
+        # the environment a cell runs in.
+        subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
+    control_dir = Path(tempfile.mkdtemp(prefix=f"pb-probe-control-{task.public_id}-", dir=parent))
+    return workspace, control_dir
+
+
 def run_probe(
     instance_id: str,
     out_dir: Path,
@@ -332,6 +356,10 @@ def run_probe(
     max_turns: Optional[int] = None,
     phase: str = PROBE_PHASE,
     research_artifact: Optional[Path] = None,
+    workspace_factory: Optional[WorkspaceFactory] = None,
+    prepare: Optional[Callable[[str, Path, str], CleanroomReceipt]] = None,
+    prove_sandbox: Optional[Callable[[Path, CommandRunner, Path, dict[str, str], Path, CleanroomReceipt], None]] = None,
+    witness_factory: Optional[Callable[[Path, Path, str, str], Any]] = None,
 ) -> dict[str, Any]:
     """Administer one phase once and keep everything it left behind.
 
@@ -339,6 +367,10 @@ def run_probe(
     held to the same schema the lane holds it to - an invalid one stops a lane before plan,
     so a probe of plan on it would measure a phase no lane runs - and seeded at the path the
     lane's research session would have left it. Its bytes are never altered.
+
+    ``workspace_factory`` makes the workspace (default ``make_probe_dirs``). ``prepare``,
+    ``prove_sandbox`` and ``witness_factory`` reach Docker; they default to
+    ``cleanroom.prepare``, ``adapter.probe_sandbox`` and ``witness.SandboxWitness``.
     """
     if phase not in PHASE_ARTIFACTS:
         raise ValueError(f"unknown phase {phase!r}; expected one of {', '.join(PHASE_ARTIFACTS)}")
@@ -382,16 +414,7 @@ def run_probe(
     _refuse_pre_existing(out_dir / PROBE_RPI_DIRNAME)
     _refuse_pre_existing(out_dir / PROBE_FILENAME)
 
-    # Same workspace construction as a cell, down to the name: the agent's shell prompt shows
-    # its own working directory, so `pb-probe-abishekvashok__cmatrix.5c082c6-x` would hand back
-    # the instance id the envelope stopped naming.
-    workspace = Path(tempfile.mkdtemp(prefix=f"pb-probe-{task.public_id}-"))
-    if not cleanroom:
-        # run_agent.sh refuses a non-git repo root. A cleanroom workspace gets its worktree
-        # from the image; this branch is the synthetic repo, and nothing it measures describes
-        # the environment a cell runs in.
-        subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
-    control_dir = Path(tempfile.mkdtemp(prefix=f"pb-probe-control-{task.public_id}-"))
+    workspace, control_dir = (workspace_factory or make_probe_dirs)(task, cleanroom)
 
     sessions_dir = (out_dir / AGENT_SESSIONS_DIR).resolve()
     # A diagnostic reaches the same agent through the same shell as a lane, so it inherits
@@ -413,11 +436,11 @@ def run_probe(
         # image to run_agent.sh, keep the receipt, then prove the two backends the model's
         # tools would get. The proof raises before the budget is touched - a diagnostic run in
         # the wrong sandbox costs 600 seconds and answers about the wrong sandbox.
-        receipt = prepare_cleanroom(task.instance_id, workspace, task.repository)
+        receipt = (prepare or prepare_cleanroom)(task.instance_id, workspace, task.repository)
         environment[SANDBOX_IMAGE_ENV] = receipt.image
         (out_dir / CLEANROOM_RECEIPT_FILENAME).write_text(json.dumps(receipt.to_dict(), indent=2) + "\n", encoding="utf-8")
-        probe_sandbox(Path(repo_root), session_runner, workspace, environment, sessions_dir, receipt)
-        witness = SandboxWitness(sessions_dir, workspace, receipt.image, receipt.image_id)
+        (prove_sandbox or probe_sandbox)(Path(repo_root), session_runner, workspace, environment, sessions_dir, receipt)
+        witness = (witness_factory or SandboxWitness)(sessions_dir, workspace, receipt.image, receipt.image_id)
         session_runner = witness.wrap(session_runner)
 
     if research_artifact is not None:
@@ -790,7 +813,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(
+    argv: Optional[list[str]] = None,
+    *,
+    runner: Optional[CommandRunner] = None,
+    workspace_factory: Optional[WorkspaceFactory] = None,
+) -> int:
     args = build_parser().parse_args(argv)
 
     record = run_probe(
@@ -804,6 +832,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         max_turns=args.max_turns,
         phase=args.phase,
         research_artifact=args.research_artifact,
+        runner=runner,
+        workspace_factory=workspace_factory,
     )
     print(summarize(record))
     # The record is already on disk, so the evidence survives the failure. A probe that
