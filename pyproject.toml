@@ -42,12 +42,14 @@ addopts = "-ra -p no:logfire"
 
 [tool.coverage.run]
 source = ["automation"]
-# Every Python file in Tools/ counts toward the floor too. It sits in source_dirs, not source, because
+# Tools/*.py counts toward the floor too. It sits in source_dirs, not source, because
 # coverage.yml passes --cov=automation, which replaces source but keeps source_dirs.
 source_dirs = ["Tools"]
 branch = true
 omit = [
     "automation/tests/*",
+    # Only the top-level Tools/*.py: a sub-package (the mutation harness, #298) is measured by its own change.
+    "Tools/*/*",
 ]
 
 [tool.coverage.report]

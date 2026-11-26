@@ -85,7 +85,7 @@ The GitHub Actions configuration in `.github/` includes:
   the toolchain is pinned in `uv.lock`.
 - **Coverage** (`.github/workflows/coverage.yml`) — runs the full
   `automation/tests` suite under `pytest --cov` on Python 3.12, measuring
-  the Python in `automation/` and `Tools/`, fails below
+  `automation/` and the top-level `Tools/*.py`, fails below
   the 88% floor set by `fail_under` in `pyproject.toml`, and comments the
   report on pull requests via `MishaKav/pytest-coverage-comment`. Tests that
   need a consumer's live queue, the Hermes CLI or the Swarm Wiki compiler
