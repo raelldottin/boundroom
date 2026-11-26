@@ -937,7 +937,14 @@ def evaluate_completion(
     files_touched_outside_scope = out_of_scope_paths(
         files_touched, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path
     )
-    reported_out_of_scope = sorted(set(handoff["dirty_paths_outside_scope"]))
+    # Claiming the slice rewrote the queue, so a runner that reports everything `git status` shows
+    # outside its scope also reports the supervisor's own writes. Judge the report by the same scope
+    # rule as files_touched, and keep a reported owned path only where a runner may not write it.
+    reported_paths = normalize_paths(handoff["dirty_paths_outside_scope"])
+    reported_out_of_scope = sorted(
+        set(out_of_scope_paths(reported_paths, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path))
+        | set(stray_owned_paths(reported_paths, slice_record["allowed_paths"], supervisor_owned_paths, handoff_path))
+    )
     changed_file_count = max(
         count_paths_within_scope(introduced_dirty_paths, slice_record["allowed_paths"], supervisor_owned_paths),
         len(set(files_touched)),
