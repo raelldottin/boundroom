@@ -267,6 +267,12 @@ def fake_claude_bin(root: Path, cost: float = 1.25) -> str:
 
 class TrackRTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        # The host probe is the one stand-in: FakeRunner unwraps every sandboxed argv and runs it
+        # directly, so these tests run on any platform. SandboxProfileTests run the real sandbox-exec
+        # on macOS, and RunContainedTests check the refusal when it's missing.
+        probe = unittest.mock.patch.object(sandbox, "available", return_value=True)
+        probe.start()
+        self.addCleanup(probe.stop)
         self.tmp = Path(tempfile.mkdtemp(prefix="trackr-test-")).resolve()
         self.addCleanup(subprocess.run, ["rm", "-rf", str(self.tmp)], check=False)
         self.repo, self.base, self.head = make_target(self.tmp)
@@ -375,6 +381,21 @@ class SandboxProfileTests(unittest.TestCase):
             names - set(sandbox.ENV_ALLOWLIST),
             {"PATH", "HOME", "TMPDIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"},
         )
+
+
+class RunContainedTests(unittest.TestCase):
+    def test_without_sandbox_exec_the_checker_refuses_and_runs_nothing(self) -> None:
+        calls: list[Sequence[str]] = []
+
+        def runner(argv: Sequence[str], cwd: Path, env: Mapping[str, str], timeout: float) -> Any:
+            calls.append(argv)
+            raise AssertionError("the checker ran a command without the sandbox")
+
+        box = sandbox.Box(clone=Path("/nonexistent/clone"), tmp=Path("/nonexistent/tmp"), home=Path("/nonexistent/home"))
+        with unittest.mock.patch.object(sandbox, "available", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "refuses to run uncontained"):
+                sandbox.run_contained(runner, box, ["true"], {"HOME": "/nonexistent"}, 5)
+        self.assertEqual([], calls)
 
 
 class SandboxArgvTests(unittest.TestCase):
