@@ -8,6 +8,8 @@ refusal and the bounded flush.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -20,10 +22,11 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Callable, Optional
 from unittest import mock
 
 from automation.supervisor import telemetry, telemetry_metrics
-from automation.supervisor.telemetry_settings import resolve
+from automation.supervisor.telemetry_settings import TelemetrySettings, resolve
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VENDOR_HOSTS = re.compile(
@@ -32,16 +35,23 @@ VENDOR_HOSTS = re.compile(
 
 
 class Sink:
-    """A local OTLP/HTTP endpoint that records what reaches it."""
+    """A local OTLP/HTTP endpoint that records each request's path, headers and body.
 
-    def __init__(self) -> None:
-        received: list[tuple[str, bytes]] = []
+    ``status`` answers the paths it names with that status instead of 200. ``on_request`` is
+    called with each request's path before the request is answered.
+    """
+
+    def __init__(self, status: Optional[dict[str, int]] = None, on_request: Optional[Callable[[str], None]] = None) -> None:
+        received: list[tuple[str, dict[str, str], bytes]] = []
+        statuses = dict(status or {})
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:  # noqa: N802 - the http.server API
                 body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                received.append((self.path, body))
-                self.send_response(200)
+                received.append((self.path, {key.lower(): value for key, value in self.headers.items()}, body))
+                if on_request is not None:
+                    on_request(self.path)
+                self.send_response(statuses.get(self.path, 200))
                 self.end_headers()
 
             def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - the stdlib's name
@@ -117,14 +127,17 @@ class FileModeTests(ExporterCase):
         self.assertEqual("S-1", by_name["claim"]["attributes"]["slice_id"])
 
     def test_a_file_dir_inside_the_repository_is_refused(self) -> None:
-        inside = self.settings(telemetry="file", telemetry_file_dir=str(REPO_ROOT / "spans"))
+        spans = REPO_ROOT / f"spans-never-written-{os.getpid()}"
+        # Whatever a regression writes there is removed, so it can't outlive this test.
+        self.addCleanup(shutil.rmtree, spans, ignore_errors=True)
+        inside = self.settings(telemetry="file", telemetry_file_dir=str(spans))
         handle = telemetry.configure(inside, repo_root=REPO_ROOT, run_id="r")
         self.assertFalse(handle.enabled)
         self.assertIn("outside the repository", handle.messages[0])
-        required = self.settings(telemetry="file", telemetry_file_dir=str(REPO_ROOT / "spans"), telemetry_required=True)
+        required = self.settings(telemetry="file", telemetry_file_dir=str(spans), telemetry_required=True)
         with self.assertRaises(telemetry.TelemetryRefused):
             telemetry.configure(required, repo_root=REPO_ROOT, run_id="r")
-        self.assertFalse((REPO_ROOT / "spans").exists())
+        self.assertFalse(spans.exists())
 
     def test_required_checks_the_file_dir_is_writable_before_starting(self) -> None:
         blocked = self.tmp / "not-a-dir"
@@ -135,26 +148,8 @@ class FileModeTests(ExporterCase):
 
 
 class SdkConfigurationTests(ExporterCase):
-    def test_ud3_the_sdk_is_configured_only_from_boundrooms_settings(self) -> None:
-        fake = mock.Mock()
-        fake.MetricsOptions.DEFAULT_VIEWS = ()
-        with mock.patch.object(telemetry, "_import_logfire", return_value=fake):
-            telemetry.configure(self.file_settings(), repo_root=REPO_ROOT, run_id="r", service_version="0.3.0")
-        kwargs = fake.configure.call_args.kwargs
-        self.assertIs(False, kwargs["send_to_logfire"])
-        self.assertIs(False, kwargs["console"])
-        # Metrics go only to Boundroom's own in-memory reader, collected once at flush (RA-TEL-010).
-        self.assertIs(fake.MetricsOptions.return_value, kwargs["metrics"])
-        self.assertEqual({"additional_readers", "views"}, set(fake.MetricsOptions.call_args.kwargs))
-        self.assertEqual(1, len(fake.MetricsOptions.call_args.kwargs["additional_readers"]))
-        # Histograms use the catalogue's explicit duration buckets, not Logfire's exponential default.
-        (view,) = fake.MetricsOptions.call_args.kwargs["views"]
-        self.assertEqual(telemetry_metrics.DURATION_BUCKETS_SECONDS, tuple(view._aggregation._boundaries))
-        self.assertIs(False, kwargs["inspect_arguments"])
-        self.assertIs(True, kwargs["local"])
-        self.assertEqual("boundroom", kwargs["service_name"])
-        self.assertFalse(telemetry._inside(Path(kwargs["data_dir"]), REPO_ROOT))
-        self.assertEqual(1, len(kwargs["additional_span_processors"]))
+    # How the SDK is configured is judged by what it writes, in test_telemetry_core: the exact
+    # resource, nothing on stdout, no connection, and ambient OTEL_* settings that change nothing.
 
     def test_logfires_real_default_views_lose_only_the_exponential_histogram(self) -> None:
         import logfire  # noqa: PLC0415
@@ -196,13 +191,6 @@ class SdkConfigurationTests(ExporterCase):
                 self.assertEqual(set(), set(re.findall(r"https?://[^\s)`\"']+", text)) - allowed)
                 self.assertNotRegex(text, r"(?i)bearer\s+\S|authorization=")
 
-    def test_the_bounded_flush_says_when_it_dropped_spans(self) -> None:
-        handle = telemetry.Telemetry(settings=self.file_settings(), run_id="r")
-        handle._processor = mock.Mock(**{"force_flush.return_value": False})
-        with mock.patch("sys.stderr") as stderr:
-            self.assertFalse(handle.flush())
-        self.assertIn("dropped", "".join(str(call) for call in stderr.write.call_args_list))
-
     def test_traces_url_adds_the_standard_path_to_a_bare_endpoint(self) -> None:
         self.assertEqual("http://127.0.0.1:4318/v1/traces", telemetry.traces_url("http://127.0.0.1:4318"))
         self.assertEqual("https://c.example.test/custom", telemetry.traces_url("https://c.example.test/custom"))
@@ -237,7 +225,7 @@ class EgressTests(ExporterCase):
                 pass
             self.assertTrue(handle.flush())
         self.assertTrue(self.mine.received, "no spans reached the user's endpoint")
-        self.assertEqual({"/v1/traces"}, {path for path, _ in self.mine.received})
+        self.assertEqual({"/v1/traces"}, {path for path, _, _ in self.mine.received})
         self.assertEqual([], self.ambient.received, "spans reached an endpoint set for another tool")
         port = int(self.mine.url.rsplit(":", 1)[1])
         self.assertEqual({("127.0.0.1", port)}, set(connections))
@@ -249,6 +237,100 @@ class EgressTests(ExporterCase):
                 pass
             handle.flush()
         self.assertEqual([], self.ambient.received)
+
+
+class FakeClock:
+    """The bounded flush's clock, moved only by the test."""
+
+    def __init__(self) -> None:
+        self.now = 1e9  # far from any real monotonic reading
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class BoundedFlushTests(ExporterCase):
+    """Spans first; metrics get whatever time the spans left of the five seconds."""
+
+    def flush_after_traces_take(self, seconds: float) -> tuple[bool, str, Sink]:
+        clock = FakeClock()
+
+        def slow_traces(path: str) -> None:
+            if path == "/v1/traces":
+                clock.now += seconds
+
+        sink = Sink(on_request=slow_traces)
+        self.addCleanup(sink.close)
+        settings = self.settings(telemetry="otlp", telemetry_endpoint=sink.url)
+        handle = telemetry.configure(settings, repo_root=REPO_ROOT, run_id="r", clock=clock)
+        with handle.span("boundroom.run"):
+            handle.record_run("run_next", "ok", 0.2)
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            flushed = handle.flush()
+        return flushed, stderr.getvalue(), sink
+
+    def test_spans_that_take_all_five_seconds_leave_no_time_for_metrics(self) -> None:
+        flushed, said, sink = self.flush_after_traces_take(5.0)
+        self.assertIs(False, flushed)
+        self.assertEqual(["telemetry: no time was left to send metrics; they were dropped"], said.splitlines())
+        self.assertEqual(["/v1/traces"], [path for path, _, _ in sink.received])
+
+    def test_spans_that_leave_a_second_let_the_metrics_go(self) -> None:
+        flushed, said, sink = self.flush_after_traces_take(4.0)
+        self.assertTrue(flushed)
+        self.assertEqual("", said)
+        self.assertEqual(["/v1/traces", "/v1/metrics"], [path for path, _, _ in sink.received])
+
+    def test_an_endpoint_that_refuses_the_metrics_is_said(self) -> None:
+        sink = Sink(status={"/v1/metrics": 400})
+        self.addCleanup(sink.close)
+        handle = telemetry.configure(
+            self.settings(telemetry="otlp", telemetry_endpoint=sink.url), repo_root=REPO_ROOT, run_id="r"
+        )
+        with handle.span("boundroom.run"):
+            handle.record_run("run_next", "ok", 0.2)
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            self.assertFalse(handle.flush())
+        self.assertIn("telemetry: the endpoint didn't take the metrics; they were dropped", stderr.getvalue().splitlines())
+
+
+class StartupProbeTests(ExporterCase):
+    """With ``required``, otlp proves the endpoint answers before anything is claimed."""
+
+    def otlp(self, url: str, required: bool) -> TelemetrySettings:
+        flags = {"telemetry": "otlp", "telemetry_endpoint": url, "telemetry_required": required}
+        return resolve(flags=flags, environ={"BOUNDROOM_TELEMETRY_HEADERS": "authorization=Bearer probe"}, operator_file=None)
+
+    def test_required_posts_an_empty_request_with_the_headers_to_the_traces_path(self) -> None:
+        sink = Sink()
+        self.addCleanup(sink.close)
+        handle = telemetry.configure(self.otlp(sink.url, True), repo_root=REPO_ROOT, run_id="r")
+        self.assertTrue(handle.enabled)
+        ((path, headers, body),) = sink.received
+        self.assertEqual(("/v1/traces", "Bearer probe", b""), (path, headers["authorization"], body))
+
+    def test_an_endpoint_that_rejects_the_empty_request_still_answered(self) -> None:
+        sink = Sink(status={"/v1/traces": 405})
+        self.addCleanup(sink.close)
+        handle = telemetry.configure(self.otlp(sink.url, True), repo_root=REPO_ROOT, run_id="r")
+        self.assertTrue(handle.enabled)
+        self.assertEqual(["/v1/traces"], [path for path, _, _ in sink.received])
+
+    def test_an_endpoint_that_doesnt_answer_refuses_naming_only_its_host(self) -> None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        url = f"http://127.0.0.1:{port}/otlp/v1/traces?tenant=abc"
+        with self.assertRaises(telemetry.TelemetryRefused) as caught:
+            telemetry.configure(self.otlp(url, True), repo_root=REPO_ROOT, run_id="r")
+        self.assertEqual("telemetry: the endpoint at 127.0.0.1 didn't answer", str(caught.exception))
+
+    def test_not_required_probes_nothing(self) -> None:
+        sink = Sink()
+        self.addCleanup(sink.close)
+        handle = telemetry.configure(self.otlp(sink.url, False), repo_root=REPO_ROOT, run_id="r")
+        self.assertTrue(handle.enabled)
+        self.assertEqual([], sink.received)
 
 
 if __name__ == "__main__":

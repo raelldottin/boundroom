@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -22,6 +20,7 @@ import pytest
 from automation.supervisor import telemetry, telemetry_metrics
 from automation.supervisor.telemetry_settings import resolve
 from automation.tests import test_run_next_local_board as local
+from automation.tests.test_telemetry_exporter import Sink
 from automation.tests.test_telemetry_spans import spans
 
 consumer = local.consumer
@@ -82,9 +81,40 @@ class TestCatalogue:
         assert used - set(telemetry_metrics.BY_NAME) == set(), "instruments missing from the catalogue"
         assert set(telemetry_metrics.BY_NAME) - used == set(), "catalogued instruments nothing records"
 
-    def test_outcomes(self):
-        assert [telemetry_metrics.session_outcome(code) for code in (0, 1, 124)] == ["ok", "nonzero", "timeout"]
-        assert [telemetry_metrics.run_outcome(code) for code in (0, 2)] == ["ok", "failed"]
+    def test_the_catalogue_names_units_and_kinds_are_a_compatibility_surface(self):
+        # Dashboards and alerts query these names; changing one breaks them.
+        assert [(i.name, i.kind, i.unit, tuple(i.attributes)) for i in telemetry_metrics.CATALOGUE] == [
+            ("boundroom.runs", "counter", "1", ("entry", "outcome")),
+            ("boundroom.run.duration", "histogram", "s", ("entry", "outcome")),
+            ("boundroom.slice.decisions", "counter", "1", ("decision", "queue_status")),
+            ("boundroom.agent_session.duration", "histogram", "s", ("entry", "outcome", "runner")),
+            ("boundroom.validation.replays", "counter", "1", ("entry", "success")),
+            ("boundroom.sync.changes", "counter", "1", ("kind",)),
+        ]
+
+    @pytest.mark.parametrize(
+        ("attributes", "expected"),
+        [
+            ({"entry": None}, {}),
+            ({"success": True}, {"success": "true"}),
+            ({"success": False}, {"success": "false"}),
+            ({"entry": "benchmark"}, {"entry": "benchmark"}),
+            ({"entry": 7}, {"entry": "other"}),
+            ({"entry": "made-up"}, {"entry": "other"}),
+            ({"slice_id": "S-1"}, {}),
+        ],
+    )
+    def test_bounded_attributes(self, attributes, expected):
+        replays = telemetry_metrics.BY_NAME["boundroom.validation.replays"]
+        assert telemetry_metrics.bounded(replays, attributes) == expected
+
+    @pytest.mark.parametrize(
+        ("exit_code", "session", "run"),
+        [(-1, "nonzero", "failed"), (0, "ok", "ok"), (1, "nonzero", "failed"), (124, "timeout", "failed")],
+    )
+    def test_outcomes(self, exit_code, session, run):
+        assert telemetry_metrics.session_outcome(exit_code) == session
+        assert telemetry_metrics.run_outcome(exit_code) == run
 
 
 class TestRecording:
@@ -125,46 +155,17 @@ class TestRecording:
         assert handle.flush()
         assert list((tmp_path / "out").glob("*.metrics.jsonl")) == []
 
-    def test_a_metric_that_cant_be_recorded_or_written_never_raises(self, tmp_path, capsys):
+    def test_a_metric_that_cant_be_recorded_never_raises(self, tmp_path, capsys):
+        # A metrics file that can't be written: test_telemetry_core.
         handle = file_handle(tmp_path)
         handle.metric("boundroom.not_catalogued")
         assert "metric boundroom.not_catalogued was not recorded" in capsys.readouterr().err
-        handle.metric("boundroom.runs", entry="run_next", outcome="ok")
-        with mock.patch.object(handle._metric_reader, "get_metrics_data", side_effect=OSError("disk full")):
-            assert handle.flush() is False
-        assert "metrics could not be written" in capsys.readouterr().err
 
     def test_metrics_url_sits_beside_the_traces_url(self):
         assert telemetry.metrics_url("http://127.0.0.1:4318") == "http://127.0.0.1:4318/v1/metrics"
         assert telemetry.metrics_url("https://c.example.test/") == "https://c.example.test/v1/metrics"
         assert telemetry.metrics_url("https://c.example.test/otlp/v1/traces") == "https://c.example.test/otlp/v1/metrics"
         assert telemetry.metrics_url("https://c.example.test/custom") is None
-
-
-class Sink:
-    """A local OTLP/HTTP endpoint that records each request's path, headers and body."""
-
-    def __init__(self) -> None:
-        received: list[tuple[str, dict[str, str], bytes]] = []
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self) -> None:  # noqa: N802 - the http.server API
-                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                received.append((self.path, {k.lower(): v for k, v in self.headers.items()}, body))
-                self.send_response(200)
-                self.end_headers()
-
-            def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - the stdlib's name
-                return None
-
-        self.received = received
-        self.server = HTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-
-    def close(self) -> None:
-        self.server.shutdown()
-        self.server.server_close()
 
 
 @pytest.fixture
@@ -262,3 +263,10 @@ def test_a_failed_run_records_a_failed_outcome(consumer, agent, no_hermes, monke
     by_name = {line["name"]: line for line in metric_lines(file_dir)}
     assert by_name["boundroom.runs"]["attributes"] == {"entry": "run_next", "outcome": "failed"}
     assert by_name["boundroom.slice.decisions"]["attributes"] == {"decision": "failed", "queue_status": "failed"}
+
+
+def test_the_catalogue_cannot_be_changed_at_run_time():
+    instrument = telemetry_metrics.BY_NAME["boundroom.runs"]
+    with pytest.raises(AttributeError):  # immutable, however it is built
+        instrument.unit = "s"  # ty: ignore[invalid-assignment]
+    assert telemetry_metrics.BY_NAME["boundroom.runs"].unit == "1"

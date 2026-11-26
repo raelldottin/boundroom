@@ -14,12 +14,20 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
 
 from pydantic import ValidationError
 
 from automation.schemas.models import RepositoryTelemetry
-from automation.supervisor import policy, run_next
-from automation.supervisor.telemetry_settings import check_endpoint, parse_headers, resolve
+from automation.supervisor import egress, policy, run_next
+from automation.supervisor.telemetry_settings import (
+    TelemetrySettings,
+    check_endpoint,
+    check_resource_attributes,
+    parse_headers,
+    parse_resource_attributes,
+    resolve,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SECRET = "Bearer s3cr3t-telemetry-token"
@@ -197,6 +205,36 @@ class EndpointAndSecretsTests(TelemetryTestCase):
                 with self.assertRaises(ValueError):
                     check_endpoint(url)
 
+    def test_an_endpoint_with_only_a_user_name_or_only_a_password_is_refused(self) -> None:
+        for url in ("https://u@collector.example.test", "https://:p@collector.example.test"):
+            with self.subTest(url=url):
+                with self.assertRaises(ValueError) as caught:
+                    check_endpoint(url)
+                self.assertEqual("telemetry endpoint must not carry credentials; use headers", str(caught.exception))
+
+    def test_the_endpoint_variable_gets_the_same_checks_as_the_flag(self) -> None:
+        for url, reason in (
+            ("http://collector.example.test", "telemetry endpoint must use https:// unless it is localhost, 127.0.0.1 or [::1]"),
+            ("https://u@collector.example.test", "telemetry endpoint must not carry credentials; use headers"),
+        ):
+            with self.subTest(url=url):
+                env = {"BOUNDROOM_TELEMETRY": "otlp", "BOUNDROOM_TELEMETRY_ENDPOINT": url}
+                resolved = resolve(environ=env, operator_file=self.no_file)
+                self.assertEqual(("off", None), (resolved.mode, resolved.endpoint))
+                self.assertEqual(
+                    (
+                        f"telemetry: ignoring BOUNDROOM_TELEMETRY_ENDPOINT: {reason}",
+                        "telemetry: otlp mode needs endpoint; telemetry is off",
+                    ),
+                    resolved.messages,
+                )
+
+    def test_resolved_settings_cannot_be_changed_afterwards(self) -> None:
+        resolved = resolve(environ={}, operator_file=self.no_file)
+        with self.assertRaises(AttributeError):  # immutable, however it is built
+            resolved.mode = "otlp"  # ty: ignore[invalid-assignment]
+        self.assertEqual("off", resolved.mode)
+
     def test_headers_parse_from_name_value_pairs(self) -> None:
         self.assertEqual({"authorization": "Bearer a", "x-team": "b"}, parse_headers("authorization=Bearer a, x-team=b"))
         with self.assertRaises(ValueError):
@@ -215,6 +253,136 @@ class EndpointAndSecretsTests(TelemetryTestCase):
         for leaked in (SECRET, "s3cr3t", "/v1/traces", "tenant=abc"):
             self.assertNotIn(leaked, report)
             self.assertNotIn(leaked, repr(resolved))
+
+
+class VariableAndOfflineTests(TelemetryTestCase):
+    def test_required_takes_only_true_or_false(self) -> None:
+        resolved = resolve(environ={"BOUNDROOM_TELEMETRY_REQUIRED": "yes"}, operator_file=self.no_file)
+        self.assertEqual(("telemetry: ignoring BOUNDROOM_TELEMETRY_REQUIRED: must be true or false",), resolved.messages)
+        self.assertEqual((False, "default"), (resolved.required, resolved.sources["required"]))
+
+    def test_required_from_the_variable_is_a_boolean(self) -> None:
+        # File mode without a file_dir: only a truly required run turns that into a refusal.
+        for raw, required, refused in (("true", True, True), ("false", False, False)):
+            with self.subTest(raw=raw):
+                env = {"BOUNDROOM_TELEMETRY": "file", "BOUNDROOM_TELEMETRY_REQUIRED": raw}
+                resolved = resolve(environ=env, operator_file=self.no_file)
+                self.assertIs(required, resolved.required)
+                self.assertEqual("env", resolved.sources["required"])
+                self.assertEqual(refused, resolved.refusal is not None)
+
+    def test_offline_turns_otlp_off_and_says_so_without_refusing_unless_required(self) -> None:
+        flags = {"telemetry": "otlp", "telemetry_endpoint": "https://collector.example.test"}
+        message = f"telemetry: otlp mode refused ({egress.REASON}): {egress.OFFLINE_ENV} is set; telemetry is off"
+        resolved = resolve(flags=flags, environ={egress.OFFLINE_ENV: "1"}, operator_file=self.no_file)
+        self.assertEqual(("off", egress.REASON, None), (resolved.mode, resolved.sources["mode"], resolved.refusal))
+        self.assertEqual((message,), resolved.messages)
+        self.assertEqual(egress.REASON, resolved.report()["source"])
+        required = resolve(
+            flags={**flags, "telemetry_required": True}, environ={egress.OFFLINE_ENV: "1"}, operator_file=self.no_file
+        )
+        self.assertEqual(
+            message.replace("; telemetry is off", "; refusing to start because telemetry is required"), required.refusal
+        )
+
+    def test_offline_leaves_file_mode_on(self) -> None:
+        flags = {"telemetry": "file", "telemetry_file_dir": "/var/tmp/spans"}
+        resolved = resolve(flags=flags, environ={egress.OFFLINE_ENV: "1"}, operator_file=self.no_file)
+        self.assertEqual(("file", "flag", ()), (resolved.mode, resolved.sources["mode"], resolved.messages))
+
+
+class ResourceAttributeBoundaryTests(TelemetryTestCase):
+    def test_the_bounds_on_pairs_values_and_characters(self) -> None:
+        def pairs(count: int) -> dict[str, str]:
+            return {f"label.k{index}": "v" for index in range(count)}
+
+        cases = [
+            ("16 pairs", pairs(16), None),
+            ("17 pairs", pairs(17), "too_many"),
+            ("256 characters", {"team.name": "v" * 256}, None),
+            ("257 characters", {"team.name": "v" * 257}, "bad_value"),
+            ("character 31", {"team.name": "a" + chr(31)}, "bad_value"),
+            ("character 32", {"team.name": "a" + chr(32)}, None),
+            ("character 126", {"team.name": "a" + chr(126)}, None),
+            ("character 127", {"team.name": "a" + chr(127)}, "bad_value"),
+        ]
+        for name, given, refused in cases:
+            with self.subTest(name):
+                if refused is None:
+                    self.assertEqual(given, check_resource_attributes(given))
+                else:
+                    with self.assertRaises(ValueError) as caught:
+                        check_resource_attributes(given)
+                    self.assertIn(f"({refused})", str(caught.exception))
+
+    def test_a_refusal_names_the_offending_pair_by_its_position_counting_from_one(self) -> None:
+        cases = [
+            (
+                lambda: check_resource_attributes({"Team": "core"}),
+                "resource_attributes refused (bad_key): key 1 must match ^[a-z][a-z0-9_.]{0,63}$",
+            ),
+            (
+                lambda: check_resource_attributes({"team.name": "core", "service.name": "x"}),
+                "resource_attributes refused (reserved_key): key 2 is one Boundroom sets itself",
+            ),
+            (
+                lambda: parse_resource_attributes("team.name"),
+                "resource_attributes refused (not_key_value): pair 1 must be key=value",
+            ),
+            (
+                lambda: parse_resource_attributes("team.name=a,team.name=b"),
+                "resource_attributes refused (duplicate_key): pair 2 repeats a key",
+            ),
+        ]
+        for refuse, message in cases:
+            with self.subTest(message):
+                with self.assertRaises(ValueError) as caught:
+                    refuse()
+                self.assertEqual(message, str(caught.exception))
+
+
+class RepositoryCapTests(TelemetryTestCase):
+    def test_a_repository_value_that_is_none_changes_nothing(self) -> None:
+        operator = self.operator_file(mode="file", file_dir="/var/tmp/op", capture="content", runner="content", environment="ci")
+        given = resolve(environ={}, operator_file=operator)
+        capped = resolve(
+            environ={},
+            operator_file=operator,
+            repository={"mode": None, "capture": None, "runner": None, "environment": None},
+        )
+        self.assertEqual(given, capped)
+
+    def test_a_repository_value_equal_to_the_resolved_one_keeps_its_source(self) -> None:
+        operator = self.operator_file(mode="file", file_dir="/var/tmp/op", capture="metadata", runner="metadata")
+        for setting in ("capture", "runner"):
+            with self.subTest(setting):
+                resolved = resolve(environ={}, operator_file=operator, repository={setting: "metadata"})
+                self.assertEqual(("metadata", "operator file"), (getattr(resolved, setting), resolved.sources[setting]))
+
+
+class ReportDestinationTests(TelemetryTestCase):
+    def settings(self, mode: str, endpoint: Optional[str]) -> TelemetrySettings:
+        return TelemetrySettings(
+            mode=mode,
+            file_dir=None,
+            endpoint=endpoint,
+            headers={},
+            capture="metadata",
+            runner="off",
+            required=False,
+            environment="local",
+            sources={"mode": "flag"},
+        )
+
+    def test_the_destination_is_the_scheme_host_and_port_only(self) -> None:
+        cases = [
+            ("https://collector.example.test:4318/v1/traces?tenant=abc", "https://collector.example.test:4318"),
+            ("https://collector.example.test/otlp", "https://collector.example.test"),
+            (None, None),
+        ]
+        for endpoint, destination in cases:
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(destination, self.settings("otlp", endpoint).report()["destination"])
 
 
 class EntryPointTests(TelemetryTestCase):

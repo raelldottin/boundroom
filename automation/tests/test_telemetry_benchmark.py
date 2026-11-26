@@ -100,27 +100,11 @@ class TracedCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="telemetry-benchmark-"))
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.spans_dir = self.tmp / "spans"
-        self.exported: list[Any] = []
 
     def traced(self, run_id: str = "exp-1") -> telemetry.Telemetry:
-        """A file-mode handle that also keeps the exported spans, for their resource."""
-        real = telemetry.json_lines_exporter
-        exported = self.exported
-
-        def keeping(path: Path, **options: Any) -> Any:
-            exporter = real(path, **options)
-            write = exporter.export
-
-            def export(spans: Any) -> Any:
-                exported.extend(spans)
-                return write(spans)
-
-            exporter.export = export
-            return exporter
-
+        """A file-mode handle writing to ``spans_dir``."""
         settings = tracing.benchmark_settings({"telemetry": "file", "telemetry_file_dir": str(self.spans_dir)}, {})
-        with mock.patch.object(telemetry, "json_lines_exporter", keeping):
-            handle = telemetry.configure(settings, repo_root=REPO_ROOT, run_id=run_id)
+        handle = telemetry.configure(settings, repo_root=REPO_ROOT, run_id=run_id)
         self.assertTrue(handle.enabled, handle.messages)
         return handle
 
@@ -232,8 +216,9 @@ class SpanTreeTests(TracedCase):
 
     def test_benchmark_spans_carry_the_benchmark_environment(self) -> None:
         self.experiment(self.traced(), ("A",))
-        self.assertTrue(self.exported)
-        self.assertEqual({"benchmark"}, {span.resource.attributes["deployment.environment.name"] for span in self.exported})
+        records = self.spans()
+        self.assertTrue(records)
+        self.assertEqual({"benchmark"}, {record["resource"]["deployment.environment.name"] for record in records})
 
     def test_a_skipped_cell_is_traced_as_skipped(self) -> None:
         self.experiment(self.traced(), ("D", "E"), skip=("E",))
