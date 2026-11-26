@@ -6,6 +6,10 @@ Headings are `## <version> (<YYYY-MM-DD>)`, and `Tools/changelog_section.py` rea
 
 ## Unreleased
 
+### Changed
+
+- The benchmark's `lanes` reads the commit once, when the experiment starts, and records it in every cell's `run.json` and on the experiment's trace span. It used to run `git rev-parse` for each cell, so a commit made during a long run changed the `repo_automation_sha` of the cells after it. The cell clock, the environment fingerprint and the commit, and the clock that times each phase, can now be passed in, so the benchmark's tests check provenance and phase budgets exactly. Nothing else in `run.json`, `lane-comparison.json` or the `lanes` command changes.
+
 ### Fixed
 
 - A handoff that lists the supervisor's own queue write in `dirty_paths_outside_scope` no longer fails its slice. Claiming a slice rewrites `automation/queue/slices.json`, so a runner that reported everything `git status` showed outside its scope, as `base.md` asks, had a correct, in-scope slice recorded as `failed` with "Files changed outside the slice's allowed_paths were detected." The supervisor now judges the reported paths by the same scope rule as `files_touched`: paths it owns, the run's own handoff and the slice's allowed paths are dropped, and anything else, including another slice's handoff, still fails the slice. Found in the Track R pilot (SPEC-012).

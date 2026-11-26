@@ -140,10 +140,19 @@ def _repo_sha(repo_root: Path) -> str:
         return "unknown"
 
 
-def _environment_fingerprint() -> dict[str, str]:
+def _utc_now() -> datetime:
+    """The default clock for a cell's ``started_at``/``finished_at``."""
+    return datetime.now(timezone.utc)
+
+
+def _environment_fingerprint(
+    environ: Optional[Mapping[str, str]] = None, keys: Sequence[str] = PROVENANCE_ENV_KEYS
+) -> dict[str, str]:
+    """The ``keys`` set in ``environ`` (the process environment by default), key-like names redacted."""
+    environ = os.environ if environ is None else environ
     fingerprint = {}
-    for key in PROVENANCE_ENV_KEYS:
-        value = os.environ.get(key)
+    for key in keys:
+        value = environ.get(key)
         if value is None:
             continue
         fingerprint[key] = "<redacted>" if any(marker in key.upper() for marker in _SECRET_MARKERS) else value
@@ -185,24 +194,35 @@ def _telemetry_record(telemetry: Optional[dict[str, Any]]) -> dict[str, Any]:
 
 
 def skip_cell(
-    cell: Cell, run_dir: Path, repo_root: Path, reason: str, telemetry: Optional[dict[str, Any]] = None
+    cell: Cell,
+    run_dir: Path,
+    repo_root: Path,
+    reason: str,
+    telemetry: Optional[dict[str, Any]] = None,
+    *,
+    now: Callable[[], datetime] = _utc_now,
+    environ: Optional[Mapping[str, str]] = None,
+    repo_sha: Optional[str] = None,
 ) -> dict[str, Any]:
     """Record a cell that could not be administered, without writing a submission.
 
     A lane whose treatment cannot be resolved is reported as unrun. Substituting a
     different treatment would silently rename one lane into another.
+
+    ``now``, ``environ`` and ``repo_sha`` are where the record's time, environment and commit
+    come from: the clock, the process environment and ``repo_root``'s HEAD unless given.
     """
     instance_dir = cell.directory(run_dir)
     instance_dir.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(timezone.utc).isoformat()
+    at = now().isoformat()
     provenance: dict[str, Any] = {
         "lane": cell.lane,
         "instance_id": cell.instance_id,
         "repeat": cell.repeat,
-        "repo_automation_sha": _repo_sha(repo_root),
-        "environment": _environment_fingerprint(),
-        "started_at": now,
-        "finished_at": now,
+        "repo_automation_sha": repo_sha if repo_sha is not None else _repo_sha(repo_root),
+        "environment": _environment_fingerprint(environ),
+        "started_at": at,
+        "finished_at": at,
         "returncode": None,
         "skipped": True,
         "skip_reason": reason,
@@ -272,16 +292,25 @@ def classify_provider_validity(sessions: Sequence[dict[str, Any]]) -> str:
 
 
 def run_cell(
-    cell: Cell, run_dir: Path, adapter: AgentAdapter, repo_root: Path, telemetry: Optional[dict[str, Any]] = None
+    cell: Cell,
+    run_dir: Path,
+    adapter: AgentAdapter,
+    repo_root: Path,
+    telemetry: Optional[dict[str, Any]] = None,
+    *,
+    now: Callable[[], datetime] = _utc_now,
+    environ: Optional[Mapping[str, str]] = None,
+    repo_sha: Optional[str] = None,
 ) -> dict[str, Any]:
     """Attempt one cell and write its provenance record.
 
     ``telemetry`` is the experiment's settings report, the same dict for every cell, so each
-    run.json shows the lanes were traced alike (SPEC-006 lane invariance).
+    run.json shows the lanes were traced alike (SPEC-006 lane invariance). ``now``, ``environ``
+    and ``repo_sha`` are as for ``skip_cell``.
     """
     instance_dir = cell.directory(run_dir)
     instance_dir.mkdir(parents=True, exist_ok=True)
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = now().isoformat()
 
     result = adapter.produce_submission(task_spec(cell.instance_id), instance_dir / "submission.tar.gz")
 
@@ -291,10 +320,10 @@ def run_cell(
         "lane": cell.lane,
         "instance_id": cell.instance_id,
         "repeat": cell.repeat,
-        "repo_automation_sha": _repo_sha(repo_root),
-        "environment": _environment_fingerprint(),
+        "repo_automation_sha": repo_sha if repo_sha is not None else _repo_sha(repo_root),
+        "environment": _environment_fingerprint(environ),
         "started_at": started_at,
-        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "finished_at": now().isoformat(),
         "returncode": result.returncode,
         "agent_sessions": sessions,
         # Read after the fact from what each session already left on disk, so it costs the
@@ -714,6 +743,10 @@ def run_experiment(
     score: bool = True,
     telemetry: Optional[Telemetry] = None,
     stop_gate: Optional[StopGate] = None,
+    *,
+    now: Callable[[], datetime] = _utc_now,
+    environ: Optional[Mapping[str, str]] = None,
+    repo_sha: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     """Run the full matrix, optionally evaluate and score it.
 
@@ -724,6 +757,10 @@ def run_experiment(
     ``telemetry`` traces the experiment; pass the same handle to the adapter factory, so the
     sessions nest under their cells. Absent, the run is untraced and each run.json says so.
     The caller flushes it.
+
+    ``now`` and ``environ`` are handed to every cell. ``repo_sha`` is the commit every cell
+    records; absent, ``repo_root``'s HEAD is read once, when the experiment starts, so the
+    experiment span and every run.json name the same commit.
     """
     if stop_gate is not None and eval_runner is None:
         raise ValueError("the stop gate needs eval: it reads ProgramBench's tests before the judge")
@@ -733,6 +770,7 @@ def run_experiment(
     run_dir.mkdir(parents=True, exist_ok=True)
     handle = telemetry or tracing.untraced()
     traced = tracing.enabled(handle)
+    sha = repo_sha if repo_sha is not None else _repo_sha(repo_root)
 
     with (
         tracing.recorded_run(handle),
@@ -743,8 +781,8 @@ def run_experiment(
             lanes=list(lanes),
             repeats=repeats,
             instance_count=len(instances),
-            # A git call per experiment, so only when someone will read it.
-            repo_sha=_repo_sha(repo_root) if traced else None,
+            # The commit every cell records, on the span only when someone will read it.
+            repo_sha=sha if traced else None,
         ) as experiment,
     ):
         # Built once and handed to every cell, so no lane can record different settings.
@@ -754,7 +792,9 @@ def run_experiment(
         for repeat, group in groupby(interleave(instances, lanes, repeats), key=attrgetter("repeat")):
             round_cells = list(group)
             for cell in round_cells:
-                _attempt_cell(cell, run_dir, adapter_factory, repo_root, handle, traced, settings)
+                _attempt_cell(
+                    cell, run_dir, adapter_factory, repo_root, handle, traced, settings, now=now, environ=environ, repo_sha=sha
+                )
             repeats_run = repeat
             if stop_gate is None:
                 continue
@@ -784,6 +824,10 @@ def _attempt_cell(
     handle: Telemetry,
     traced: bool,
     settings: dict[str, Any],
+    *,
+    now: Callable[[], datetime],
+    environ: Optional[Mapping[str, str]],
+    repo_sha: str,
 ) -> None:
     """Run one cell, or record why it could not run, inside its own span."""
     with tracing.span(
@@ -792,9 +836,13 @@ def _attempt_cell(
         try:
             adapter = adapter_factory(cell.lane)
         except JSpaceUnavailable as error:
-            provenance = skip_cell(cell, run_dir, repo_root, str(error), telemetry=settings)
+            provenance = skip_cell(
+                cell, run_dir, repo_root, str(error), telemetry=settings, now=now, environ=environ, repo_sha=repo_sha
+            )
         else:
-            provenance = run_cell(cell, run_dir, adapter, repo_root, telemetry=settings)
+            provenance = run_cell(
+                cell, run_dir, adapter, repo_root, telemetry=settings, now=now, environ=environ, repo_sha=repo_sha
+            )
         if traced:
             instance_dir = cell.directory(run_dir)
             tracing.annotate(

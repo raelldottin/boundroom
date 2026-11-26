@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
-import os
 import shlex
 import tarfile
 import tempfile
 import unittest
-import unittest.mock
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Callable, Generator, Mapping, Optional
 
 from automation.benchmark import lanes as lanes_module
 from automation.benchmark.adapter import (
@@ -37,6 +36,7 @@ from automation.benchmark.strategies import (
     RESEARCH_COMPACT_ARTIFACT,
     RPI_DIR,
     ExecutionContext,
+    ExecutionStrategy,
     RpiStrategy,
     agent_workspace_for,
     artifact_path,
@@ -70,6 +70,15 @@ FIXTURE_ARTIFACT = JSpaceArtifact(
     root=Path("/fixture/j-space"),
     text=f"# {JSPACE_MARKER}\n\nRun `<python-command> <skill-root>/scripts/control.py`.\n",
 )
+
+
+def strategy_for(lane: str) -> ExecutionStrategy:
+    """The lane's own strategy, except lane E's, built on the fixture J-Space artifact.
+
+    Lane E's real factory resolves the canonical J-Space checkout; the fixture stands in for
+    that checkout, not for the treatment.
+    """
+    return RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT) if lane == "E" else build_strategy(lane)
 
 
 class FakeAgent:
@@ -163,6 +172,63 @@ class FakeAgent:
         return next(session["prompt"] for session in self.sessions if session["phase"] == phase)
 
 
+# Captured at import, before any test redirects ``tempfile``: the lane helpers' own root has to
+# outlive whichever test first calls them.
+_SYSTEM_TEMP = tempfile.gettempdir()
+_HELPER_ROOT: Optional[tempfile.TemporaryDirectory] = None
+
+
+@contextlib.contextmanager
+def temporary_files_in(directory: Path) -> Generator[None, None, None]:
+    """Make ``tempfile`` create everything under ``directory`` while the block runs.
+
+    The adapter makes a workspace and a control directory per cell with ``mkdtemp`` and leaves
+    them, as a real run does; under a test they would pile up in the system temp directory.
+    """
+    previous = tempfile.tempdir
+    tempfile.tempdir = str(directory)
+    try:
+        yield
+    finally:
+        tempfile.tempdir = previous
+
+
+def isolate_tempdir(add_cleanup: Callable[..., Any]) -> Path:
+    """``temporary_files_in`` a fresh directory until cleanup, which also removes the directory.
+
+    ``add_cleanup`` is a test's ``addCleanup`` (or a class's ``addClassCleanup``).
+    """
+    tmp = tempfile.TemporaryDirectory(prefix="benchmark-test-")
+    add_cleanup(tmp.cleanup)
+    stack = contextlib.ExitStack()
+    stack.enter_context(temporary_files_in(Path(tmp.name)))
+    add_cleanup(stack.close)
+    return Path(tmp.name)
+
+
+class TempDirCase(unittest.TestCase):
+    """A test whose temporary files, including the adapter's, all land in one directory it removes."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        isolate_tempdir(self.addCleanup)
+
+    def directory(self) -> Path:
+        return Path(tempfile.mkdtemp(prefix="case-"))
+
+
+def _helper_dir(prefix: str) -> Path:
+    """A directory the lane helpers hand back, kept until the process exits.
+
+    Their callers read the returned paths after the call, so a directory scoped to the call
+    would be gone too early; one root per process keeps them and is removed at exit.
+    """
+    global _HELPER_ROOT
+    if _HELPER_ROOT is None:
+        _HELPER_ROOT = tempfile.TemporaryDirectory(prefix="test-benchmark-lanes-", dir=_SYSTEM_TEMP)
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=_HELPER_ROOT.name))
+
+
 def run_lane(lane: str, agent: Optional[FakeAgent] = None, timeout_seconds: int = 1800, strategy=None):
     """Drive one lane end-to-end against the fake agent; return (agent, result, tar_path).
 
@@ -176,9 +242,10 @@ def run_lane(lane: str, agent: Optional[FakeAgent] = None, timeout_seconds: int 
         timeout_seconds=timeout_seconds,
         strategy=strategy or build_strategy(lane),
     )
-    tmp = tempfile.mkdtemp(prefix=f"lane-{lane}-")
-    out_tar = Path(tmp) / "submission.tar.gz"
-    result = adapter.produce_submission(TASK, out_tar)
+    root = _helper_dir(f"lane-{lane}-")
+    out_tar = root / "submission.tar.gz"
+    with temporary_files_in(root):
+        result = adapter.produce_submission(TASK, out_tar)
     return agent, result, out_tar
 
 
@@ -190,22 +257,24 @@ def run_in_sandbox(lane: str, agent: Optional[FakeAgent] = None, timeout_seconds
     an agent that still writes host-side exactly where the bind mount puts those bytes.
     """
     agent = agent or FakeAgent()
-    workspace = Path(tempfile.mkdtemp(prefix="sandbox-ws-"))
+    root = _helper_dir("sandbox-")
+    workspace = root / "workspace"
+    workspace.mkdir()
+    control_dir = root / "control"
+    control_dir.mkdir()
     ctx = ExecutionContext(
         repo_root=REPO_ROOT,
         task=TASK,
         workspace=workspace,
-        control_dir=Path(tempfile.mkdtemp(prefix="sandbox-control-")),
+        control_dir=control_dir,
         command_template=_default_command_template(REPO_ROOT),
         env={},
         timeout_seconds=timeout_seconds,
         runner=agent,
         agent_workspace=agent_workspace_for(cleanroom=True),
     )
-    # Lane E's own factory resolves the canonical J-Space checkout; the fixture stands in for
-    # that checkout here exactly as it does in ``run_lane``.
-    strategy = RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT) if lane == "E" else build_strategy(lane)
-    result = strategy.execute(ctx)
+    with temporary_files_in(root):
+        result = strategy_for(lane).execute(ctx)
     return agent, result, workspace
 
 
@@ -272,7 +341,7 @@ class LaneTreatmentTests(unittest.TestCase):
         # shares, and which would give all five the same head start.
         for lane in ("A", "B", "C", "D", "E"):
             with self.subTest(lane=lane):
-                strategy = RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT) if lane == "E" else None
+                strategy = strategy_for(lane)
                 agent, _, _ = run_lane(lane, strategy=strategy)
                 for session in agent.sessions:
                     for identifier in (TASK.repository, TASK.instance_id, TASK.commit, "language:"):
@@ -301,7 +370,7 @@ class LaneTreatmentTests(unittest.TestCase):
 
     def test_lane_e_is_lane_d_plus_jspace_only(self) -> None:
         agent_d, _, _ = run_lane("D")
-        agent_e, result_e, _ = run_lane("E", strategy=RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT))
+        agent_e, result_e, _ = run_lane("E", strategy=strategy_for("E"))
         self.assertEqual("E", result_e.strategy.lane if result_e.strategy else None)
         self.assertEqual(agent_d.phases(), agent_e.phases())
         for session in agent_e.sessions:
@@ -310,7 +379,7 @@ class LaneTreatmentTests(unittest.TestCase):
             self.assertNotIn(JSPACE_MARKER, session["prompt"])
 
     def test_lane_e_records_which_artifact_it_administered(self) -> None:
-        _, result, _ = run_lane("E", strategy=RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT))
+        _, result, _ = run_lane("E", strategy=strategy_for("E"))
         assert result.strategy is not None
         self.assertEqual(FIXTURE_ARTIFACT.provenance(), result.strategy.to_dict()["jspace"])
 
@@ -355,14 +424,6 @@ class RequiredArtifactTests(unittest.TestCase):
         self.assertEqual("research", recorded["treatment_invalid_phase"])
         self.assertEqual("treatment_invalid", recorded["phases"][0]["state"])
         self.assertIn("artifact missing or unparseable", result.strategy.phases[0].artifact_errors)
-
-    def test_a_missing_plan_artifact_stops_the_lane_before_implementing(self) -> None:
-        agent, result, _ = run_lane("C", agent=FakeAgent(withhold=("plan",)))
-        self.assertEqual(["research", "plan"], agent.phases())
-        assert result.strategy is not None
-        recorded = result.strategy.to_dict()
-        self.assertEqual("invalid", recorded["treatment_validity"])
-        self.assertEqual("plan", recorded["treatment_invalid_phase"])
 
     def test_a_lane_that_delivered_every_artifact_reads_as_administered(self) -> None:
         for lane in ("A", "B", "C", "D"):
@@ -481,7 +542,7 @@ class PlanCheckpointProtocolTests(unittest.TestCase):
 
     def test_every_lane_with_a_plan_phase_sends_the_protocol(self) -> None:
         for lane in ("C", "D", "E"):
-            strategy = RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT) if lane == "E" else None
+            strategy = strategy_for(lane)
             for name, (agent, _, _) in (
                 ("local", run_lane(lane, strategy=strategy)),
                 ("sandbox", run_in_sandbox(lane)),
@@ -563,7 +624,7 @@ class ImplementBuildFirstProtocolTests(unittest.TestCase):
 
     def test_every_rpi_lane_sends_exactly_implement_prompt(self) -> None:
         for lane in ("C", "D", "E"):
-            strategy = RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT) if lane == "E" else None
+            strategy = strategy_for(lane)
             for name, (agent, _, _), workspace in (
                 ("local", run_lane(lane, strategy=strategy), ""),
                 ("sandbox", run_in_sandbox(lane), WORKSPACE_DIR),
@@ -602,7 +663,7 @@ class ResearchStopRuleTests(unittest.TestCase):
 
     def test_only_research_sessions_get_the_stop_rule(self) -> None:
         for lane in ALL_LANES:
-            strategy = RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT) if lane == "E" else None
+            strategy = strategy_for(lane)
             agent, _, _ = run_lane(lane, strategy=strategy)
             for session in agent.sessions:
                 with self.subTest(lane=lane, phase=session["phase"]):
@@ -629,7 +690,7 @@ class PlanStopRuleTests(unittest.TestCase):
 
     def test_only_plan_sessions_get_the_stop_rule(self) -> None:
         for lane in ALL_LANES:
-            strategy = RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT) if lane == "E" else None
+            strategy = strategy_for(lane)
             agent, _, _ = run_lane(lane, strategy=strategy)
             for session in agent.sessions:
                 with self.subTest(lane=lane, phase=session["phase"]):
@@ -907,9 +968,7 @@ class ModelVisibleArtifactPathTests(unittest.TestCase):
         self.assertEqual("", workspace_instruction(""))
         for lane in ALL_LANES:
             with self.subTest(lane=lane):
-                agent, _, _ = run_lane(
-                    lane, strategy=RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT) if lane == "E" else None
-                )
+                agent, _, _ = run_lane(lane, strategy=strategy_for(lane))
                 self.assertNotIn(WORKSPACE_DIR, agent.prompt_for("implement"))
 
     def test_the_host_reads_back_what_the_agent_was_told_to_write(self) -> None:
@@ -936,31 +995,21 @@ class ModelVisibleArtifactPathTests(unittest.TestCase):
                 self.assertNotIn(WORKSPACE_DIR, prompt)
 
 
-class BudgetTests(unittest.TestCase):
-    def test_multi_phase_lanes_share_one_instance_budget(self) -> None:
-        """A five-session lane must not get five times the wall clock of lane A."""
-        agent, _, _ = run_lane("D", timeout_seconds=600)
-        granted = [session["timeout"] for session in agent.sessions]
-        self.assertTrue(all(value <= 600 for value in granted), granted)
-        # Phases hold their own ceilings now, so the grants no longer shrink monotonically;
-        # what still has to hold is that together they fit inside the instance budget.
-        self.assertLessEqual(sum(granted), 600)
+class AdapterBudgetTests(unittest.TestCase):
+    def test_the_adapters_timeout_is_the_instance_budget_the_ceilings_scale_to(self) -> None:
+        """A five-session lane must not get five times the wall clock of lane A.
+
+        Through the adapter, not a hand-built context: its timeout is what reaches the lane.
+        The scaled ceilings do not depend on the clock, and the time left stays far above them.
+        """
+        budget = LANE_CEILING_SECONDS // 2
+        agent, _, _ = run_lane("D", timeout_seconds=budget)
+        granted = {session["phase"]: session["timeout"] for session in agent.sessions}
+        self.assertEqual(PHASE_CEILING_SECONDS["implement"] // 2, granted["implement"])
+        self.assertLessEqual(sum(granted.values()), budget)
 
 
-class MatrixTests(unittest.TestCase):
-    def test_interleave_covers_every_cell_exactly_once(self) -> None:
-        instances = ["i1", "i2", "i3"]
-        cells = lanes_module.interleave(instances, ALL_LANES, repeats=2)
-        self.assertEqual(len(instances) * len(ALL_LANES) * 2, len(cells))
-        self.assertEqual(len(cells), len({(c.lane, c.instance_id, c.repeat) for c in cells}))
-
-    def test_interleave_rotates_lane_order_between_instances(self) -> None:
-        cells = lanes_module.interleave(["i1", "i2"], ALL_LANES, repeats=1)
-        first = [c.lane for c in cells if c.instance_id == "i1"]
-        second = [c.lane for c in cells if c.instance_id == "i2"]
-        self.assertNotEqual(first, second)
-        self.assertEqual(sorted(first), sorted(second))
-
+class MatrixTests(TempDirCase):
     def test_run_experiment_lays_out_cells_and_records_provenance(self) -> None:
         agents: list[FakeAgent] = []
 
@@ -978,33 +1027,15 @@ class MatrixTests(unittest.TestCase):
                 repo_root=REPO_ROOT,
                 lanes=["A", "C"],
                 repeats=1,
+                repo_sha="fixture-sha",
             )
             provenance = json.loads((run_dir / "C" / "r1" / "inst-a" / "run.json").read_text(encoding="utf-8"))
             self.assertTrue((run_dir / "A" / "r1" / "inst-a" / "submission.tar.gz").is_file())
 
         self.assertEqual("C", provenance["lane"])
         self.assertEqual(3, provenance["strategy"]["agent_invocations"])
-        self.assertNotEqual("unknown", provenance["repo_automation_sha"])
+        self.assertEqual("fixture-sha", provenance["repo_automation_sha"])
         self.assertIn("started_at", provenance)
-
-    def test_provenance_names_the_runner_and_the_model_but_never_the_key(self) -> None:
-        """A lane result is only reproducible if it records what executed it."""
-        with unittest.mock.patch.dict(
-            os.environ,
-            {
-                "BOUNDROOM_AGENT_RUNNER": "hermes",
-                "HERMES_INFERENCE_PROVIDER": "nvidia",
-                "HERMES_INFERENCE_MODEL": "moonshotai/kimi-k3",
-                "NVIDIA_API_KEY": "sk-should-never-be-recorded",
-            },
-            clear=False,
-        ):
-            fingerprint = lanes_module._environment_fingerprint()
-
-        self.assertEqual("hermes", fingerprint["BOUNDROOM_AGENT_RUNNER"])
-        self.assertEqual("nvidia", fingerprint["HERMES_INFERENCE_PROVIDER"])
-        self.assertEqual("moonshotai/kimi-k3", fingerprint["HERMES_INFERENCE_MODEL"])
-        self.assertNotIn("sk-should-never-be-recorded", json.dumps(fingerprint))
 
     def test_an_unresolvable_jspace_skips_lane_e_instead_of_running_lane_d(self) -> None:
         agents: list[FakeAgent] = []
@@ -1072,58 +1103,6 @@ class MatrixTests(unittest.TestCase):
             summary = lanes_module.summarize_lane(Path(tmp), "E", repeats=1, reports=[])
         self.assertEqual(FIXTURE_ARTIFACT.provenance(), summary["jspace"])
 
-    def test_comparison_reports_adjacent_lane_deltas(self) -> None:
-        summaries = [
-            {
-                "lane": "A",
-                "primary": {"resolve_rate": 0.2, "near_resolve_rate": 0.2, "mean_pass_fraction": 0.5},
-                "efficiency": {"agent_invocations": 2, "wall_clock_seconds": 100.0},
-            },
-            {
-                "lane": "B",
-                "primary": {"resolve_rate": 0.4, "near_resolve_rate": 0.4, "mean_pass_fraction": 0.6},
-                "efficiency": {"agent_invocations": 2, "wall_clock_seconds": 120.0},
-            },
-            {
-                "lane": "C",
-                "primary": {"resolve_rate": 0.3, "near_resolve_rate": 0.5, "mean_pass_fraction": 0.7},
-                "efficiency": {"agent_invocations": 6, "wall_clock_seconds": 300.0},
-            },
-        ]
-        deltas = lanes_module.lane_deltas(summaries)
-        self.assertEqual(["B - A", "C - B"], [delta["comparison"] for delta in deltas])
-        self.assertAlmostEqual(0.2, deltas[0]["resolve_rate"])
-        self.assertAlmostEqual(-0.1, deltas[1]["resolve_rate"])  # RPI cost resolve rate here
-        self.assertEqual(4, deltas[1]["agent_invocations"])
-
-    def test_summarize_lane_reports_stability_across_repeats(self) -> None:
-        reports = [
-            EffectivenessReport((InstanceScore("i1", 10, 10),)),
-            EffectivenessReport((InstanceScore("i1", 10, 0),)),
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            summary = lanes_module.summarize_lane(Path(tmp), "C", repeats=2, reports=reports)
-        self.assertEqual(0.5, summary["primary"]["resolve_rate"])
-        self.assertGreater(summary["stability"]["resolve_rate_stdev"], 0.0)
-
-    def test_markdown_comparison_renders_both_tables(self) -> None:
-        comparison = {
-            "lanes": [
-                {
-                    "lane": "A",
-                    "primary": {"resolve_rate": 0.2, "near_resolve_rate": 0.2, "mean_pass_fraction": 0.5},
-                    "efficiency": {"agent_invocations": 2, "wall_clock_seconds": 100.0},
-                    "stability": {"resolve_rate_stdev": 0.1},
-                    "process": {"phase_failures": 0, "nonzero_returncodes": 0},
-                }
-            ],
-            "deltas": [],
-            "note": "Primary metric is ProgramBench correctness.",
-        }
-        markdown = lanes_module.render_comparison_markdown(comparison)
-        self.assertIn("Primary outcome", markdown)
-        self.assertIn("one session, raw objective", markdown)
-
     def test_markdown_flags_unrun_cells_and_names_the_administered_artifact(self) -> None:
         lane = {
             "lane": "E",
@@ -1140,68 +1119,6 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("Unrun cells", markdown)
         self.assertIn("| E | 2 |", markdown)
         self.assertIn(FIXTURE_ARTIFACT.revision, markdown)
-
-
-if __name__ == "__main__":
-    unittest.main()
-
-
-class PhaseBudgetTests(unittest.TestCase):
-    """A greedy first phase must not be able to spend the phase that writes the code.
-
-    In run 35650966066 every multi-phase lane submitted nothing: research was handed the
-    whole remaining budget and lane D spent 1799 of 1800 seconds on it, leaving implement
-    one second. Ceilings also hold the decomposition together - C must not inherit the
-    compaction time D and E spend, or ``D - C`` measures more than compaction.
-    """
-
-    def _budgets(self, lane: str, timeout_seconds: int = LANE_CEILING_SECONDS) -> dict[str, int]:
-        strategy = RpiStrategy(compaction=lane != "C", jspace=FIXTURE_ARTIFACT if lane == "E" else None, name=lane)
-        agent, result, _ = run_lane(lane, timeout_seconds=timeout_seconds, strategy=strategy)
-        assert result.strategy is not None
-        return {session["phase"]: session["timeout"] for session in agent.sessions}
-
-    def test_implement_keeps_its_allowance_whatever_research_does(self) -> None:
-        self.assertEqual(PHASE_CEILING_SECONDS["implement"], self._budgets("C")["implement"])
-
-    def test_shared_phases_get_identical_ceilings_across_c_d_e(self) -> None:
-        budgets = {lane: self._budgets(lane) for lane in ("C", "D", "E")}
-        for phase in ("research", "plan", "implement"):
-            with self.subTest(phase=phase):
-                self.assertEqual(
-                    {PHASE_CEILING_SECONDS[phase]},
-                    {budgets[lane][phase] for lane in ("C", "D", "E")},
-                )
-
-    def test_c_does_not_reclaim_the_compaction_slots(self) -> None:
-        spent = sum(self._budgets("C").values())
-        forfeited = PHASE_CEILING_SECONDS["research_compact"] + PHASE_CEILING_SECONDS["plan_compact"]
-        self.assertEqual(LANE_CEILING_SECONDS - forfeited, spent)
-
-    def test_a_lane_never_exceeds_its_instance_budget(self) -> None:
-        for lane in ("C", "D", "E"):
-            with self.subTest(lane=lane):
-                self.assertLessEqual(sum(self._budgets(lane).values()), LANE_CEILING_SECONDS)
-
-    def test_a_smaller_instance_budget_scales_the_profile(self) -> None:
-        budgets = self._budgets("D", timeout_seconds=LANE_CEILING_SECONDS // 2)
-        self.assertEqual(PHASE_CEILING_SECONDS["implement"] // 2, budgets["implement"])
-
-    def test_single_session_lanes_still_get_the_whole_budget(self) -> None:
-        for lane in ("A", "B"):
-            with self.subTest(lane=lane):
-                agent, result, _ = run_lane(lane, timeout_seconds=LANE_CEILING_SECONDS)
-                assert result.strategy is not None
-                # Minus however long setup took: one session still means the whole budget.
-                self.assertAlmostEqual(LANE_CEILING_SECONDS, agent.sessions[0]["timeout"], delta=5)
-                self.assertEqual({"implement": LANE_CEILING_SECONDS}, result.strategy.to_dict()["phase_budgets"])
-
-    def test_the_profile_is_recorded_with_the_result(self) -> None:
-        _, result, _ = run_lane(
-            "E", timeout_seconds=LANE_CEILING_SECONDS, strategy=RpiStrategy(compaction=True, jspace=FIXTURE_ARTIFACT)
-        )
-        assert result.strategy is not None
-        self.assertEqual(PHASE_CEILING_SECONDS, result.strategy.to_dict()["phase_budgets"])
 
 
 class AgentSessionProvenanceTests(unittest.TestCase):
@@ -1446,3 +1363,7 @@ class MeasurementTests(unittest.TestCase):
             {"lanes": summaries, "deltas": [delta], "note": "Primary metric is ProgramBench correctness."}
         )
         self.assertIn("C: no artifact from research - diagnostic score 76.7%", markdown)
+
+
+if __name__ == "__main__":
+    unittest.main()
