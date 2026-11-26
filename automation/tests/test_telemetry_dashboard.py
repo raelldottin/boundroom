@@ -239,6 +239,31 @@ class TestTheSample:
         assert len(runs) == len(generator.RUNS)
 
 
+class TestTheGenerator:
+    def test_it_writes_the_sample_and_check_tells_fresh_from_stale(self, tmp_path, capsys):
+        written = tmp_path / "sample-metrics.om"
+        assert generator.main([], sample=written) == 0
+        assert capsys.readouterr().out == f"wrote {written}\n"
+        assert written.read_text(encoding="utf-8") == SAMPLE.read_text(encoding="utf-8")
+
+        assert generator.main(["--check"], sample=written) == 0
+        written.write_text("# EOF\n", encoding="utf-8")
+        assert generator.main(["--check"], sample=written) == 1
+        assert capsys.readouterr().err == f"{written} is stale: run uv run python Tools/telemetry_sample.py\n"
+        assert written.read_text(encoding="utf-8") == "# EOF\n", "check writes nothing"
+
+    def test_a_run_recorded_inside_the_repository_stops_the_generator(self):
+        inside = REPO_ROOT / "telemetry-sample-never-written"
+        with pytest.raises(SystemExit, match="telemetry didn't start"):
+            generator.record(generator.Run("sync", "ok", 1), "inside", inside)
+        assert not inside.exists()
+
+    def test_a_metric_telemetry_couldnt_record_stops_the_generator(self):
+        broken = generator.Run("sync", "ok", 1, changes={"synced": "not a number"})  # type: ignore[dict-item]
+        with pytest.raises(SystemExit, match="metric boundroom.sync.changes was not recorded"):
+            generator.render([broken])
+
+
 def test_the_readme_says_how_to_load_it():
     text = README.read_text(encoding="utf-8")
     for phrase in (

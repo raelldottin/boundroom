@@ -27,7 +27,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -142,11 +142,11 @@ def points(data: Any) -> Iterator[tuple[str, Any]]:
                     yield metric.name, point
 
 
-def render() -> str:
+def render(runs: Sequence[Run] = RUNS) -> str:
     families: dict[str, list[str]] = {instrument.name: [] for instrument in telemetry_metrics.CATALOGUE}
     said = io.StringIO()
     with tempfile.TemporaryDirectory(prefix="boundroom-sample-") as out, contextlib.redirect_stderr(said):
-        for index, run in enumerate(RUNS):
+        for index, run in enumerate(runs):
             instance = f"sample-run-{index + 1:03d}"
             timestamp = START + index * STEP_SECONDS
             for name, point in points(record(run, instance, Path(out))):
@@ -178,19 +178,24 @@ def render() -> str:
     return "\n".join([*text, "# EOF", ""])
 
 
-def main(argv: list[str]) -> int:
+def shown(path: Path) -> str:
+    """``path`` relative to the repository when it is inside it, as the messages name the sample."""
+    return str(path.relative_to(REPO_ROOT)) if path.is_relative_to(REPO_ROOT) else str(path)
+
+
+def main(argv: list[str], sample: Path = SAMPLE) -> int:
     parser = argparse.ArgumentParser(description="Write the sample metrics the example dashboard is checked against.")
     parser.add_argument("--check", action="store_true", help="Exit 1 if the sample is stale, and write nothing.")
     args = parser.parse_args(argv)
     text = render()
     if args.check:
-        if SAMPLE.read_text(encoding="utf-8") != text:
-            print(f"{SAMPLE.relative_to(REPO_ROOT)} is stale: run uv run python Tools/telemetry_sample.py", file=sys.stderr)
+        if sample.read_text(encoding="utf-8") != text:
+            print(f"{shown(sample)} is stale: run uv run python Tools/telemetry_sample.py", file=sys.stderr)
             return 1
         return 0
-    SAMPLE.parent.mkdir(parents=True, exist_ok=True)
-    SAMPLE.write_text(text, encoding="utf-8")
-    print(f"wrote {SAMPLE.relative_to(REPO_ROOT)}")
+    sample.parent.mkdir(parents=True, exist_ok=True)
+    sample.write_text(text, encoding="utf-8")
+    print(f"wrote {shown(sample)}")
     return 0
 
 

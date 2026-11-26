@@ -6,9 +6,16 @@
 When it is on, the Logfire SDK is imported lazily and configured only from those settings:
 ``send_to_logfire=False`` always (UD-3), no console, no argument inspection, its ``data_dir``
 outside the repository, spans only to Boundroom's own exporter for the user's destination, and
-metrics only to Boundroom's own in-memory reader, collected once at flush (RA-TEL-010). Logfire reads ``OTEL_EXPORTER_OTLP_*`` from the environment while it configures and
-would add an exporter for them, so those variables, and ``LOGFIRE_*``, are hidden from it for the
-duration (UD-6). A setting someone made for another tool must not send Boundroom's traces anywhere.
+metrics only to Boundroom's own in-memory reader, collected once at flush (RA-TEL-010).
+
+A setting someone made for another tool must not send Boundroom's traces anywhere (UD-6), so the
+``OTEL_*`` and ``LOGFIRE_*`` variables are hidden from the process environment while the SDK is
+configured and the exporters are built. Passing every setting explicitly isn't enough, because
+the SDK reads the environment whatever it is given. Logfire (5.6, the pinned version) adds its
+own exporter whenever an ``OTEL_EXPORTER_OTLP_*ENDPOINT`` is set and the matching
+``OTEL_*_EXPORTER`` is unset or ``otlp``; ``Resource.create`` merges ``OTEL_RESOURCE_ATTRIBUTES``
+and ``OTEL_SERVICE_NAME`` into the resource; and the OTLP HTTP exporters merge
+``OTEL_EXPORTER_OTLP_*HEADERS`` into their headers. No keyword turns any of these off.
 """
 
 from __future__ import annotations
@@ -24,7 +31,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ContextManager, Generator, Optional, Sequence
+from typing import Any, Callable, ContextManager, Generator, MutableMapping, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from automation.supervisor import egress, sync_pin, telemetry_metrics
@@ -61,6 +68,8 @@ class Telemetry:
     _instruments: dict[str, Any] = field(default_factory=dict)
     _resource_keys: tuple[str, ...] = ()
     messages: list[str] = field(default_factory=list)
+    # The bounded flush's clock; configure takes another one for tests.
+    _clock: Callable[[], float] = field(default=time.monotonic, repr=False, compare=False)
 
     @property
     def enabled(self) -> bool:
@@ -144,7 +153,7 @@ class Telemetry:
 
         Spans go first. Metrics are collected once and get whatever time the spans left.
         """
-        deadline = time.monotonic() + FLUSH_TIMEOUT_SECONDS
+        deadline = self._clock() + FLUSH_TIMEOUT_SECONDS
         flushed = True
         if self._processor is not None:
             # Logfire 5.6 holds finished spans in its own pipeline until Logfire flushes, so
@@ -152,7 +161,7 @@ class Telemetry:
             # every processor, Boundroom's included; the second flush gets whatever time is left.
             if self._logfire is not None:
                 self._logfire.force_flush(timeout_millis=FLUSH_TIMEOUT_SECONDS * 1000)
-            remaining = max(0, int((deadline - time.monotonic()) * 1000))
+            remaining = max(0, int((deadline - self._clock()) * 1000))
             flushed = bool(self._processor.force_flush(timeout_millis=remaining))
             if not flushed:
                 print(f"telemetry: flush did not finish within {FLUSH_TIMEOUT_SECONDS}s; the rest was dropped", file=sys.stderr)
@@ -178,7 +187,7 @@ class Telemetry:
                 return True
             if exporter is None:
                 return True
-            remaining = deadline - time.monotonic()
+            remaining = deadline - self._clock()
             if remaining <= 0:
                 print("telemetry: no time was left to send metrics; they were dropped", file=sys.stderr)
                 return False
@@ -203,20 +212,21 @@ def configure(
     run_id: str,
     service_version: str = "",
     outside: Sequence[Path] = (),
+    clock: Callable[[], float] = time.monotonic,
 ) -> Telemetry:
     """Build the run's telemetry handle. Raises TelemetryRefused only when ``required`` is set.
 
     ``outside`` names more checkouts ``file_dir`` must stay out of. The sync tool writes into a
     consumer but reads a canonical source that must stay clean for its provenance check, so a
-    spans file in either would break the next run.
+    spans file in either would break the next run. ``clock`` is the bounded flush's clock.
     """
-    handle = Telemetry(settings=settings, run_id=run_id)
+    handle = Telemetry(settings=settings, run_id=run_id, _clock=clock)
     if not settings.enabled:
         return handle
     try:
         # An OTLP exporter reads OTEL_EXPORTER_OTLP_* (headers, certificates, compression) when it
         # is built and its argument is empty, so the ambient settings are hidden here too (UD-6).
-        with _hidden_ambient_settings():
+        with _hidden_ambient_settings(os.environ):
             processor, data_dir = _exporter(settings, (repo_root, *outside), run_id)
             metric_exporter, note = (None, "") if settings.mode == "file" else _otlp_metric_exporter(settings)
         if settings.required:
@@ -229,7 +239,7 @@ def configure(
         handle._metric_exporter = metric_exporter
         if note:
             handle.messages.append(note)
-        with _hidden_ambient_settings():
+        with _hidden_ambient_settings(os.environ):
             handle._logfire = logfire.configure(
                 local=True,
                 send_to_logfire=False,
@@ -248,10 +258,6 @@ def configure(
             )
         handle._processor = processor
         handle._metric_reader = reader
-    except TelemetryRefused:
-        if settings.required:
-            raise
-        handle.messages.append("telemetry: could not be enabled; continuing with telemetry off")
     except egress.EgressRefused as error:
         # resolve() already turns otlp off when offline; this is the chokepoint's own refusal.
         if settings.required:
@@ -277,12 +283,17 @@ def _import_logfire() -> Any:
 
 
 @contextmanager
-def _hidden_ambient_settings() -> Generator[None, None, None]:
-    hidden = {key: os.environ.pop(key) for key in list(os.environ) if key.startswith(AMBIENT_PREFIXES)}
+def _hidden_ambient_settings(environ: MutableMapping[str, str]) -> Generator[None, None, None]:
+    """``environ`` without its ``OTEL_*`` and ``LOGFIRE_*`` variables, which come back afterwards.
+
+    The callers pass the process environment, because that is what the SDK reads (the module
+    docstring says where).
+    """
+    hidden = {key: environ.pop(key) for key in list(environ) if key.startswith(AMBIENT_PREFIXES)}
     try:
         yield
     finally:
-        os.environ.update(hidden)
+        environ.update(hidden)
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -535,9 +546,14 @@ def without_root(text: Optional[str], repo_root: Path) -> Optional[str]:
     return text.replace(root + "/", "").replace(root, ".")
 
 
-def new_run_id() -> str:
-    """A run id that sorts by time and can't collide between two runs started in the same second."""
-    return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
+def new_run_id(now: Optional[datetime] = None) -> str:
+    """A run id that sorts by time and can't collide between two runs started in the same second.
+
+    ``now`` is the time it names, converted to UTC, so give it a time zone (a naive datetime is
+    read as local time); the current time when it isn't given.
+    """
+    moment = now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
+    return f"{moment.strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}"
 
 
 # Boundroom's own release version. The sync doesn't deliver it, so a consumer's copy has none; the

@@ -14,8 +14,9 @@ import os
 import shlex
 import sys
 from pathlib import Path
-from typing import Any
 from unittest import mock
+
+import pytest
 
 from automation.supervisor import telemetry
 from automation.supervisor.telemetry_settings import resolve
@@ -108,6 +109,9 @@ def test_without_root_cuts_the_repository_path_out_of_a_reason(tmp_path):
 def test_an_exporter_failure_changes_neither_the_verdict_nor_the_exit_code(
     consumer, agent, no_hermes, monkeypatch, capsys, tmp_path
 ):
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root writes to a read-only directory")
+
     def outcome(extra: tuple[str, ...], name: str) -> tuple[int, str, str]:
         board = local.Board(tmp_path / name, tasks=1)
         code = local.supervise(monkeypatch, board, agent, extra=extra)
@@ -116,16 +120,17 @@ def test_an_exporter_failure_changes_neither_the_verdict_nor_the_exit_code(
 
     untraced = outcome((), "off")
 
-    def failing_exporter(path: Path, **options: Any):  # type: ignore[no-untyped-def]
-        exporter = real(path, **options)
-        exporter.export = mock.Mock(side_effect=OSError("disk full"))
-        return exporter
-
-    real = telemetry.json_lines_exporter
-    with mock.patch.object(telemetry, "json_lines_exporter", failing_exporter):
-        traced = outcome(("--telemetry", "file", "--telemetry-file-dir", str(tmp_path / "spans")), "failing")
+    # A spans directory nobody can write to: the spans and the metrics both fail to be written.
+    unwritable = tmp_path / "spans"
+    unwritable.mkdir()
+    unwritable.chmod(0o500)
+    try:
+        traced = outcome(("--telemetry", "file", "--telemetry-file-dir", str(unwritable)), "failing")
+    finally:
+        unwritable.chmod(0o700)
 
     assert traced == untraced
+    assert list(unwritable.iterdir()) == []
 
 
 class FakeSession:
