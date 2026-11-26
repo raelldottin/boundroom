@@ -36,7 +36,7 @@ CREATE TABLE task_runs (
 );
 """
 STAND_IN = r"""
-import json, os, sqlite3, sys
+import json, os, sqlite3, sys, time
 args = sys.argv[1:]
 with open(os.environ["FAKE_HERMES_LOG"], "a") as log:
     log.write(json.dumps({"argv": args, "task": os.environ.get("HERMES_KANBAN_TASK"),
@@ -44,6 +44,12 @@ with open(os.environ["FAKE_HERMES_LOG"], "a") as log:
 mode = os.environ.get("FAKE_HERMES_MODE", "")
 if mode == "refuse":
     sys.exit("kanban: cannot do that")
+if mode == "refuse-with":
+    sys.stdout.write(os.environ.get("FAKE_HERMES_STDOUT", ""))
+    sys.stderr.write(os.environ.get("FAKE_HERMES_STDERR", ""))
+    sys.exit(int(os.environ.get("FAKE_HERMES_EXIT", "1")))
+if mode == "hang":
+    time.sleep(30)
 assert args[:2] == ["kanban", "--board"], args
 board, command, task = args[2], args[3], args[4]
 conn = sqlite3.connect(os.path.join(os.environ["FAKE_KANBAN_ROOT"], board, "kanban.db"))
@@ -52,9 +58,18 @@ if mode == "silent":
 if command == "claim":
     if conn.execute("UPDATE tasks SET status = 'running' WHERE id = ? AND status = 'ready'", (task,)).rowcount != 1:
         sys.exit(f"cannot claim {task}")
+    if mode == "claim-without-run":
+        conn.commit()
+        sys.exit(0)
     run = conn.execute("INSERT INTO task_runs (task_id, status) VALUES (?, 'running')", (task,)).lastrowid
     conn.execute("UPDATE tasks SET current_run_id = ? WHERE id = ?", (run, task))
 else:
+    if mode == "reclaim-first":  # the gateway reclaims the task between our check and this write
+        conn.execute("UPDATE task_runs SET status = 'reclaimed', outcome = 'reclaimed' "
+                     "WHERE id = (SELECT current_run_id FROM tasks WHERE id = ?)", (task,))
+        run = conn.execute("INSERT INTO task_runs (task_id, status) VALUES (?, 'running')", (task,)).lastrowid
+        conn.execute("UPDATE tasks SET current_run_id = ? WHERE id = ?", (run, task))
+        conn.commit()
     expected = os.environ.get("HERMES_KANBAN_RUN_ID") if os.environ.get("HERMES_KANBAN_TASK") == task else None
     current = conn.execute("SELECT current_run_id FROM tasks WHERE id = ? AND status = 'running'", (task,)).fetchone()
     if current is None or (expected is not None and str(current[0]) != expected):
@@ -116,6 +131,10 @@ def take(board_dir: Path, hermes) -> kw.Claim:
     return kw.claim(board_dir, READY, kp.read_board(board_dir).revision, hermes, ttl_seconds=600)
 
 
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def test_a_done_verdict_claims_then_asks_for_review_on_our_run(board, hermes, handoff, tmp_path):
     held = take(board, hermes)
 
@@ -125,14 +144,21 @@ def test_a_done_verdict_claims_then_asks_for_review_on_our_run(board, hermes, ha
     assert row(board, "SELECT status, current_run_id FROM tasks WHERE id = ?", READY) == ("review", None)
     status, outcome, metadata = row(board, "SELECT status, outcome, metadata FROM task_runs WHERE id = 1")
     assert (status, outcome) == ("review", "review_requested")
-    assert json.loads(metadata) == {
-        "handoff_sha256": hashlib.sha256(handoff.read_bytes()).hexdigest(),
-        "slice_id": kp.slice_id_for(BOARD, READY),
-    }
+    assert json.loads(metadata) == {"handoff_sha256": digest(handoff), "slice_id": kp.slice_id_for(BOARD, READY)}
     claim_call, review_call = calls(tmp_path)
     assert claim_call == {"argv": ["kanban", "--board", BOARD, "claim", READY, "--ttl", "600"], "task": None, "run": None}
-    assert review_call["argv"][3:7] == ["request-review", READY, "--summary", "validated"]
-    assert (review_call["task"], review_call["run"]) == (READY, "1")
+    evidence = f'{{"handoff_sha256": "{digest(handoff)}", "slice_id": "{kp.slice_id_for(BOARD, READY)}"}}'
+    assert review_call == {
+        "argv": ["kanban", "--board", BOARD, "request-review", READY, "--summary", "validated", "--metadata", evidence],
+        "task": READY,
+        "run": "1",
+    }
+
+
+def test_a_claim_without_a_ttl_holds_the_task_for_two_hours(board, hermes, tmp_path):
+    kw.claim(board, READY, kp.read_board(board).revision, hermes)
+
+    assert calls(tmp_path)[0]["argv"][-2:] == ["--ttl", "7200"]
 
 
 @pytest.mark.parametrize(("verdict", "kind"), [("blocked", "needs_input"), ("failed", "transient")])
@@ -142,9 +168,25 @@ def test_blocked_and_failed_verdicts_block_the_task(board, hermes, handoff, tmp_
     assert kw.record(board, held, verdict, "scope check failed", handoff, hermes) is True
 
     assert row(board, "SELECT status FROM tasks WHERE id = ?", READY) == ("blocked",)
-    argv = calls(tmp_path)[-1]["argv"]
-    assert argv[3:7] == ["block", READY, "--kind", kind]
-    assert argv[7].startswith("scope check failed (handoff sha256 ")
+    assert row(board, "SELECT status, outcome FROM task_runs WHERE id = ?", held.run_id) == ("blocked", "blocked")
+    assert calls(tmp_path)[-1]["argv"][3:] == [
+        "block",
+        READY,
+        "--kind",
+        kind,
+        f"scope check failed (handoff sha256 {digest(handoff)})",
+    ]
+
+
+@pytest.mark.parametrize("missing", [None, "never-written.json"])
+def test_a_failed_run_without_a_handoff_says_so_in_its_block_reason(board, hermes, tmp_path, missing):
+    held = take(board, hermes)
+    handoff_path = tmp_path / missing if missing else None
+
+    assert kw.record(board, held, "failed", "agent exited 3", handoff_path, hermes) is True
+
+    assert calls(tmp_path)[-1]["argv"][-1] == "agent exited 3 (handoff sha256 none)"
+    assert row(board, "SELECT status FROM tasks WHERE id = ?", READY) == ("blocked",)
 
 
 def test_recording_twice_writes_once(board, hermes, handoff, tmp_path):
@@ -153,6 +195,14 @@ def test_recording_twice_writes_once(board, hermes, handoff, tmp_path):
 
     assert kw.record(board, held, "done", "validated", handoff, hermes) is False
     assert len(calls(tmp_path)) == 2
+
+
+def test_a_failed_verdict_after_a_blocked_one_counts_as_already_recorded(board, hermes, handoff, tmp_path):
+    held = take(board, hermes)
+    kw.record(board, held, "blocked", "needs a person", handoff, hermes)
+
+    assert kw.record(board, held, "failed", "agent exited 3", handoff, hermes) is False
+    assert [call["argv"][3] for call in calls(tmp_path)] == ["claim", "block"]
 
 
 def test_a_board_that_moved_since_the_projection_is_not_claimed(board, hermes, tmp_path):
@@ -193,18 +243,28 @@ def test_a_reclaimed_run_is_not_ours_to_close(board, hermes, handoff, tmp_path):
     assert len(calls(tmp_path)) == 1
 
 
-def test_hermes_still_guards_the_run_if_the_board_moves_after_our_check(board, hermes, handoff, monkeypatch):
+def test_hermes_still_guards_the_run_if_the_board_moves_after_our_check(board, hermes, handoff, monkeypatch, tmp_path):
     held = take(board, hermes)
-    stale = kw.Claim(BOARD, READY, held.run_id)
-    execute(board, f"INSERT INTO task_runs (task_id, status) VALUES ('{READY}', 'running')")
-    monkeypatch.setattr(kw, "_task", lambda *_: {"current_run_id": held.run_id})  # our check saw the old run
+    monkeypatch.setenv("FAKE_HERMES_MODE", "reclaim-first")  # the gateway reclaims after our check passed
 
-    execute(board, f"UPDATE tasks SET current_run_id = 2 WHERE id = '{READY}'")
-    with pytest.raises(kw.KanbanWriteError, match="run is not current"):
-        kw.record(board, stale, "done", "validated", handoff, hermes)
+    with pytest.raises(kw.KanbanWriteError) as refusal:
+        kw.record(board, held, "done", "validated", handoff, hermes)
+
+    assert str(refusal.value) == f"hermes kanban request-review refused: cannot request-review {READY}: run is not current"
+    review_call = calls(tmp_path)[-1]
+    assert review_call["argv"][3] == "request-review"
+    assert (review_call["task"], review_call["run"]) == (READY, "1")
+    assert row(board, "SELECT status, current_run_id FROM tasks WHERE id = ?", READY) == ("running", 2)
 
 
-@pytest.mark.parametrize(("mode", "message"), [("refuse", "refused: kanban: cannot do that"), ("silent", "board shows ready")])
+@pytest.mark.parametrize(
+    ("mode", "message"),
+    [
+        ("refuse", "refused: kanban: cannot do that"),
+        ("silent", "board shows ready"),
+        ("claim-without-run", "board shows running"),
+    ],
+)
 def test_hermes_refusals_and_unapplied_claims_fail_closed(board, hermes, monkeypatch, mode, message):
     monkeypatch.setenv("FAKE_HERMES_MODE", mode)
 
@@ -231,8 +291,66 @@ def test_unknown_verdicts_and_foreign_boards_are_refused(board, hermes, handoff,
 
 
 def test_a_missing_hermes_is_a_refusal(board, tmp_path):
-    with pytest.raises(kw.KanbanWriteError, match="cannot run"):
-        take(board, (str(tmp_path / "no-hermes"),))
+    missing = tmp_path / "no-hermes"
+
+    with pytest.raises(kw.KanbanWriteError) as refusal:
+        take(board, (str(missing),))
+
+    # The reason after the colon is the OS's own text (strerror), which varies by platform and locale.
+    message = str(refusal.value)
+    assert message.startswith(f"cannot run {missing}: ") and message != f"cannot run {missing}: "
+
+
+def test_a_hermes_that_hangs_is_stopped_and_refused(board, hermes, monkeypatch, tmp_path):
+    monkeypatch.setattr(kw, "HERMES_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setenv("FAKE_HERMES_MODE", "hang")
+
+    with pytest.raises(kw.KanbanWriteError) as refusal:
+        take(board, hermes)
+
+    assert str(refusal.value) == "hermes kanban claim did not finish within 0.5s"
+    assert row(board, "SELECT status FROM tasks WHERE id = ?", READY) == ("ready",)
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr", "exit_code", "reported"),
+    [
+        ("", "warming up\nboard is locked\n", "1", "board is locked"),
+        ("nothing to claim\n", "", "1", "nothing to claim"),
+        ("progress\n", "board is locked\n", "1", "board is locked"),
+        ("", "", "3", "3"),
+    ],
+)
+def test_a_refusal_reports_the_last_line_hermes_printed(board, hermes, monkeypatch, stdout, stderr, exit_code, reported):
+    monkeypatch.setenv("FAKE_HERMES_MODE", "refuse-with")
+    monkeypatch.setenv("FAKE_HERMES_STDOUT", stdout)
+    monkeypatch.setenv("FAKE_HERMES_STDERR", stderr)
+    monkeypatch.setenv("FAKE_HERMES_EXIT", exit_code)
+
+    with pytest.raises(kw.KanbanWriteError) as refusal:
+        take(board, hermes)
+
+    assert str(refusal.value) == f"hermes kanban claim refused: {reported}"
+
+
+def test_hermes_calls_carry_only_the_supervisors_run_scope(board, hermes, handoff, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_ffffffff")  # a worker's scope in the supervisor's environment
+    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", "99")
+    held = take(board, hermes)
+
+    kw.record(board, held, "done", "validated", handoff, hermes)
+
+    claim_call, review_call = calls(tmp_path)
+    assert (claim_call["task"], claim_call["run"]) == (None, None)
+    assert (review_call["task"], review_call["run"]) == (READY, str(held.run_id))
+
+
+def test_a_hermes_claim_cannot_be_renewed(board, hermes, tmp_path):
+    backend = kw.HermesBackend(board, hermes)
+
+    with pytest.raises(kw.KanbanWriteError, match="can't be renewed; run 1 keeps its original TTL"):
+        backend.renew(kw.Claim(BOARD, READY, 1), 600)
+    assert calls(tmp_path) == []
 
 
 # The real Hermes CLI, on a throwaway HERMES_HOME. Skipped unless HERMES_AGENT_PYTHON names an
