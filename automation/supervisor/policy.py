@@ -411,15 +411,21 @@ def dependencies_satisfied(slice_record: dict[str, Any], queue_data: dict[str, A
     return True
 
 
+def slice_is_eligible(slice_record: dict[str, Any], queue_data: dict[str, Any]) -> bool:
+    """Whether a slice may run next on its own merits: it is queued and every dependency is done."""
+    return slice_record["status"] == "queued" and dependencies_satisfied(slice_record, queue_data)
+
+
+def eligible_slices(queue_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every eligible slice, by priority number, the earlier slice in the queue on a tie."""
+    candidates = [slice_record for slice_record in queue_data["slices"] if slice_is_eligible(slice_record, queue_data)]
+    # sorted is stable, so a tie keeps queue order.
+    return sorted(candidates, key=itemgetter("priority"))
+
+
 def select_next_slice(queue_data: dict[str, Any]) -> Optional[dict[str, Any]]:
     """The queued slice with met dependencies and the lowest priority number; the earlier one on a tie."""
-    candidates = [
-        slice_record
-        for slice_record in queue_data["slices"]
-        if slice_record["status"] == "queued" and dependencies_satisfied(slice_record, queue_data)
-    ]
-    # min keeps the first of equal keys, so a tie goes to the earlier slice.
-    return min(candidates, key=itemgetter("priority"), default=None)
+    return next(iter(eligible_slices(queue_data)), None)
 
 
 def blocked_slice_reports(queue_data: dict[str, Any]) -> list[BlockedSliceReport]:
