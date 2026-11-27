@@ -1,0 +1,67 @@
+name: Mutation score (advisory)
+
+# Measures how many mutants of each module the tests kill (docs/reference/mutation-testing.md)
+# and fails when a module's score drops below quality/mutation-baseline.json. Advisory: it is
+# not a required check and doesn't run on pull requests. It runs only when a person starts it:
+# a schedule is added only once the owner approves one (AGENTS.md: schedules need a person's
+# approval), and making it required would be a ruleset change, also the owner's decision.
+
+on:
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: "Comma-separated module paths. Empty measures every module in the baseline."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-score
+  cancel-in-progress: false
+
+jobs:
+  mutation:
+    name: Mutation score
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The harness clones this checkout into disposable copies; a full history avoids
+          # cloning from a shallow repository.
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync dev dependencies
+        run: uv sync --frozen --python 3.12
+
+      # The input reaches the shell through the environment, never by template expansion.
+      - name: Measure and check the ratchet
+        env:
+          UV_PYTHON: "3.12"
+          MODULES: ${{ inputs.modules }}
+        run: |
+          if [ -n "$MODULES" ]; then
+            # `--` so a value starting with "-" names a module, not an option.
+            uv run python -m Tools.mutate --check-baseline --jobs 2 -- "$MODULES"
+          else
+            uv run python -m Tools.mutate --check-baseline --jobs 2 --baseline-modules
+          fi
+
+      - name: Keep the reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: mutation-reports
+          # Per-mutant reports aren't committed (.gitignore); this is where to read them.
+          path: quality/reports/mutation-report-*.json
+          if-no-files-found: ignore
