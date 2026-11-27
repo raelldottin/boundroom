@@ -7,15 +7,20 @@ as a survivor it should have killed or a kill it can't have seen, fails here.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import os
+import runpy
+import signal
 import subprocess
 import sys
 import tempfile
 import textwrap
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from Tools.mutate import apply_mutant, cli, report, runner
@@ -255,16 +260,16 @@ def alive(pid: int) -> bool:
     return True
 
 
-def run_harness(root: Path, *args: str, timeout: float = 120) -> subprocess.CompletedProcess[str]:
-    env = {key: value for key, value in os.environ.items() if not key.startswith(("COVERAGE_", "COV_CORE_"))}
-    return subprocess.run(
-        [sys.executable, "-m", "Tools.mutate", "--root", str(root), *args],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+def run_harness(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the harness in this process, as ``python -m Tools.mutate`` would, so coverage measures it."""
+    out, err = io.StringIO(), io.StringIO()
+    sigterm = signal.getsignal(signal.SIGTERM)  # main() makes SIGTERM an interrupt; put it back after
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["--root", str(root), *args])
+    finally:
+        signal.signal(signal.SIGTERM, sigterm)
+    return subprocess.CompletedProcess(["python", "-m", "Tools.mutate", *args], code, out.getvalue(), err.getvalue())
 
 
 def mutant_keys(source: str) -> list[tuple[int, str, str, str]]:
@@ -625,6 +630,178 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(0.625, report.score(counts))  # (4 + 1) / (10 - 1 allowlisted - 1 error)
 
 
+ISOLATION_SHAPES = '''\
+"""Toy module whose only behaviour is fixed when it is imported."""
+
+from dataclasses import dataclass
+
+
+@dataclass(
+    frozen=True,
+)
+class Point:
+    x: int
+'''
+
+ISOLATION_TESTS = """\
+import dataclasses
+import signal
+import subprocess
+import sys
+
+import pytest
+
+from shapes import Point
+
+
+def test_a_point_is_frozen():
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        Point(1).x = 2  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("stop", [signal.SIGTERM, signal.SIGINT])
+def test_a_child_stops_when_signalled(stop):
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    child.send_signal(stop)
+    assert child.wait(timeout=10) != 0
+
+
+def test_an_agent_cli_on_path_is_never_the_real_one():
+    subprocess.run(["claude", "--version"], capture_output=True)
+"""
+
+
+class IsolationTests(unittest.TestCase):
+    """One harness run over a second toy: code fixed at import, signals, and agent CLIs on PATH."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tempfile.TemporaryDirectory()
+        base = Path(cls.tmp.name)
+        root = base / "toy"
+        (root / "tests").mkdir(parents=True)
+        (root / "shapes.py").write_text(ISOLATION_SHAPES, encoding="utf-8")
+        (root / "tests" / "test_shapes.py").write_text(ISOLATION_TESTS, encoding="utf-8")
+        (root / "pyproject.toml").write_text(TOY_PYPROJECT, encoding="utf-8")
+        reports = base / "quality"
+        cls.result = run_harness(
+            root,
+            *("--jobs", "2", "--min-timeout", str(MIN_TIMEOUT), "--report-dir", str(reports)),
+            *("--allowlist", str(base / "none.json"), "--baseline", str(base / "baseline.json")),
+            "shapes.py",
+        )
+        path = reports / "mutation-report-shapes.json"
+        cls.report = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.tmp.cleanup()
+
+    def setUp(self) -> None:
+        self.assertTrue(self.report, self.result.stdout + self.result.stderr)
+
+    def test_a_mutant_of_code_run_only_at_import_is_judged_by_the_tests_that_import_it(self) -> None:
+        statuses = {(m["line"], m["mutant"]): m["status"] for m in self.report["mutants"]}
+        self.assertEqual({(7, "False"): "killed"}, statuses)
+
+    def test_a_test_that_stops_a_child_with_a_signal_passes_under_the_harness(self) -> None:
+        self.assertEqual([], [test for test in self.report["excluded_tests"] if "signalled" in test])
+
+    def test_an_agent_cli_called_through_path_is_refused_and_recorded(self) -> None:
+        calls = self.report["guarded_calls"]
+        self.assertIn(["claude", "--version"], calls["coverage_run"])
+        self.assertIn("guarded command were refused", self.result.stderr)
+
+
+class RunIsolationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.guard = runner.make_path_guard(self.base)
+
+    def test_a_test_process_starts_with_the_signal_mask_the_harness_started_with(self) -> None:
+        log = self.base / "mask.log"
+        probe = "import signal; print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])))"
+        result = runner.run_group([sys.executable, "-c", probe], cwd=self.base, env=dict(os.environ), timeout=30, log=log)
+        self.assertEqual(0, result.returncode, log.read_text())
+        expected = sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, []))
+        self.assertEqual(str(expected), log.read_text().strip())
+
+    def test_each_run_gets_an_empty_bytecode_cache_of_its_own_that_is_gone_after(self) -> None:
+        project = self.base / "p"
+        (project / "tests").mkdir(parents=True)
+        seen = self.base / "seen"
+        seen.mkdir()
+        (project / "tests" / "test_cache.py").write_text(
+            textwrap.dedent(
+                f"""
+                import os, sys, uuid
+                from pathlib import Path
+
+                def test_record_the_cache():
+                    prefix = sys.pycache_prefix
+                    assert prefix and not any(Path(prefix).rglob("*.pyc"))
+                    Path({str(seen)!r}, uuid.uuid4().hex).write_text(prefix)
+                """
+            ),
+            encoding="utf-8",
+        )
+        for _ in range(2):
+            result = runner.run_tests(project, ["tests"], timeout=60, log=self.base / "run.log", guard=self.guard)
+            self.assertEqual(0, result.returncode, (self.base / "run.log").read_text())
+        prefixes = {path.read_text() for path in seen.iterdir()}
+        self.assertEqual(2, len(prefixes))
+        self.assertFalse(any(Path(prefix).exists() for prefix in prefixes))
+
+    def test_a_restored_module_never_shares_a_modification_second_with_its_mutant(self) -> None:
+        copy = self.base / "copy"
+        copy.mkdir()
+        stamps = []
+        for text in ("x = 1\n", "x = 2\n", "x = 1\n"):  # same size, written within one second
+            runner.write_mutant(copy, "m.py", text)
+            stamps.append(int((copy / "m.py").stat().st_mtime))
+        self.assertEqual(len(stamps), len(set(stamps)))
+
+    def test_a_guarded_command_exits_97_and_records_its_arguments(self) -> None:
+        env = {**os.environ, "PATH": self.guard.path(os.environ.get("PATH", ""))}
+        for name in runner.GUARDED_COMMANDS:
+            run = subprocess.run([name, "run", "two words", "a\nb"], env=env, capture_output=True)
+            self.assertEqual(runner.GUARD_EXIT, run.returncode, name)
+        self.assertEqual([[name, "run", "two words", "a\nb"] for name in runner.GUARDED_COMMANDS], self.guard.calls())
+
+
+class ConfirmTimeoutTests(unittest.TestCase):
+    def test_the_confirming_rerun_gets_room_for_the_whole_selection_on_a_busy_machine(self) -> None:
+        table = {
+            # (the mutant's limit, the unmutated selection's seconds, timeout factor) -> the rerun's limit
+            (30.0, 1.0, 3.0): 60.0,  # twice the mutant's limit
+            (30.0, 20.0, 3.0): 120.0,  # twice the factor times the selection's own time
+            (5.0, 0.0, 3.0): 10.0,
+        }
+        for (limit, seconds, factor), expected in table.items():
+            with self.subTest(limit=limit, seconds=seconds):
+                self.assertEqual(expected, cli.confirm_timeout(limit, seconds, factor))
+
+
+class ImportTimeSelectionTests(unittest.TestCase):
+    def test_code_run_while_a_test_file_is_collected_selects_that_files_tests(self) -> None:
+        mapping = runner.CoverageMap(
+            lines={"m.py": {3: {"collect:tests/test_a.py"}, 9: {"tests/test_b.py::test_runs_f"}}},
+            durations={
+                "tests/test_a.py::test_one": 0.1,
+                "tests/test_a.py::T::test_two": 0.1,
+                "tests/test_b.py::test_runs_f": 0.1,
+            },
+        )
+        self.assertEqual(
+            {"tests/test_a.py::test_one", "tests/test_a.py::T::test_two", "tests/test_b.py::test_runs_f"},
+            mapping.tests_for("m.py", [3], import_time=True),
+        )
+        self.assertEqual({"tests/test_b.py::test_runs_f"}, mapping.tests_for("m.py", [9]))
+        self.assertEqual(set(), mapping.tests_for("m.py", [5], import_time=True))
+
+
 class BaselineUpdateTests(unittest.TestCase):
     @staticmethod
     def measured(score: float) -> dict:
@@ -672,7 +849,7 @@ class AllowlistAuthorshipTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def refused(self, *extra: str) -> subprocess.CompletedProcess[str]:
-        return run_harness(self.project, "--allowlist", str(self.allowlist), *extra, "mod.py", timeout=60)
+        return run_harness(self.project, "--allowlist", str(self.allowlist), *extra, "mod.py")
 
     def test_an_entry_the_agent_committed_is_refused(self) -> None:
         commit_file(self.allowlist, {"entries": [EXACT_ENTRY]}, AGENT)
@@ -703,7 +880,7 @@ class AllowlistAuthorshipTests(unittest.TestCase):
         baseline = self.project.parent / "review" / "baseline.json"
         lowered = {"module": "mod.py", "from": 0.9, "to": 0.5, "reason": "r", "commit": "c"}
         commit_file(baseline, {"modules": {"mod.py": {"score": 0.5}}, "lowered": [lowered]}, AGENT)
-        result = run_harness(self.project, "--baseline", str(baseline), "--check-baseline", "mod.py", timeout=60)
+        result = run_harness(self.project, "--baseline", str(baseline), "--check-baseline", "mod.py")
         self.assertEqual(2, result.returncode, result.stdout + result.stderr)
         self.assertIn("lowered by boundroom-agent[bot]", result.stderr)
 
@@ -712,6 +889,16 @@ class AllowlistAuthorshipTests(unittest.TestCase):
         self.assertTrue(report.is_agent("repo-automation-agent[bot]", "x@example.com"))  # an earlier name
         self.assertTrue(report.is_agent("Someone", "354874784+renamed@users.noreply.github.com"))  # the bot's user id
         self.assertFalse(report.is_agent("Raell Dottin", "owner@example.com"))
+
+
+class EntryPointTests(unittest.TestCase):
+    def test_python_m_tools_mutate_exits_with_mains_code(self) -> None:
+        out = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", ["python -m Tools.mutate", "--jobs", "0"]):
+            with contextlib.redirect_stderr(out), self.assertRaises(SystemExit) as stopped:
+                runpy.run_module("Tools.mutate", run_name="__main__")
+        self.assertEqual(2, stopped.exception.code)  # a usage error
+        self.assertIn("--jobs must be at least 1", out.getvalue())
 
 
 class RepositoryLayoutTests(unittest.TestCase):
@@ -766,7 +953,7 @@ class ProvenanceTests(unittest.TestCase):
 
     def test_an_update_from_a_dirty_tree_is_refused_before_measuring(self) -> None:
         (self.root / "pkg" / "mod.py").write_text("X = 2\n", encoding="utf-8")
-        refused = run_harness(self.root, "--update-baseline", "pkg/mod.py", timeout=60)
+        refused = run_harness(self.root, "--update-baseline", "pkg/mod.py")
         self.assertEqual(2, refused.returncode, refused.stdout + refused.stderr)
         self.assertIn("refusing to update the baseline from a working tree with changes", refused.stderr)
         self.assertNotIn("coverage run", refused.stderr)

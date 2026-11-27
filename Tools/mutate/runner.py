@@ -12,12 +12,14 @@ import json
 import os
 import queue
 import re
+import shlex
 import shutil
 import signal
 import site
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
@@ -33,6 +35,34 @@ COPY_IGNORE = (".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".ty_cach
 
 # coverage reads `include` as comma- or newline-separated fnmatch patterns.
 _PATTERN_CHARACTERS = re.compile(r"[,\[\]*?\n]")
+
+# A coverage context that names a test file being collected, not a test: code a test file's
+# imports ran at collection time (module level, class bodies, decorators).
+COLLECT_PREFIX = "collect:"
+
+# Commands no test run may reach for real: agent CLIs, which spend money and act on a person's
+# behalf, and tools that start containers or fetch packages. Each gets a stand-in, first on PATH,
+# that records its arguments and exits GUARD_EXIT. A test that names its own fake, by path or
+# through a *_BIN variable, still gets its fake.
+GUARDED_COMMANDS = ("claude", "codex", "hermes", "uvx", "docker")
+GUARD_EXIT = 97
+
+# Started first in every test process: put back the signal mask the harness had before it blocked
+# Ctrl-C and SIGTERM around Popen (run_group), then become the real command. Without it, every
+# test process starts with those signals blocked, and a test that stops a child with them hangs.
+_RESTORE_MASK = (
+    "import os, signal, sys; "
+    "signal.pthread_sigmask(signal.SIG_SETMASK, [int(n) for n in sys.argv[1].split(',') if n]); "
+    "os.execvp(sys.argv[2], sys.argv[2:])"
+)
+
+_GUARD_SCRIPT = """\
+#!/bin/sh
+# A stand-in from the mutation harness: record the call, and refuse it.
+record=$(mktemp {calls}/call.XXXXXX) || exit {code}
+{{ printf '%s' {name}; for argument in "$@"; do printf '\\037%s' "$argument"; done; }} > "$record"
+exit {code}
+"""
 
 _BOOT = '''\
 """Started by a .pth file in the mutation harness's throwaway venv: measure this process."""
@@ -133,6 +163,18 @@ def _switch(context):
 
 
 @pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):
+    # Importing a test file runs the module-level code of what it imports: name the file.
+    if not isinstance(collector, pytest.Module):
+        return (yield)
+    _switch({collect_prefix!r} + collector.nodeid)
+    try:
+        return (yield)
+    finally:
+        _switch("")
+
+
+@pytest.hookimpl(wrapper=True)
 def pytest_runtest_protocol(item, nextitem):
     _switch(item.nodeid)
     try:
@@ -198,38 +240,81 @@ class CoverageMap:
     _module_tests: dict[str, frozenset[str]] = field(default_factory=dict, repr=False)
 
     def module_tests(self, module: str) -> frozenset[str]:
-        """Every test that executes any line of ``module``."""
+        """Every test that executes any line of ``module``, or whose file imported it."""
         if module not in self._module_tests:
-            tests: set[str] = set()
-            for contexts in self.lines.get(module, {}).values():
-                tests |= contexts
-            tests.discard("")
-            self._module_tests[module] = frozenset(tests - self.failed)
+            contexts: set[str] = set()
+            for line_contexts in self.lines.get(module, {}).values():
+                contexts |= line_contexts
+            self._module_tests[module] = frozenset(self._tests(contexts))
         return self._module_tests[module]
 
     def tests_for(self, module: str, lines: Iterable[int], *, import_time: bool = False) -> set[str]:
         """The tests that execute any of ``lines``.
 
         Code that runs when the module is imported (module level, class bodies, default
-        values, decorators) runs once per process, under whichever test imported it first,
-        or under no test during collection. Any test that uses the module may depend on it,
-        so it selects every test that covers the module, provided some test runs one of its
-        lines at all.
+        values, decorators) runs once per process: while a test file that imports it is
+        collected, under whichever test imported it first, or under no test. Any test that
+        uses the module may depend on it, so it selects every test that executes the module
+        and every test in a file whose collection imported it, provided some process ran one
+        of its lines at all.
         """
         by_line = self.lines.get(module, {})
         contexts: set[str] = set()
         for line in lines:
             contexts |= by_line.get(line, set())
-        if contexts and (import_time or "" in contexts):
-            contexts |= self.module_tests(module)
-        contexts.discard("")
-        return contexts - self.failed
+        if contexts and (import_time or any(not self._is_test(context) for context in contexts)):
+            return set(self._tests(contexts)) | self.module_tests(module)
+        return self._tests(contexts)
+
+    @staticmethod
+    def _is_test(context: str) -> bool:
+        return bool(context) and not context.startswith(COLLECT_PREFIX)
+
+    def _tests(self, contexts: Iterable[str]) -> set[str]:
+        """Test node ids from coverage contexts: a collection context stands for its file's tests."""
+        tests: set[str] = set()
+        for context in contexts:
+            if context.startswith(COLLECT_PREFIX):
+                prefix = context[len(COLLECT_PREFIX) :] + "::"
+                tests.update(test for test in self.durations if test.startswith(prefix))
+            elif context:
+                tests.add(context)
+        return tests - self.failed
 
 
 def clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if not key.startswith(SCRUBBED_PREFIXES)}
     env.update(extra or {})
     return env
+
+
+@dataclass(frozen=True)
+class PathGuard:
+    """Stand-ins for ``GUARDED_COMMANDS``, and the record of every call they refused."""
+
+    bin: Path
+    calls_dir: Path
+
+    def path(self, rest: str) -> str:
+        """``rest`` with the stand-ins in front of it."""
+        return f"{self.bin}{os.pathsep}{rest}"
+
+    def calls(self) -> list[list[str]]:
+        """Each refused call's command and arguments, oldest first."""
+        records = sorted(self.calls_dir.glob("call.*"), key=lambda path: (path.stat().st_mtime_ns, path.name))
+        return [record.read_text(encoding="utf-8", errors="replace").split("\x1f") for record in records]
+
+
+def make_path_guard(state: Path) -> PathGuard:
+    guard = PathGuard(state / "guard" / "bin", state / "guard" / "calls")
+    guard.bin.mkdir(parents=True, exist_ok=True)
+    guard.calls_dir.mkdir(parents=True, exist_ok=True)
+    for name in GUARDED_COMMANDS:
+        script = guard.bin / name
+        text = _GUARD_SCRIPT.format(calls=shlex.quote(str(guard.calls_dir)), name=shlex.quote(name), code=GUARD_EXIT)
+        script.write_text(text, encoding="utf-8")
+        script.chmod(0o755)
+    return guard
 
 
 def run_group(command: Sequence[str], *, cwd: Path, env: dict[str, str], timeout: float, log: Path) -> RunResult:
@@ -248,8 +333,15 @@ def run_group(command: Sequence[str], *, cwd: Path, env: dict[str, str], timeout
         with log.open("wb") as output, _active_lock:
             if _stopping.is_set():
                 raise HarnessError("interrupted")
+            # The child inherits the blocked mask; the first process puts the old one back.
+            mask = ",".join(str(int(number)) for number in sorted(blocked))
             process = subprocess.Popen(
-                list(command), cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True
+                [sys.executable, "-I", "-S", "-c", _RESTORE_MASK, mask, *command],
+                cwd=cwd,
+                env=env,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
             )
             _active.add(process.pid)
     finally:
@@ -441,8 +533,9 @@ class CoverageMapper:
     context of the test running at the time.
     """
 
-    def __init__(self, state: Path, copy: Path, modules: list[str]) -> None:
+    def __init__(self, state: Path, copy: Path, modules: list[str], guard: PathGuard) -> None:
         self.state = state
+        self.guard = guard
         self.copy = copy.resolve()
         self.modules = modules
         self.venv = state / "venv"
@@ -459,7 +552,8 @@ class CoverageMapper:
             raise HarnessError(f"the work directory's path holds a character coverage reads as a pattern: {self.copy}")
         python = self._make_venv()
         log = self.state / "coverage-run.log"
-        env = clean_env({"PATH": f"{self.venv / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}"})
+        path = self.guard.path(f"{self.venv / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}")
+        env = clean_env({"PATH": path, "PYTHONPYCACHEPREFIX": str(self.state / "coverage-pycache")})
         env.pop("VIRTUAL_ENV", None)
         command = [str(python), "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "_mutate_plugin", *pytest_args]
         result = run_group(command, cwd=self.copy, env=env, timeout=timeout, log=log)
@@ -519,7 +613,10 @@ class CoverageMapper:
             encoding="utf-8",
         )
         (site_packages / "_mutate_plugin.py").write_text(
-            _PLUGIN.format(context_file=str(self.context_file), results_file=str(self.results_file)), encoding="utf-8"
+            _PLUGIN.format(
+                context_file=str(self.context_file), results_file=str(self.results_file), collect_prefix=COLLECT_PREFIX
+            ),
+            encoding="utf-8",
         )
         (site_packages / "00_mutate_boot.pth").write_text("import _mutate_boot\n", encoding="utf-8")
         return python
@@ -585,18 +682,48 @@ def tail(log: Path, lines: int = 40) -> str:
         return ""
 
 
+# The modification time each module copy was last given, so the next write can be made later.
+_stamps: dict[Path, int] = {}
+_stamps_lock = threading.Lock()
+_SECOND_NS = 1_000_000_000
+
+
 def write_mutant(copy: Path, module: str, text: str) -> None:
-    """Put ``text`` at ``module`` in ``copy`` and drop its bytecode, so no stale .pyc is used."""
+    """Put ``text`` at ``module`` in ``copy`` so that no bytecode of an earlier text is used.
+
+    Python trusts a .pyc whose recorded size and modification time, in whole seconds, match
+    the source's. A mutant and the original often have the same size, and a run can write
+    both within one second, so each write moves the file's time at least a second past the
+    last one. Bytecode beside the module is dropped too.
+    """
     path = copy / module
     path.write_text(text, encoding="utf-8")
+    with _stamps_lock:
+        stamp = max(time.time_ns(), _stamps.get(path, 0) + _SECOND_NS)
+        _stamps[path] = stamp
+    os.utime(path, ns=(stamp, stamp))
     for cached in (path.parent / "__pycache__").glob(f"{path.stem}.*.pyc"):
         cached.unlink(missing_ok=True)
 
 
-def run_tests(copy: Path, tests: Sequence[str], *, timeout: float, log: Path, pytest_args: Sequence[str] = ()) -> RunResult:
+def run_tests(
+    copy: Path,
+    tests: Sequence[str],
+    *,
+    timeout: float,
+    log: Path,
+    guard: PathGuard,
+    pytest_args: Sequence[str] = (),
+) -> RunResult:
     command = [sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", *pytest_args, *tests]
     # `python3` on PATH is the harness's own interpreter, as `uv run` arranges and as the
     # coverage run has it, so a test that runs a tool through PATH sees the same packages.
-    path = f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"
-    env = clean_env({"PYTHONDONTWRITEBYTECODE": "1", "PATH": path})
-    return run_group(command, cwd=copy, env=env, timeout=timeout, log=log)
+    path = guard.path(f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}")
+    # A bytecode cache of its own, empty, for each run: one set by the person running the
+    # harness, or shared between runs, could hand a run bytecode compiled from a mutant.
+    pycache = Path(tempfile.mkdtemp(prefix="pycache-", dir=log.parent))
+    env = clean_env({"PYTHONDONTWRITEBYTECODE": "1", "PATH": path, "PYTHONPYCACHEPREFIX": str(pycache)})
+    try:
+        return run_group(command, cwd=copy, env=env, timeout=timeout, log=log)
+    finally:
+        shutil.rmtree(pycache, ignore_errors=True)

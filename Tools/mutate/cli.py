@@ -25,7 +25,18 @@ from typing import Any
 
 from . import report, runner
 from .operators import Mutant, apply_mutant, generate_mutants
-from .runner import CopyPool, CoverageMap, CoverageMapper, HarnessError, copy_project, run_tests, tail, write_mutant
+from .runner import (
+    CopyPool,
+    CoverageMap,
+    CoverageMapper,
+    HarnessError,
+    PathGuard,
+    copy_project,
+    make_path_guard,
+    run_tests,
+    tail,
+    write_mutant,
+)
 
 DEFAULT_BASELINE = "quality/mutation-baseline.json"
 DEFAULT_ALLOWLIST = "quality/mutation-allowlist.json"
@@ -101,6 +112,17 @@ def _modules(args: argparse.Namespace, root: Path, baseline: dict[str, Any]) -> 
     return modules
 
 
+def confirm_timeout(mutant_timeout: float, unmutated_seconds: float, timeout_factor: float) -> float:
+    """The limit for rerunning a mutant's tests without it, to confirm a kill.
+
+    A mutant's run stops at its first failing test (``-x``), but the confirming rerun has to
+    run every selected test. Its limit is twice the mutant's, and at least twice the factor
+    times what the same selection took unmutated in this run, so a busy machine slows the
+    rerun without turning a kill into ``unreliable``.
+    """
+    return round(max(2 * mutant_timeout, 2 * timeout_factor * unmutated_seconds), 1)
+
+
 def order_tests(module: str, tests: set[str] | frozenset[str], durations: dict[str, float]) -> list[str]:
     """The module's own test files first, then fastest first: with ``-x``, a kill comes sooner."""
     stem = Path(module).stem
@@ -137,9 +159,11 @@ class Measurement:
         self.dirty = False
         # Each distinct test selection's unmutated run, shared by every mutant that selects it.
         self.selections: dict[tuple[str, ...], runner.RunResult] = {}
+        self.guard: PathGuard | None = None
 
     def run(self, state: Path) -> list[dict[str, Any]]:
         self.commit, self.dirty, self.trees = runner.provenance(self.root, self.not_code)
+        self.guard = make_path_guard(state)
         copy = state / "coverage-copy"
         copy_project(self.root, copy)
         # The text measured is the coverage copy's, read once, so edits made to the working tree
@@ -148,13 +172,29 @@ class Measurement:
         mutants = {module: self._generate(module, text) for module, text in sources.items()}
         mapping = self._coverage_map(state, copy)
         shutil.rmtree(copy, ignore_errors=True)
+        coverage_calls = self._guarded_calls("the coverage run")
         copies = CopyPool(self.root, state, self.args.jobs, sources)
         reports = []
         for module in self.modules:
             module_report = self._measure(module, sources[module], mutants[module], mapping, copies, state)
+            module_report["guarded_calls"] = {"coverage_run": coverage_calls, "mutant_runs": self._guarded_calls(module)}
             self.on_report(module_report)
             reports.append(module_report)
         return reports
+
+    def _guarded_calls(self, during: str) -> list[list[str]]:
+        """The calls the PATH guard refused since the last look, and a warning if there were any."""
+        guard = self._guard()
+        calls = guard.calls()
+        for record in guard.calls_dir.glob("call.*"):
+            record.unlink(missing_ok=True)
+        if calls:
+            self._say(
+                f"warning: {len(calls)} calls to a guarded command were refused during {during} (exit {runner.GUARD_EXIT}):"
+            )
+            for call in calls:
+                self._say(f"  {shlex.join(call)}")
+        return calls
 
     @staticmethod
     def _generate(module: str, text: str) -> list[Mutant]:
@@ -165,7 +205,7 @@ class Measurement:
 
     def _coverage_map(self, state: Path, copy: Path) -> CoverageMap:
         self._say(f"coverage run: the whole suite once, measuring {', '.join(self.modules)}")
-        mapper = CoverageMapper(state, copy, self.modules)
+        mapper = CoverageMapper(state, copy, self.modules, self._guard())
         mapping = mapper.build(pytest_args=self.args.pytest_args, timeout=self.args.coverage_timeout)
         for module, count in sorted(mapper.copies_credited.items()):
             self._say(f"coverage run: {module}: credited {count} copies that tests ran from other paths")
@@ -264,7 +304,12 @@ class Measurement:
             try:
                 log = state / f"{copy.name}.unmutated.log"
                 result = run_tests(
-                    copy, list(tests), timeout=self._timeout(list(tests), mapping), log=log, pytest_args=self.args.pytest_args
+                    copy,
+                    list(tests),
+                    timeout=self._timeout(list(tests), mapping),
+                    log=log,
+                    guard=self._guard(),
+                    pytest_args=self.args.pytest_args,
                 )
             finally:
                 copies.put(copy)
@@ -309,17 +354,29 @@ class Measurement:
         try:
             write_mutant(copy, module, mutated)
             log = state / f"{copy.name}.log"
-            result = run_tests(copy, tests, timeout=timeout, log=log, pytest_args=self.args.pytest_args)
+            result = run_tests(copy, tests, timeout=timeout, log=log, guard=self._guard(), pytest_args=self.args.pytest_args)
             write_mutant(copy, module, source)
             if result.timed_out or result.returncode != 0:
                 # Trust the kill only if the same tests pass without the mutant right now.
-                again = run_tests(copy, tests, timeout=timeout, log=log, pytest_args=self.args.pytest_args)
+                unmutated = self.selections[tuple(tests)].duration
+                again = run_tests(
+                    copy,
+                    tests,
+                    timeout=confirm_timeout(timeout, unmutated, self.args.timeout_factor),
+                    log=log,
+                    guard=self._guard(),
+                    pytest_args=self.args.pytest_args,
+                )
                 unmutated_passes = not again.timed_out and again.returncode == 0
         finally:
             write_mutant(copy, module, source)
             copies.put(copy)
         status = report.outcome_status(result.returncode, result.timed_out, unmutated_passes)
         return report.Outcome(mutant, status, tests=len(tests), duration=result.duration, timeout=timeout)
+
+    def _guard(self) -> PathGuard:
+        assert self.guard is not None
+        return self.guard
 
     def _say(self, message: str) -> None:
         with self.print_lock:
