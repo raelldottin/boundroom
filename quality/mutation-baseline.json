@@ -1,141 +1,856 @@
 {
   "description": "Each module's mutation score, measured at the commit and code trees recorded with it (not main's until measured again there after the merge): (killed + timeout) / (total - allowlisted - error); unreliable mutants count as survived. `python -m Tools.mutate --check-baseline` fails when a module scores below its number here. --update-baseline only raises a number, from a clean tree; lowering one takes --lower-baseline with --reason, recorded under lowered, and counts only once a person commits it. See docs/reference/mutation-testing.md.",
   "modules": {
-    "automation/benchmark/scoring.py": {
-      "score": 0.7423,
-      "total": 97,
-      "killed": 72,
+    "Tools/changelog_section.py": {
+      "score": 1.0,
+      "total": 37,
+      "killed": 37,
       "timeout": 0,
-      "survived": 25,
+      "survived": 0,
       "no_coverage": 0,
       "allowlisted": 0,
       "error": 0,
       "unreliable_selection": 0,
       "unreliable": 0,
-      "commit": "dee1aed525e8c551f4722554828c43a0912b3914",
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
       "dirty": false,
       "trees": {
-        "Tools": "3a4d27eecf47750c0ae0613d093238c9e9ddf40e",
-        "automation": "838b96358dab8d506233f659791521ef8439d753"
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
       },
-      "module_blob": "bec03f1d217c8a35e85c561fd60e805fbb6cfafb"
+      "module_blob": "2ecce4ba29a0589b15ff1eed3a6ebbea400db3d9"
     },
-    "automation/supervisor/evaluate_handoff.py": {
-      "score": 0.3506,
-      "total": 174,
-      "killed": 61,
+    "Tools/check_plugin_version.py": {
+      "score": 1.0,
+      "total": 37,
+      "killed": 37,
       "timeout": 0,
-      "survived": 36,
-      "no_coverage": 77,
+      "survived": 0,
+      "no_coverage": 0,
       "allowlisted": 0,
       "error": 0,
       "unreliable_selection": 0,
       "unreliable": 0,
-      "commit": "dee1aed525e8c551f4722554828c43a0912b3914",
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
       "dirty": false,
       "trees": {
-        "Tools": "3a4d27eecf47750c0ae0613d093238c9e9ddf40e",
-        "automation": "838b96358dab8d506233f659791521ef8439d753"
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
       },
-      "module_blob": "bb423a08d47a6165ed498b4c8cbcd657012d8597"
+      "module_blob": "0e43958813e04477f28d22818854b073f963d53a"
     },
-    "automation/supervisor/policy.py": {
-      "score": 0.719,
-      "total": 427,
-      "killed": 307,
+    "Tools/release_sbom.py": {
+      "score": 0.9492,
+      "total": 59,
+      "killed": 56,
       "timeout": 0,
-      "survived": 67,
-      "no_coverage": 53,
+      "survived": 3,
+      "no_coverage": 0,
       "allowlisted": 0,
       "error": 0,
       "unreliable_selection": 0,
       "unreliable": 0,
-      "commit": "dee1aed525e8c551f4722554828c43a0912b3914",
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
       "dirty": false,
       "trees": {
-        "Tools": "3a4d27eecf47750c0ae0613d093238c9e9ddf40e",
-        "automation": "838b96358dab8d506233f659791521ef8439d753"
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
       },
-      "module_blob": "5dca0c86ccd9f371c843e9ea6d064fbad6590555"
+      "module_blob": "afc20d9c7172c6c0227b8f746a34ad5377e31123"
     },
-    "automation/supervisor/run_next.py": {
-      "score": 0.7159,
-      "total": 271,
-      "killed": 194,
+    "Tools/telemetry_sample.py": {
+      "score": 0.9189,
+      "total": 111,
+      "killed": 102,
       "timeout": 0,
-      "survived": 54,
-      "no_coverage": 23,
+      "survived": 4,
+      "no_coverage": 5,
       "allowlisted": 0,
       "error": 0,
       "unreliable_selection": 0,
       "unreliable": 0,
-      "commit": "dee1aed525e8c551f4722554828c43a0912b3914",
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
       "dirty": false,
       "trees": {
-        "Tools": "3a4d27eecf47750c0ae0613d093238c9e9ddf40e",
-        "automation": "838b96358dab8d506233f659791521ef8439d753"
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
       },
-      "module_blob": "bf8f0f9292ab5d906d91f0563e6a3a912531eca2"
+      "module_blob": "32973dcac5c5b91ab6d7f88e9c85e0adaf87a083"
     },
-    "automation/supervisor/runner_profile.py": {
-      "score": 0.7901,
-      "total": 181,
-      "killed": 143,
+    "automation/benchmark/__init__.py": {
+      "score": null,
+      "total": 0,
+      "killed": 0,
       "timeout": 0,
-      "survived": 36,
+      "survived": 0,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "0fc3f79cda9c73a10eb7e87de100250b7b0f5fc7"
+    },
+    "automation/benchmark/__main__.py": {
+      "score": 0.0,
+      "total": 1,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no_coverage": 1,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "12dbf89ff7a266cec0a71e046826228fcfe720e2"
+    },
+    "automation/benchmark/adapter.py": {
+      "score": 0.7308,
+      "total": 156,
+      "killed": 114,
+      "timeout": 0,
+      "survived": 25,
+      "no_coverage": 12,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 2,
+      "unreliable": 3,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "38b4ffdcb96c9c62cc0e3da3f8232ba71d452500"
+    },
+    "automation/benchmark/cleanroom.py": {
+      "score": 0.9277,
+      "total": 83,
+      "killed": 77,
+      "timeout": 0,
+      "survived": 0,
+      "no_coverage": 6,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "93c0197701f149a9127b56ed854479dec389b149"
+    },
+    "automation/benchmark/diagnosis.py": {
+      "score": 0.9291,
+      "total": 268,
+      "killed": 249,
+      "timeout": 0,
+      "survived": 2,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 14,
+      "unreliable": 3,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "09a403996218accd44f9a7c1ea61a528ed2a5834"
+    },
+    "automation/benchmark/evalrunner.py": {
+      "score": 0.8889,
+      "total": 18,
+      "killed": 16,
+      "timeout": 0,
+      "survived": 2,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "26b0d84de56dba05a30bb82364ea5bcb013ada9c"
+    },
+    "automation/benchmark/instances.py": {
+      "score": 0.8421,
+      "total": 38,
+      "killed": 32,
+      "timeout": 0,
+      "survived": 0,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 4,
+      "unreliable": 2,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "25a64d7fc46c09ca6ca12593a38dafd524d6ea55"
+    },
+    "automation/benchmark/jspace.py": {
+      "score": 1.0,
+      "total": 34,
+      "killed": 34,
+      "timeout": 0,
+      "survived": 0,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "fdc39a68df3f0f9b5fa14b328821fdb049124b20"
+    },
+    "automation/benchmark/judge.py": {
+      "score": 0.8191,
+      "total": 188,
+      "killed": 154,
+      "timeout": 0,
+      "survived": 32,
       "no_coverage": 2,
       "allowlisted": 0,
       "error": 0,
       "unreliable_selection": 0,
       "unreliable": 0,
-      "commit": "dee1aed525e8c551f4722554828c43a0912b3914",
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
       "dirty": false,
       "trees": {
-        "Tools": "3a4d27eecf47750c0ae0613d093238c9e9ddf40e",
-        "automation": "838b96358dab8d506233f659791521ef8439d753"
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
       },
-      "module_blob": "0427d58f38acd16c1e752a62e4650b544a90aa45"
+      "module_blob": "a5a299326a0099ca74777ec54b7d2e3c3ebf9863"
+    },
+    "automation/benchmark/lanes.py": {
+      "score": 0.9238,
+      "total": 223,
+      "killed": 206,
+      "timeout": 0,
+      "survived": 8,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 9,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "35051da1be2f50ee5395b7b602523711d46a8d73"
+    },
+    "automation/benchmark/last_build.py": {
+      "score": 0.9636,
+      "total": 55,
+      "killed": 53,
+      "timeout": 0,
+      "survived": 2,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "291e4f980c4c39cb9204163c448f1a68b9412cc0"
+    },
+    "automation/benchmark/probe.py": {
+      "score": 0.973,
+      "total": 222,
+      "killed": 216,
+      "timeout": 0,
+      "survived": 6,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "7291107f84c491ec2ef2226e53d55f9d285c50e5"
+    },
+    "automation/benchmark/run.py": {
+      "score": 0.8947,
+      "total": 95,
+      "killed": 85,
+      "timeout": 0,
+      "survived": 2,
+      "no_coverage": 4,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 4,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "8df48f1ea119cbd44a1cd47f9cf488688c771070"
+    },
+    "automation/benchmark/scoring.py": {
+      "score": 0.9588,
+      "total": 97,
+      "killed": 93,
+      "timeout": 0,
+      "survived": 4,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "bec03f1d217c8a35e85c561fd60e805fbb6cfafb"
+    },
+    "automation/benchmark/strategies.py": {
+      "score": 0.9095,
+      "total": 221,
+      "killed": 201,
+      "timeout": 0,
+      "survived": 7,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 11,
+      "unreliable": 2,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "5027f3032627c6446cc85b4bdce682cef08d10d1"
+    },
+    "automation/benchmark/tracing.py": {
+      "score": 0.9667,
+      "total": 30,
+      "killed": 29,
+      "timeout": 0,
+      "survived": 1,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "00b2b486d6b741de866f5cd769380fd1c2151182"
+    },
+    "automation/benchmark/witness.py": {
+      "score": 0.9674,
+      "total": 92,
+      "killed": 88,
+      "timeout": 1,
+      "survived": 3,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "7849f5fd641054bc421d1f4f72fa3c6039384298"
+    },
+    "automation/context/build_context.py": {
+      "score": 0.3475,
+      "total": 118,
+      "killed": 41,
+      "timeout": 0,
+      "survived": 1,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 76,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "4e38523ac7868fa49d49cd515e9a228fefde56de"
+    },
+    "automation/context/memory.py": {
+      "score": 0.9531,
+      "total": 213,
+      "killed": 202,
+      "timeout": 1,
+      "survived": 9,
+      "no_coverage": 1,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "2e4031b9a12f79fefbabf8ca085d1a9491bf93a8"
+    },
+    "automation/context/swarm_wiki.py": {
+      "score": 0.9556,
+      "total": 45,
+      "killed": 43,
+      "timeout": 0,
+      "survived": 2,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "37a515fc899a3217f40527c4ddc43e1c2f345c4b"
+    },
+    "automation/schemas/__init__.py": {
+      "score": null,
+      "total": 0,
+      "killed": 0,
+      "timeout": 0,
+      "survived": 0,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "6c785577bec56f1ec17de784c2d43437fc5443c7"
+    },
+    "automation/schemas/generate.py": {
+      "score": 1.0,
+      "total": 23,
+      "killed": 23,
+      "timeout": 0,
+      "survived": 0,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "9a2decf0fceea50c6c54445efe4672b7012a5495"
+    },
+    "automation/schemas/models.py": {
+      "score": 0.8276,
+      "total": 29,
+      "killed": 24,
+      "timeout": 0,
+      "survived": 3,
+      "no_coverage": 2,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "e44fd9e2f54809b853bbd0b8c930ab0b45dca2f1"
+    },
+    "automation/supervisor/board_backend.py": {
+      "score": 1.0,
+      "total": 1,
+      "killed": 1,
+      "timeout": 0,
+      "survived": 0,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "678368fa49e8dd6cdb419d057faf581674a2495f"
+    },
+    "automation/supervisor/egress.py": {
+      "score": 1.0,
+      "total": 11,
+      "killed": 11,
+      "timeout": 0,
+      "survived": 0,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "79f513fc6d1495898751a8a0a81544d91afeb8dd"
+    },
+    "automation/supervisor/evaluate_handoff.py": {
+      "score": 0.9104,
+      "total": 212,
+      "killed": 193,
+      "timeout": 0,
+      "survived": 18,
+      "no_coverage": 1,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "fea63aa8dc6a3fa5a8fc7aa3b1e1da7d37c1f7a3"
+    },
+    "automation/supervisor/handoff_summary.py": {
+      "score": 0.9689,
+      "total": 193,
+      "killed": 187,
+      "timeout": 0,
+      "survived": 6,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "79961822b5b91019687644ff52ee83231552b42c"
+    },
+    "automation/supervisor/kanban_projection.py": {
+      "score": 0.9922,
+      "total": 128,
+      "killed": 127,
+      "timeout": 0,
+      "survived": 1,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "8607fd9f94212e842fddabc1abcfe42fef248983"
+    },
+    "automation/supervisor/kanban_writer.py": {
+      "score": 0.9861,
+      "total": 72,
+      "killed": 71,
+      "timeout": 0,
+      "survived": 1,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "bc00d699d83782d854ed647cd8748d0137ccb0d9"
+    },
+    "automation/supervisor/local_board.py": {
+      "score": 0.9847,
+      "total": 196,
+      "killed": 191,
+      "timeout": 2,
+      "survived": 3,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "4d3fb0c023149b33e40a4e43edb8840e2ba5cf1b"
+    },
+    "automation/supervisor/operator_status.py": {
+      "score": 0.9712,
+      "total": 104,
+      "killed": 101,
+      "timeout": 0,
+      "survived": 2,
+      "no_coverage": 1,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "b055fdfb962a0d487e512ed550ac5e49adfbff42"
+    },
+    "automation/supervisor/policy.py": {
+      "score": 0.9661,
+      "total": 442,
+      "killed": 427,
+      "timeout": 0,
+      "survived": 10,
+      "no_coverage": 5,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "2961dc2d36823f8268e593c93a59439c4ab7419f"
+    },
+    "automation/supervisor/run_next.py": {
+      "score": 0.9696,
+      "total": 329,
+      "killed": 319,
+      "timeout": 0,
+      "survived": 10,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "a954404913316e57a86585d9f63a54b926ce8916"
+    },
+    "automation/supervisor/runner_profile.py": {
+      "score": 0.987,
+      "total": 154,
+      "killed": 152,
+      "timeout": 0,
+      "survived": 2,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "4ef799a7f4ef3f1092f03592a5e895c598f907d1"
+    },
+    "automation/supervisor/settings.py": {
+      "score": 0.9919,
+      "total": 124,
+      "killed": 123,
+      "timeout": 0,
+      "survived": 1,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "28cbd0a2ce048ceaee5fcb9c6dcde7fb2e69453b"
+    },
+    "automation/supervisor/settings_view.py": {
+      "score": 0.9615,
+      "total": 130,
+      "killed": 125,
+      "timeout": 0,
+      "survived": 2,
+      "no_coverage": 3,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "286314c61f9488fdb1b789500bbc95a1ae5e008e"
+    },
+    "automation/supervisor/sync_pin.py": {
+      "score": 0.5385,
+      "total": 26,
+      "killed": 14,
+      "timeout": 0,
+      "survived": 10,
+      "no_coverage": 2,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "4f109ab95cf6c5fda383fe9ba69eccb4854f58f4"
+    },
+    "automation/supervisor/telemetry.py": {
+      "score": 0.9132,
+      "total": 219,
+      "killed": 200,
+      "timeout": 0,
+      "survived": 11,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 8,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "9eee24b6f0d644b17114d1af4dd4badae89aaba3"
+    },
+    "automation/supervisor/telemetry_metrics.py": {
+      "score": 0.8,
+      "total": 20,
+      "killed": 16,
+      "timeout": 0,
+      "survived": 1,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 0,
+      "unreliable": 3,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "0f759c3d79c81c935098a3dcee326d057fd1f4bd"
+    },
+    "automation/supervisor/telemetry_settings.py": {
+      "score": 0.6883,
+      "total": 154,
+      "killed": 106,
+      "timeout": 0,
+      "survived": 2,
+      "no_coverage": 0,
+      "allowlisted": 0,
+      "error": 0,
+      "unreliable_selection": 46,
+      "unreliable": 0,
+      "commit": "b5b6e1b09924b207aed6676501f23bd10868ca9e",
+      "dirty": false,
+      "trees": {
+        "Tools": "9bfe98aead47bda6fb6d3bbfcdea5558993695cf",
+        "automation": "7f429adac6c396c5ebaded68e782b015e85cc228"
+      },
+      "module_blob": "4fa54484ec033c484f10d828efb123a7fdf5197c"
     }
   },
   "not_yet_measured": [
-    "Tools/changelog_section.py",
-    "Tools/check_plugin_version.py",
-    "Tools/release_sbom.py",
-    "Tools/telemetry_sample.py",
-    "automation/benchmark/__init__.py",
-    "automation/benchmark/__main__.py",
-    "automation/benchmark/adapter.py",
-    "automation/benchmark/cleanroom.py",
-    "automation/benchmark/diagnosis.py",
-    "automation/benchmark/evalrunner.py",
-    "automation/benchmark/instances.py",
-    "automation/benchmark/jspace.py",
-    "automation/benchmark/judge.py",
-    "automation/benchmark/lanes.py",
-    "automation/benchmark/last_build.py",
-    "automation/benchmark/probe.py",
-    "automation/benchmark/run.py",
-    "automation/benchmark/strategies.py",
-    "automation/benchmark/tracing.py",
-    "automation/benchmark/witness.py",
-    "automation/context/build_context.py",
-    "automation/context/memory.py",
-    "automation/context/swarm_wiki.py",
-    "automation/schemas/__init__.py",
-    "automation/schemas/generate.py",
-    "automation/schemas/models.py",
-    "automation/supervisor/board_backend.py",
-    "automation/supervisor/egress.py",
-    "automation/supervisor/handoff_summary.py",
-    "automation/supervisor/kanban_projection.py",
-    "automation/supervisor/kanban_writer.py",
-    "automation/supervisor/local_board.py",
-    "automation/supervisor/operator_status.py",
-    "automation/supervisor/settings.py",
-    "automation/supervisor/settings_view.py",
-    "automation/supervisor/sync_pin.py",
-    "automation/supervisor/telemetry.py",
-    "automation/supervisor/telemetry_metrics.py",
-    "automation/supervisor/telemetry_settings.py"
+    "Tools/lane_admission_report.py",
+    "automation/benchmark/trackr/__init__.py",
+    "automation/benchmark/trackr/common.py",
+    "automation/benchmark/trackr/driver.py",
+    "automation/benchmark/trackr/oracle.py",
+    "automation/benchmark/trackr/pilot.py",
+    "automation/benchmark/trackr/sandbox.py",
+    "automation/benchmark/trackr/select.py",
+    "automation/benchmark/trackr/target.py",
+    "automation/benchmark/trackr/wheelhouse.py",
+    "automation/examples/demo_reject.py",
+    "automation/supervisor/lane_admission.py",
+    "automation/supervisor/lane_workspace.py"
   ]
 }
