@@ -222,3 +222,16 @@ Writes the sample metrics the example dashboard is checked against (`automation/
 | --- | --- | --- |
 | 0 | Wrote the sample, or with `--check`, the sample is current. | |
 | 1 | With `--check`, the sample is stale. Or telemetry didn't start, or reported a problem while recording, and stderr says what. | Run `uv run python Tools/telemetry_sample.py`, or fix what stderr names. |
+
+## Planning reports
+
+These read files and print a report. They change nothing.
+
+### `Tools/lane_admission_report.py`
+
+Replays a slice queue with the lane admission rule of [SPEC-014](../architecture/supervised-lanes.md) and prints how many lanes would run at once at each ceiling from 1 to 8.
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| 0 | Printed the report. | |
+| 2 | The queue is missing, unreadable, not valid JSON, or fails the queue schema or integrity checks, or `--max-ceiling` is outside 1 to 8. stderr says which. | Fix the named file, or pass a ceiling from 1 to 8. |
