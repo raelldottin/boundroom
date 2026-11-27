@@ -33,10 +33,11 @@ import re
 import signal
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import IO, Callable, Mapping, Optional, Sequence
+from typing import IO, Any, Callable, Mapping, Optional, Sequence
 
 from automation.supervisor import policy
 
@@ -44,6 +45,8 @@ LANE_BRANCH_PREFIX = "boundroom/lane/"
 DEFAULT_SETUP_TIMEOUT_SECONDS = 1800
 # What a setup failure keeps of the command's output, from the end, for the decision report.
 SETUP_OUTPUT_TAIL_CHARS = 4000
+# How often a stop checks whether a group that got SIGTERM has ended.
+GROUP_POLL_SECONDS = 0.02
 
 # One path component and one ref component: no separators, no leading dot or dash, nothing Git's
 # ref rules forbid (``..``, a trailing ``.lock`` or ``.``, ``@{``, control characters, spaces).
@@ -253,7 +256,7 @@ def live_lanes(repo_root: Path, environ: Mapping[str, str]) -> list[LaneWorktree
     return lanes_in(*_root_and_worktrees(repo_root, environ))
 
 
-def _make_private_dirs(path: Path) -> None:
+def make_private_dirs(path: Path) -> None:
     """Create *path* and any missing parents with mode 0700, as the XDG spec asks of state directories."""
     missing: list[Path] = []
     while not path.exists():
@@ -283,18 +286,64 @@ def create(repo_root: Path, slice_id: str, attempt_id: str, base_sha: str, envir
     if path.exists() or path.is_symlink():
         raise LaneRefused(f"{path} already exists; each attempt needs its own id")
     _git(repo_root, environ, "cat-file", "-e", f"{base_sha}^{{commit}}")
-    _make_private_dirs(root)
+    make_private_dirs(root)
     if root.resolve() != root:
         raise LaneRefused(f"lane root {root} changed into a symlink while it was being created")
     _git(repo_root, environ, "worktree", "add", "-b", branch, str(path), base_sha)
     return LaneWorkspace(slice_id=slice_id, attempt_id=attempt_id, base_sha=base_sha, path=path, branch=branch)
 
 
-def _kill_group(process: subprocess.Popen[bytes]) -> None:
+def signal_group(pid: int, signum: int) -> None:
+    """Send *signum* to the process group *pid* leads. A group that already ended is no error."""
     try:
-        os.killpg(process.pid, signal.SIGKILL)
+        os.killpg(pid, signum)
     except OSError:
         pass  # The group already ended, or only unreaped members are left.
+
+
+def _group_alive(pid: int) -> bool:
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # A member we may not signal is still a member.
+    return True
+
+
+def wait_for_group(
+    process: subprocess.Popen[Any],
+    deadline: float,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Wait until *deadline*, by *clock*, for the group *process* leads to end: its leader and every other member."""
+    try:
+        process.wait(timeout=max(0.0, deadline - clock()))
+    except subprocess.TimeoutExpired:
+        return
+    while clock() < deadline and _group_alive(process.pid):
+        sleep(GROUP_POLL_SECONDS)
+
+
+def stop_process_group(
+    process: subprocess.Popen[Any],
+    grace_seconds: float = 0.0,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Stop the whole process group *process* leads, which it must, by ``start_new_session=True``.
+
+    With a grace period the group gets ``SIGTERM`` first, and ``SIGKILL`` once the period has passed
+    with any member still alive. With none it gets ``SIGKILL`` at once. Either way the leader is
+    reaped before this returns, so no zombie is left.
+    """
+    if grace_seconds > 0:
+        signal_group(process.pid, signal.SIGTERM)
+        wait_for_group(process, clock() + grace_seconds, clock=clock, sleep=sleep)
+    signal_group(process.pid, signal.SIGKILL)
     process.wait()
 
 
@@ -327,10 +376,10 @@ def default_setup_runner(
         try:
             returncode = process.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
-            _kill_group(process)
+            stop_process_group(process)
             raise subprocess.TimeoutExpired(command, timeout_seconds, output=_tail(output)) from None
         except BaseException:
-            _kill_group(process)
+            stop_process_group(process)
             raise
         return subprocess.CompletedProcess(command, returncode, _tail(output), None)
 
@@ -375,6 +424,14 @@ def lane_uncommitted_changes(workspace: LaneWorkspace, handoff_path: str, enviro
     return without_handoff(sorted(dirty), handoff_path)
 
 
+def is_ancestor(repo_root: Path, commit: str, ref: str, environ: Mapping[str, str]) -> bool:
+    """Whether *ref* contains *commit*. Raises ``LaneWorkspaceError`` when Git can't tell, such as for an unknown commit."""
+    result = _run_git(repo_root, environ, "merge-base", "--is-ancestor", commit, ref)
+    if result.returncode in (0, 1):
+        return result.returncode == 0
+    raise LaneWorkspaceError(f"git merge-base --is-ancestor failed in {repo_root}\nstderr: {result.stderr.strip()}")
+
+
 def lane_head(workspace: LaneWorkspace, environ: Mapping[str, str]) -> str:
     """The commit the lane's worktree is at: the SHA the controller records and integrates."""
     return _git(workspace.path, environ, "rev-parse", "--verify", "HEAD^{commit}")
@@ -409,13 +466,10 @@ def retain_or_remove(
         raise LaneRefused(f"refusing to remove {path}: Git doesn't list it as a worktree on {workspace.branch}")
     if head != recorded_head:
         raise LaneRefused(f"refusing to remove {path}: {workspace.branch} is at {head}, not the recorded head {recorded_head}")
-    ancestor = _run_git(repo_root, environ, "merge-base", "--is-ancestor", recorded_head, "HEAD")
-    if ancestor.returncode == 1:
+    if not is_ancestor(repo_root, recorded_head, "HEAD", environ):
         raise LaneRefused(
             f"refusing to remove {path}: the repository's HEAD doesn't contain {recorded_head}, so it isn't integrated"
         )
-    if ancestor.returncode != 0:
-        raise LaneWorkspaceError(f"git merge-base --is-ancestor failed in {repo_root}\nstderr: {ancestor.stderr.strip()}")
     _git(repo_root, environ, "worktree", "remove", str(path))
     _git(repo_root, environ, "branch", "-D", workspace.branch)
     return LaneEnd(removed=True, path=path, branch=workspace.branch)

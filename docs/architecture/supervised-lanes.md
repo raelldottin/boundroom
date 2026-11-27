@@ -35,7 +35,7 @@ Each slice below tests the rules it touches.
 3. **Every lane gets every gate.** Each lane is judged by the same `judge_step` and `policy.evaluate_completion` as `run_next`, in its own worktree: scope, file budget, proof, handoff and validation replay. A lane's verdict never reads another lane's handoff.
 4. **The queue stays the authority.** No new queue or task database. Child lanes aren't queue entries. Their plan, handoffs and verdicts are attempt evidence, kept in the parent's handoff directory beside the parent's handoff, as handoffs are today. Merging this spec is the explicit design decision AGENTS.md requires for that.
 5. **`run_next` is unchanged.** Its flags, exit codes and decision report stay as the [compatibility policy](../reference/compatibility.md) fixes them.
-6. **One lane is today's behavior.** With a ceiling of 1, `run_lanes` produces the same queue writes, decision reports and exit codes as `run_next` over the same queue, except for the fields that name the worktree. RA-LANE-004 proves that with golden outputs before a second lane can start.
+6. **One lane is today's behavior.** With a ceiling of 1, `run_lanes` produces the same queue writes, decision reports and exit codes as `run_next` over the same queue, except for the fields that name the worktree. RA-LANE-005 proves that with golden outputs before a second lane can start.
 7. **No judged commit is rewritten.** The commits a lane was judged on are the commits that land, with the same SHAs, so a handoff's `verified_commit_sha` and proof commits stay reachable from the branch.
 
 ## How many lanes run
@@ -93,8 +93,9 @@ The three new reasons are additions to the failure reasons in [the exit code ref
 
 `run_next` refuses to start while any slice is `in_progress`, and a person resets it by hand. With several lanes, one interrupted run can leave several slices `in_progress`, several worktrees, and a slice whose code landed before its status was written. So RA-SYM-003 (durable attempts and reconciliation) is a prerequisite, and lane state is recoverable from Git:
 
-- Each lane's attempt record holds its slice, base, recorded head and worktree, and is written before the runner starts.
-- `run_lanes --reconcile` reads those records. A slice whose recorded head is already an ancestor of the integration branch is marked `done`. Every other `in_progress` lane is marked `failed` with `supervisor_error`, and its worktree is kept.
+- Each lane's attempt record holds its slice, base, recorded head and worktree, and is written before the runner starts. RA-LANE-004 keeps it at `<lane root>/.attempts/<attempt id>.json` and also records there the supervisor's verdict on the head it judged and the start and end of integration.
+- `run_lanes --reconcile` reads those records. A slice is marked `done` only when its record shows the supervisor's own `done` verdict on a judged head and that exact head is already an ancestor of the integration branch: the integration landed, and only the status write was lost. A record that shows an integration refused, or a merge that never finished, isn't `done`. Every other `in_progress` lane is marked `failed` with `supervisor_error`, and its worktree is kept. A head the supervisor didn't judge is never `done`, as the Symphony decision requires of an unknown earlier outcome.
+- The queue's integrity check allows only one `in_progress` slice today. Reconcile already decides for several, and RA-LANE-006 relaxes that check before a second lane runs.
 - `run_lanes` refuses to start while an unreconciled attempt exists, as `run_next` refuses today. `KeyboardInterrupt` is handled: runners are stopped by process group, and their slices are recorded as failed.
 
 ## Board support
@@ -180,8 +181,8 @@ Benchmark lane B, one bounded slice, stays the control.
 | RA-LANE-001 | This spec | — |
 | RA-LANE-002 | RA-SYM-002 delivered: one lane workspace at a time, provisioning, the clean-end check, canonical paths, retention | 001 |
 | RA-LANE-003 | `lane_admission`: eligibility per slice, overlap, holding, exclusive slices; output-based tests; the admission count over real queues | 001 |
-| RA-LANE-004 | RA-SYM-003 for the JSON queue: attempt records, `--reconcile`, interrupt handling | 002 |
-| RA-LANE-005 | `run_lanes` with a ceiling of 1, matching `run_next`'s golden outputs; `max_lanes`, `exclusive`, `lane_setup` and `integration_validations` in the schema | 003, 004 |
+| RA-LANE-004 | RA-SYM-003 for the JSON queue, as a library: attempt records, reconcile, interrupt handling | 002 |
+| RA-LANE-005 | `run_lanes` with a ceiling of 1, matching `run_next`'s golden outputs; `--reconcile`; `max_lanes`, `exclusive`, `lane_setup` and `integration_validations` in the schema | 003, 004 |
 | RA-LANE-006 | Several lanes: merge integration, integration validations, the new failure reasons | 005 |
 | RA-LANE-007 | Lane plans: `delegation`, `lane_plan`, plan checks, child lanes, the parent's final check, the one revision | 006 |
 | RA-LANE-008 | The `boundroom-run-lanes` skill and a Claude Code Workflow recipe in the workflow guide | 006 |
