@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from automation.supervisor import lane_recovery, lane_workspace, policy, run_next
+from automation.supervisor import lane_recovery, lane_workspace, policy, run_lanes, run_next, runner_profile
 from automation.tests.run_lanes_fixtures import (
     Repo,
     git,
@@ -70,6 +70,8 @@ def test_a_done_lane_runs_in_its_worktree_lands_on_the_branch_and_is_removed(tmp
     # The runner ran in the lane's worktree, not the repository's.
     cwd = Path((repo.snapshots / f"{FIRST}.cwd").read_text(encoding="utf-8"))
     assert cwd.parent == lane_root(state) and cwd.name == seen["attempt_id"]
+    # In a session of its own, so an interrupt or the timeout stops its whole group and nothing else.
+    assert int((repo.snapshots / f"{FIRST}.session").read_text(encoding="utf-8")) != os.getsid(0)
     # The judged head was fast-forwarded onto main, and the record says so, closed done.
     (record,) = records(state)
     assert record.judgement is not None and record.judgement.head == repo.head() != base
@@ -154,6 +156,9 @@ def test_a_done_lane_that_left_changes_uncommitted_fails_where_run_next_records_
     assert repo.statuses() == {FIRST: "failed", SECOND: "queued"} and repo.head() == base
     (record,) = records(state)
     assert record.closure is not None and record.closure.reason.startswith("lane_uncommitted_changes: ")
+    (copied,) = (repo.root / "automation/handoffs").iterdir()
+    assert (record.worktree / "automation/handoffs" / copied.name).is_file()  # the kept lane keeps its own
+    assert "warning:" not in outcome.stderr
 
     other = make_repo(tmp_path / "next", queue_document([slice_record(FIRST, 10), slice_record(SECOND, 20)]))
     other.behave({FIRST: "uncommitted"})
@@ -212,6 +217,7 @@ def test_a_board_is_refused(tmp_path, state, monkeypatch, flag):
     outcome = run_lanes_over(repo, [flag, str(tmp_path / "board")], monkeypatch)
     assert outcome.exit_code == 2
     assert "lanes work with the JSON queue only" in outcome.stderr
+    assert outcome.stderr.count("stop:") == 1
     nothing_claimed(repo, outcome, state)
 
 
@@ -337,6 +343,7 @@ def test_reconcile_finishes_a_lane_that_landed_before_its_status_was_written(tmp
     report = json.loads(reconciled.stdout)
     assert [(item["slice_id"], item["queue_status"]) for item in report["reconcile"]["slices"]] == [(FIRST, "done")]
     assert report["removed_worktrees"] == [str(record.worktree)] and report["kept_worktrees"] == []
+    assert report["applied"] is True
     assert repo.statuses() == {FIRST: "done", SECOND: "queued"}
     assert not record.worktree.exists() and lane_branches(repo) == []
 
@@ -457,4 +464,71 @@ def test_an_interrupt_between_slices_says_nothing_was_in_flight(tmp_path, state,
         outcome = run_lanes_over(repo, [], monkeypatch)
     assert outcome.exit_code == 130
     assert "interrupted between slices; nothing was in flight" in outcome.stderr
+    assert "also failed" not in outcome.stderr  # nothing went wrong recording it
     assert repo.statuses() == {FIRST: "done", SECOND: "queued"}
+
+
+@pytest.mark.parametrize(
+    ("behaviour", "problem"),
+    [
+        ("switch-branch", "the repository is no longer on refs/heads/main"),
+        ("block-ff", "git merge --ff-only "),
+    ],
+)
+def test_a_fast_forward_that_cant_run_fails_the_slice_and_keeps_the_lane(tmp_path, state, monkeypatch, behaviour, problem):
+    repo = repo_with(tmp_path, {FIRST: behaviour})
+    outcome = run_lanes_over(repo, [], monkeypatch)
+    assert outcome.exit_code == 2
+    (report,) = outcome.reports
+    assert report["reason"].startswith(f"Supervisor error integrating slice {FIRST}: {problem}")
+    assert report["lane"]["worktree_kept"] is True
+    (record,) = records(state)
+    assert record.integration is not None and record.integration.outcome is lane_recovery.IntegrationOutcome.REFUSED
+
+
+def test_a_missing_handoff_fails_the_slice_without_a_warning(tmp_path, state, monkeypatch):
+    repo = repo_with(tmp_path, {FIRST: "nohandoff"})
+    outcome = run_lanes_over(repo, [], monkeypatch)
+    assert outcome.exit_code == 2
+    assert outcome.reports[0]["reason"].startswith(f"Missing handoff artifact for slice {FIRST}")
+    assert "warning:" not in outcome.stderr
+    assert not (repo.root / "automation/handoffs").exists() or not list((repo.root / "automation/handoffs").iterdir())
+
+
+def test_a_failure_the_queue_refuses_to_record_leaves_the_attempt_open_for_reconcile(tmp_path, state, monkeypatch):
+    repo = repo_with(tmp_path, {FIRST: "exit:3"})
+    original = run_next.JsonQueue.set_status
+
+    def refuse_the_failure(self, slice_record, status, reason="", handoff_path=None):
+        if status == "failed":
+            raise policy.ConfigError("the queue file is read-only")
+        return original(self, slice_record, status, reason, handoff_path)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(run_next.JsonQueue, "set_status", refuse_the_failure)
+        outcome = run_lanes_over(repo, [], monkeypatch)
+    assert outcome.exit_code == 3
+    assert outcome.reports[0]["queue_status"] == "in_progress"
+    (record,) = records(state)
+    assert record.is_open  # the queue says in_progress, so reconcile must still see this attempt
+    assert "warning:" not in outcome.stderr
+
+
+def test_a_dry_run_needs_no_run_lock(tmp_path, state, monkeypatch):
+    repo = repo_with(tmp_path)
+    with runner_profile.run_lock(os.environ):
+        outcome = run_lanes_over(repo, ["--dry-run"], monkeypatch)
+    assert outcome.exit_code == 0, outcome.stderr
+    assert len(outcome.reports) == 1
+
+
+def test_a_single_slice_dry_run_holds_the_rest_for_the_budget(tmp_path, state, monkeypatch):
+    repo = repo_with(tmp_path, None, slice_record(FIRST, 10), slice_record(SECOND, 20, allowed_paths=["src/"]))
+    outcome = run_lanes_over(repo, ["--dry-run", "--single-slice"], monkeypatch)
+    assert outcome.exit_code == 0, outcome.stderr
+    assert "lanes: ceiling 1; would start first-slice\nlanes: held second-slice (budget)\n" in outcome.stderr
+
+
+def test_run_lanes_finds_the_repository_it_is_in():
+    assert run_lanes.REPO_ROOT == Path(run_lanes.__file__).resolve().parents[2]
+    assert (run_lanes.REPO_ROOT / "automation/supervisor/run_lanes.py").is_file()

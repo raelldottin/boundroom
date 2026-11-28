@@ -57,6 +57,8 @@ if attempts.exists():
     Path(snapshots, slice_id + ".record").write_text(attempts.read_text())
 setup_marker = Path("setup-ran.marker")
 Path(snapshots, slice_id + ".setup").write_text("yes" if setup_marker.exists() else "no")
+Path(snapshots, slice_id + ".session").write_text(str(os.getsid(0)))
+repository = Path(queue).parents[2]
 
 def git(*args):
     subprocess.run(["git", *args], check=True, capture_output=True)
@@ -98,7 +100,13 @@ elif behaviour == "next-other":
     commit([own])
 elif behaviour == "move-main":
     commit([own])
-    subprocess.run(["git", "-C", str(Path(queue).parents[2]), "commit", "-q", "--allow-empty", "-m", "moved"], check=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-q", "--allow-empty", "-m", "moved"], check=True)
+elif behaviour == "switch-branch":
+    commit([own])
+    subprocess.run(["git", "-C", str(repository), "checkout", "-q", "-b", "elsewhere"], check=True)
+elif behaviour == "block-ff":
+    commit([own])
+    Path(repository, own).write_text("an untracked file the fast-forward would overwrite\n")
 if behaviour == "nohandoff":
     sys.exit(0)
 recommended = "someone-else" if behaviour == "next-other" else ""

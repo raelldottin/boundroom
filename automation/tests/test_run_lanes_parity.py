@@ -127,6 +127,13 @@ CASES = {
     ),
     "no agent command": (two_slices(), {}, ["--agent-cmd", ""], 2, []),
     "--single-slice with --autonomous-limit": (two_slices(), {}, ["--single-slice", "--autonomous-limit", "1"], 64, []),
+    "--single-slice with --autonomous-limit, a slice in progress": (
+        queue_document([slice_record(FIRST, 10, status="in_progress"), slice_record(SECOND, 20)]),
+        {},
+        ["--single-slice", "--autonomous-limit", "1"],
+        64,
+        [],
+    ),
 }
 
 
