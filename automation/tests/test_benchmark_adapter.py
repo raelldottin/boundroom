@@ -45,7 +45,7 @@ class AgentEnvironmentTests(unittest.TestCase):
         "REPO_AUTOMATION_AGENT_RUNNER": "codex",
         "GITHUB_TOKEN": "ghp_secret",
         "ANTHROPIC_API_KEY": "sk-secret",
-        "BOUNDROOM_SOMETHING_NEW": "x",
+        "AWS_SECRET_ACCESS_KEY": "aws-secret",
         "TERMINAL_CWD": "/previous/cell",
         "HERMES_HOME": "/previous/home",
     }
@@ -272,7 +272,9 @@ class CopyRegularTreeTests(unittest.TestCase):
         self.assertEqual(0o755, stat.S_IMODE((self.copy / "setuid").stat().st_mode))
         for name in ("read-only", "setuid"):
             copied = (self.copy / name).stat()
-            self.assertEqual((1_000_000_000_000_000_000, 1_100_000_000_000_000_000), (copied.st_atime_ns, copied.st_mtime_ns))
+            # The access time is copied too, but anything that reads the copy (an indexer, a
+            # scanner) moves it, so only the modification time is a stable reading.
+            self.assertEqual(1_100_000_000_000_000_000, copied.st_mtime_ns)
 
     def test_a_directory_copy_stays_the_harness_s_to_clean_up_and_keeps_its_times(self) -> None:
         sealed = self.source / "sealed"
@@ -287,6 +289,60 @@ class CopyRegularTreeTests(unittest.TestCase):
         self.assertEqual(0o700, stat.S_IMODE((self.copy / "sealed").stat().st_mode))
         self.assertEqual(1_100_000_000_000_000_000, (self.copy / "sealed").stat().st_mtime_ns)
         (self.copy / "sealed" / "kept.txt").unlink()  # the harness can still clean up its record
+
+    def test_the_destination_is_created_with_its_parents(self) -> None:
+        (self.source / "report.json").write_text("{}", encoding="utf-8")
+        self.copy = self.root / "record" / "agent-sessions"
+        self.assertEqual([], copy_regular_tree(self.source, self.copy))
+        self.assertEqual({"report.json": "{}"}, self.copied())
+
+
+class LocalCellTests(unittest.TestCase):
+    """A local (non-cleanroom) cell: the session's exit status, and the phase artifacts kept beside it."""
+
+    def test_the_cell_reports_the_session_s_own_exit_status(self) -> None:
+        for template, returncode in (("true", 0), ("exit 3", 3)):
+            with self.subTest(template=template), tempfile.TemporaryDirectory() as tmp:
+                adapter_ = SupervisorAgentAdapter(repo_root=REPO_ROOT, agent_command_template=template, timeout_seconds=60)
+                result = adapter_.produce_submission(TASK, Path(tmp) / "submission.tar.gz")
+                self.assertEqual(returncode, result.returncode)
+
+    def test_phase_artifacts_are_kept_beside_a_submission_whose_directory_did_not_exist(self) -> None:
+        def runner(command: str, workspace: Path, env: Mapping[str, str], timeout: int) -> int:
+            (workspace / ".rpi").mkdir(exist_ok=True)
+            (workspace / ".rpi" / "plan.md").write_text("the plan\n", encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cell_dir = Path(tmp) / "B" / "r1" / TASK.instance_id
+            SupervisorAgentAdapter(repo_root=REPO_ROOT, runner=runner).produce_submission(TASK, cell_dir / "submission.tar.gz")
+            self.assertEqual("the plan\n", (cell_dir / "rpi" / "plan.md").read_text(encoding="utf-8"))
+            self.assertEqual({"refused": [], "error": None}, json.loads((cell_dir / "refused.json").read_text(encoding="utf-8")))
+
+    @SKIP_AS_ROOT
+    def test_phase_artifacts_the_harness_cannot_open_are_recorded_not_raised(self) -> None:
+        locked: list[Path] = []
+
+        def runner(command: str, workspace: Path, env: Mapping[str, str], timeout: int) -> int:
+            (workspace / ".rpi").mkdir(exist_ok=True)
+            (workspace / ".rpi").chmod(0)
+            locked.append(workspace / ".rpi")
+            (workspace / "compile.sh").write_text("cc main.c\n", encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_tar = Path(tmp) / "submission.tar.gz"
+            try:
+                result = SupervisorAgentAdapter(repo_root=REPO_ROOT, runner=runner).produce_submission(TASK, out_tar)
+            finally:
+                for path in locked:
+                    path.chmod(0o700)
+            record = json.loads((Path(tmp) / "refused.json").read_text(encoding="utf-8"))
+            rpi_copied = (Path(tmp) / "rpi").exists()
+        self.assertEqual(0, result.returncode)
+        self.assertEqual([], record["refused"])
+        self.assertTrue(record["error"].startswith("PermissionError: "))
+        self.assertFalse(rpi_copied)
 
 
 class EntryOpenRefusalTests(unittest.TestCase):

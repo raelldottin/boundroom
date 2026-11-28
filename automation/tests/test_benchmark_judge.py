@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import os
@@ -246,9 +247,16 @@ class JudgeSessionTests(unittest.TestCase):
             verdict = Judge(REPO_ROOT, runner=fake).judge(
                 TASK, submission, InstanceScore(TASK.instance_id, 1, 1), [], Path(tmp) / "rec"
             )
-        self.assertEqual("verdict_missing", verdict.error)
-        self.assertEqual(124, verdict.returncode)
+        self.assertEqual(
+            {"score": None, "good_enough": False, "reasons": [], "error": "verdict_missing", "returncode": 124},
+            verdict.to_dict(),
+        )
         self.assertFalse(verdict.passes(0))
+
+    def test_a_verdict_cannot_be_turned_into_a_pass_after_the_fact(self) -> None:
+        verdict = parse_verdict(Path("/nonexistent/verdict.json"))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            setattr(verdict, "error", None)
 
     def test_a_session_that_fails_cannot_pass_on_the_verdict_it_left(self) -> None:
         fake = FakeJudge(returncode=124)
@@ -697,6 +705,11 @@ class StopGateDecisionTests(unittest.TestCase):
         for settings in out_of_range:
             with self.subTest(**settings), self.assertRaises(ValueError):
                 StopGate(judge=judge, **settings)
+
+    def test_settings_cannot_be_moved_out_of_range_after_the_gate_is_built(self) -> None:
+        gate = StopGate(judge=Judge(REPO_ROOT, runner=FakeJudge()))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            setattr(gate, "min_score", 99)
 
     def test_settings_at_the_ends_of_their_ranges_are_allowed(self) -> None:
         judge = Judge(REPO_ROOT, runner=FakeJudge())
