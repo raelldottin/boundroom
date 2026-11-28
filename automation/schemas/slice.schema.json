@@ -30,6 +30,31 @@
         "telemetry": {
           "$ref": "#/$defs/RepositoryTelemetry",
           "default": null
+        },
+        "max_lanes": {
+          "default": null,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Max Lanes",
+          "type": "integer"
+        },
+        "lane_setup": {
+          "default": null,
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Lane Setup",
+          "type": "array"
+        },
+        "integration_validations": {
+          "default": null,
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Integration Validations",
+          "type": "array"
         }
       },
       "required": [
@@ -177,6 +202,11 @@
           ],
           "title": "Required Proof Level",
           "type": "string"
+        },
+        "exclusive": {
+          "default": null,
+          "title": "Exclusive",
+          "type": "boolean"
         }
       },
       "required": [

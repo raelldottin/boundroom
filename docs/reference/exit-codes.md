@@ -73,6 +73,27 @@ These stop `run_next` with exit 2 before it claims a slice, so the slice stays q
 | `unknown_prompt_placeholder` | A prompt fragment uses a `__PLACEHOLDER__` the supervisor doesn't fill. |
 | `prompt_fragment_unreadable` | `automation/prompts/base.md` or `automation/prompts/slice.md` is missing, can't be read, or isn't UTF-8. |
 
+## `automation/supervisor/run_lanes.py`
+
+Runs slices as `run_next.py` does, each in its own lane worktree ([SPEC-014](../architecture/supervised-lanes.md), [reference](run-lanes.md)). This version runs one lane at a time. Its codes mean what `run_next.py`'s mean, plus the refusals and the interrupt below.
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| 0 | As `run_next.py`: the run ended at a stop, nothing was eligible, or `--dry-run`. **Or** `--reconcile` resolved the slices an interrupted run left `in_progress`, or with `--dry-run` printed what it would record. | Read the last report. For `--reconcile`, read its `reconcile.slices`. |
+| 2 | As `run_next.py`'s 2, refused before claiming or a claimed slice failed under the supervisor. Also refused before anything is claimed: `--board` or `--kanban-board`, an attempt record still open or unreadable, a slice already `in_progress` (with a hint to run `--reconcile`), a lane worktree still kept from an earlier slice, a detached `HEAD`, a change in the repository's worktree outside the supervisor's own paths (even inside the slice's scope), or a lane root inside the repository or reached through a symbolic link. A claimed slice can also fail for a lane's own reasons: see [lane failure reasons](#lane-failure-reasons). | As `run_next.py`. For an open record or an `in_progress` slice, run `run_lanes.py --reconcile`. For a kept worktree, recover its work, then `git worktree remove` it and delete its branch. |
+| 64 | As `run_next.py`'s 64. **Or** `--max-lanes` was below 1. Nothing was claimed. | Pass a ceiling of 1 or more. |
+| 78 | As `run_next.py`'s 78. **Or** `--max-lanes` was above the queue's `policy.max_lanes`: a flag may lower the ceiling, never raise it. Nothing was claimed. | Raise `max_lanes` in the queue through a reviewed change, or drop the flag. |
+| 130 | Ctrl-C stopped the run. A running lane's runner was stopped by process group, its slice recorded as `failed` with `supervisor_error`, and its worktree kept; the `stop:` line says what the queue records. If integration had started, the slice stays `in_progress` instead. A `SIGTERM` or `SIGHUP` does the same and exits 128 plus the signal's number: 143 or 129. | Read the kept worktree, then remove it. If the slice is still `in_progress`, run `--reconcile`. |
+| Any other | As `run_next.py`: the agent command exited with this code. | As `run_next.py`. |
+
+### Lane failure reasons
+
+A claimed slice fails with one of `run_next.py`'s [failure reasons](#failure-reasons), or with this one, which only a lane records. Merging onto a branch that moved, and the integration validations, come with RA-LANE-006; until then a lane whose branch moved, or whose fast-forward Git refuses, fails with `supervisor_error`, and a failing `lane_setup` command does too.
+
+| Reason code | Meaning |
+| --- | --- |
+| `lane_uncommitted_changes` | The handoff said `done` and passed every check, but the lane's worktree had changes its runner didn't commit, apart from an untracked handoff. Integration takes commits, so they would be dropped. `run_next.py` records such a slice `done`. |
+
 ## `automation/supervisor/run_agent.sh`
 
 The shipped agent command. It chooses the runner, checks its inputs, then hands over to the runner, whose exit code it returns.

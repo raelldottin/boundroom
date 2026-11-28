@@ -38,6 +38,7 @@ To see the values in effect, run `python3 automation/supervisor/settings_view.py
 | `report_file` | advanced |  | `--report-file` |  |  | Also append each report as one JSON line to this file, outside the repository. |
 | `include_blocked` | advanced | `false` | `--include-blocked` |  |  | Report blocked and deferred slices when none is eligible. |
 | `dry_run` | advanced | `false` | `--dry-run` |  |  | Decide without launching an agent or changing the queue. |
+| `reconcile` | advanced | `false` | `--reconcile` |  |  | Resolve the slices an interrupted run_lanes left in progress, from its attempt records, and run nothing. |
 
 ## Policy
 
@@ -48,6 +49,10 @@ To see the values in effect, run `python3 automation/supervisor/settings_view.py
 | `agent_command` | security |  | `--agent-cmd` |  | `queue.policy.agent_command_template, overlay.policy.agent_command_template (any)` | The shell command template that launches the agent. |
 | `supervisor_owned_paths` | security |  |  |  | `queue.policy.supervisor_owned_paths, overlay.policy.supervisor_owned_paths (any)` | Files no slice may change. |
 | `handoff_timeout_seconds` | advanced |  |  |  | `queue.policy.handoff_timeout_seconds, overlay.policy.handoff_timeout_seconds (any)` | How long the supervisor waits for an agent's handoff. |
+| `max_lanes` | security | `1` |  |  | `queue.policy.max_lanes, overlay.policy.max_lanes (any)` | The most lanes run_lanes may run at once; raising it is a reviewed change to the queue. This version runs one. |
+| `lower_max_lanes` | security |  | `--max-lanes` |  |  | Lowers the queue's max_lanes for one run_lanes run; a value above it is refused. |
+| `lane_setup` | security |  |  |  | `queue.policy.lane_setup, overlay.policy.lane_setup (any)` | Commands run_lanes runs in a fresh lane worktree before its runner starts, outside the runner's sandbox. |
+| `integration_validations` | advanced |  |  |  | `queue.policy.integration_validations, overlay.policy.integration_validations (any)` | Commands run at a lane's merge commit before its slice is marked done; merges come with RA-LANE-006. |
 
 ## Sync
 
