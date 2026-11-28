@@ -14,14 +14,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Optional
 
-EntryPoint = Literal["run_next", "evaluate_handoff", "kanban_projection", "operator_status", "sync"]
+EntryPoint = Literal["run_next", "run_lanes", "evaluate_handoff", "kanban_projection", "operator_status", "sync"]
 SettingClass = Literal["secret", "internal", "security", "essential", "advanced", "outside"]
 RepositoryRule = Literal["any", "narrow-only", "never"]
 Area = Literal[
     "runner", "work source", "policy", "sync", "memory", "network", "telemetry", "evaluate", "projection", "status", "internal"
 ]
 
-ENTRY_POINTS: tuple[EntryPoint, ...] = ("run_next", "evaluate_handoff", "kanban_projection", "operator_status", "sync")
+ENTRY_POINTS: tuple[EntryPoint, ...] = (
+    "run_next",
+    "run_lanes",
+    "evaluate_handoff",
+    "kanban_projection",
+    "operator_status",
+    "sync",
+)
 CLASSES: tuple[SettingClass, ...] = ("secret", "internal", "security", "essential", "advanced", "outside")
 REPOSITORY_RULES: tuple[RepositoryRule, ...] = ("any", "narrow-only", "never")
 
@@ -73,6 +80,11 @@ def _flag(entry_point: EntryPoint, *options: str) -> Flag:
     return Flag(entry_point, options)
 
 
+def _supervisor(*options: str) -> tuple[Flag, ...]:
+    """A flag of run_next, which run_lanes takes too: it parses run_next's command line (SPEC-014)."""
+    return (_flag("run_next", *options), _flag("run_lanes", *options))
+
+
 def _legacy(suffix: str) -> tuple[str, ...]:
     return (f"REPO_AUTOMATION_{suffix}",)
 
@@ -86,7 +98,7 @@ def _policy_fields(field: str) -> tuple[str, ...]:
 
 # The telemetry flags are one shared set (``telemetry_settings.add_flags``): every entry point that
 # traces a lane takes all of them, so a user turns telemetry on or off the same way everywhere.
-TELEMETRY_ENTRY_POINTS: tuple[EntryPoint, ...] = ("run_next", "evaluate_handoff", "sync")
+TELEMETRY_ENTRY_POINTS: tuple[EntryPoint, ...] = ("run_next", "run_lanes", "evaluate_handoff", "sync")
 
 
 def _telemetry_flag(option: str) -> tuple[Flag, ...]:
@@ -121,7 +133,7 @@ SETTINGS: tuple[Setting, ...] = (
         "The Claude Code runner profile; bounded by default since v0.4.0. claude_permission_mode alone overrides it.",
         default="bounded",
         choices=("parent", "bounded", "edits", "unbounded", "custom"),
-        flags=(_flag("run_next", "--runner-profile"),),
+        flags=_supervisor("--runner-profile"),
         env="BOUNDROOM_CLAUDE_PROFILE",
     ),
     Setting(
@@ -131,7 +143,7 @@ SETTINGS: tuple[Setting, ...] = (
         "The most a Claude runner may get; edits by default, unbounded when the machine is declared isolated.",
         default=COMPUTED,
         choices=("bounded", "edits", "unbounded"),
-        flags=(_flag("run_next", "--runner-profile-ceiling"),),
+        flags=_supervisor("--runner-profile-ceiling"),
         env="BOUNDROOM_CLAUDE_PROFILE_CEILING",
     ),
     Setting(
@@ -226,14 +238,14 @@ SETTINGS: tuple[Setting, ...] = (
         "essential",
         "The JSON queue slices come from, when no board is given.",
         default="automation/queue/slices.json",
-        flags=(_flag("run_next", "--queue"), _flag("evaluate_handoff", "--queue"), _flag("operator_status", "--queue")),
+        flags=(*_supervisor("--queue"), _flag("evaluate_handoff", "--queue"), _flag("operator_status", "--queue")),
     ),
     Setting(
         "board",
         "work source",
         "essential",
         "The Kanban board directory slices come from, instead of the queue.",
-        flags=(_flag("run_next", "--kanban-board", "--board"),),
+        flags=_supervisor("--kanban-board", "--board"),
         repository_fields=("overlay.board",),
         repository_rule="any",
     ),
@@ -242,7 +254,7 @@ SETTINGS: tuple[Setting, ...] = (
         "work source",
         "essential",
         "The approval overlay for the board.",
-        flags=(_flag("run_next", "--kanban-overlay"),),
+        flags=_supervisor("--kanban-overlay"),
     ),
     Setting(
         "board_backend",
@@ -251,7 +263,7 @@ SETTINGS: tuple[Setting, ...] = (
         "The board's kind; defaults to the overlay's backend and must match it.",
         default="hermes",
         choices=("hermes", "local"),
-        flags=(_flag("run_next", "--board-backend"),),
+        flags=_supervisor("--board-backend"),
         repository_fields=("overlay.backend",),
         repository_rule="any",
     ),
@@ -261,7 +273,7 @@ SETTINGS: tuple[Setting, ...] = (
         "advanced",
         "The command that runs the Hermes CLI, for writes to a Hermes board.",
         default="hermes",
-        flags=(_flag("run_next", "--hermes"),),
+        flags=_supervisor("--hermes"),
     ),
     Setting(
         "handoff_dir",
@@ -269,14 +281,14 @@ SETTINGS: tuple[Setting, ...] = (
         "advanced",
         "Where handoff artifacts are expected.",
         default="automation/handoffs",
-        flags=(_flag("run_next", "--handoff-dir"),),
+        flags=_supervisor("--handoff-dir"),
     ),
     Setting(
         "report_file",
         "work source",
         "advanced",
         "Also append each report as one JSON line to this file, outside the repository.",
-        flags=(_flag("run_next", "--report-file"),),
+        flags=_supervisor("--report-file"),
     ),
     Setting(
         "include_blocked",
@@ -284,7 +296,7 @@ SETTINGS: tuple[Setting, ...] = (
         "advanced",
         "Report blocked and deferred slices when none is eligible.",
         default=False,
-        flags=(_flag("run_next", "--include-blocked"),),
+        flags=_supervisor("--include-blocked"),
     ),
     Setting(
         "dry_run",
@@ -292,7 +304,7 @@ SETTINGS: tuple[Setting, ...] = (
         "advanced",
         "Decide without launching an agent or changing the queue.",
         default=False,
-        flags=(_flag("run_next", "--dry-run"), _flag("evaluate_handoff", "--dry-run")),
+        flags=(*_supervisor("--dry-run"), _flag("evaluate_handoff", "--dry-run")),
     ),
     # --- policy -------------------------------------------------------------------------------
     Setting(
@@ -301,14 +313,14 @@ SETTINGS: tuple[Setting, ...] = (
         "security",
         "Run at most one slice, refusing any autonomous limit.",
         default=False,
-        flags=(_flag("run_next", "--single-slice"),),
+        flags=_supervisor("--single-slice"),
     ),
     Setting(
         "autonomous_limit",
         "policy",
         "security",
         "How many slices may run back to back unattended; the policy value is a default a caller can override.",
-        flags=(_flag("run_next", "--autonomous-limit"),),
+        flags=_supervisor("--autonomous-limit"),
         repository_fields=_policy_fields("consecutive_autonomous_limit"),
         repository_rule="any",
     ),
@@ -317,7 +329,7 @@ SETTINGS: tuple[Setting, ...] = (
         "policy",
         "security",
         "The shell command template that launches the agent.",
-        flags=(_flag("run_next", "--agent-cmd"),),
+        flags=_supervisor("--agent-cmd"),
         repository_fields=_policy_fields("agent_command_template"),
         repository_rule="any",
     ),
@@ -337,20 +349,61 @@ SETTINGS: tuple[Setting, ...] = (
         repository_fields=_policy_fields("handoff_timeout_seconds"),
         repository_rule="any",
     ),
+    # --- lanes (SPEC-014) ------------------------------------------------------------------------
+    Setting(
+        "max_lanes",
+        "policy",
+        "security",
+        "The most lanes run_lanes may run at once; raising it is a reviewed change to the queue. This version runs one.",
+        default=1,
+        repository_fields=_policy_fields("max_lanes"),
+        repository_rule="any",
+    ),
+    Setting(
+        "lower_max_lanes",
+        "policy",
+        "security",
+        "Lowers the queue's max_lanes for one run_lanes run; a value above it is refused.",
+        flags=(_flag("run_lanes", "--max-lanes"),),
+    ),
+    Setting(
+        "lane_setup",
+        "policy",
+        "security",
+        "Commands run_lanes runs in a fresh lane worktree before its runner starts, outside the runner's sandbox.",
+        repository_fields=_policy_fields("lane_setup"),
+        repository_rule="any",
+    ),
+    Setting(
+        "integration_validations",
+        "policy",
+        "advanced",
+        "Commands run at a lane's merge commit before its slice is marked done; merges come with RA-LANE-006.",
+        repository_fields=_policy_fields("integration_validations"),
+        repository_rule="any",
+    ),
+    Setting(
+        "reconcile",
+        "work source",
+        "advanced",
+        "Resolve the slices an interrupted run_lanes left in progress, from its attempt records, and run nothing.",
+        default=False,
+        flags=(_flag("run_lanes", "--reconcile"),),
+    ),
     # --- memory ---------------------------------------------------------------------------------
     Setting(
         "memory_config",
         "memory",
         "advanced",
         "The operator-reviewed Hindsight project-to-bank map to recall from.",
-        flags=(_flag("run_next", "--memory-config"),),
+        flags=_supervisor("--memory-config"),
     ),
     Setting(
         "memory_project",
         "memory",
         "advanced",
         "The project whose granted bank each context bundle recalls from.",
-        flags=(_flag("run_next", "--memory-project"),),
+        flags=_supervisor("--memory-project"),
     ),
     Setting(
         "memory_endpoint",

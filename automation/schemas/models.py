@@ -72,6 +72,9 @@ Sha256 = Annotated[str, Field(min_length=64, max_length=64)]
 # accepted type.
 Omittable = Field(default=None)
 
+# The schema's cap on a queue's lane ceiling (SPEC-014 "How many lanes run").
+MAX_LANES = 8
+
 
 class Contract(BaseModel):
     """Contract documents reject unknown keys: a typo is a contract violation.
@@ -125,6 +128,13 @@ class QueuePolicy(Contract):
     agent_command_template: str
     supervisor_owned_paths: NonEmptyStrList
     telemetry: Annotated[RepositoryTelemetry, Omittable]
+    # SPEC-014 supervised lanes. Each is optional, and a queue without them runs as it always has.
+    # The most lanes run_lanes may run at once; absent means 1. A flag can lower it, never raise it.
+    max_lanes: Annotated[int, Field(ge=1, le=MAX_LANES), Omittable]
+    # Commands run in a fresh lane worktree before its runner starts, outside the runner's sandbox.
+    lane_setup: Annotated[StrList, Omittable]
+    # Commands run at a lane's merge commit before its slice is marked done (RA-LANE-006).
+    integration_validations: Annotated[StrList, Omittable]
 
 
 class SliceRecord(Contract):
@@ -142,6 +152,8 @@ class SliceRecord(Contract):
     recommended_unblocker: str = ""
     manual_proof: StrList = Field(default_factory=list)
     required_proof_level: Annotated[ProofLevel, Omittable]
+    # SPEC-014: an exclusive slice runs in a lane alone, for resources the path overlap rule can't see.
+    exclusive: Annotated[bool, Omittable]
 
 
 class SliceQueue(Contract):

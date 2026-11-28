@@ -1,8 +1,8 @@
 """One lane's Git worktree: where it lives, how it is made and provisioned, how it ends (SPEC-014 RA-LANE-002).
 
-This delivers RA-SYM-002 (per-slice workspaces) as a library. Nothing calls it yet: ``run_next``
-keeps running its slice in the repository's own worktree, and RA-LANE-005 wires this module into
-``run_lanes``.
+This delivers RA-SYM-002 (per-slice workspaces) as a library. ``run_lanes`` (RA-LANE-005) runs
+each slice in a lane through it; ``run_next`` keeps running its slice in the repository's own
+worktree.
 
 - **Where.** A lane's worktree lives under the lane root, by default
   ``$XDG_STATE_HOME/boundroom/lanes/<repository id>/``, or under ``~/.local/state`` when that is

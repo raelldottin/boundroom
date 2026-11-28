@@ -1,7 +1,7 @@
 """Lane attempts outlive the run that made them (SPEC-014 RA-LANE-004, RA-SYM-003 for the JSON queue).
 
-This is a library. Nothing calls it yet: ``run_next`` is unchanged, and RA-LANE-005 wires it into
-``run_lanes`` and adds its ``--reconcile`` flag. It has four parts.
+This is a library. ``run_lanes`` (RA-LANE-005) calls it, and its ``--reconcile`` flag runs
+``reconcile``; ``run_next`` doesn't. It has four parts.
 
 - **Attempt records.** One JSON file per lane attempt, at ``<lane root>/.attempts/<attempt_id>.json``,
   beside the worktrees ``lane_workspace`` makes. No attempt id starts with a dot, so the directory
@@ -817,8 +817,13 @@ def record_interrupted(queue_path: Path, lane_root: Path, lanes: Sequence[Runnin
     The record on disk decides, not the one the caller holds: a slice whose record is already closed,
     or that the queue doesn't have ``in_progress``, keeps its status, and its record says so.
     """
+    record_interrupted_attempts(queue_path, lane_root, [lane.record for lane in lanes], now)
+
+
+def record_interrupted_attempts(queue_path: Path, lane_root: Path, records: Sequence[AttemptRecord], now: datetime) -> None:
+    """``record_interrupted`` for attempts by their records, including one whose runner hadn't started."""
     on_disk = {item.attempt_id: item for item in read_records(lane_root) if isinstance(item, AttemptRecord)}
-    current = [on_disk.get(lane.record.attempt_id, lane.record) for lane in lanes]
+    current = [on_disk.get(record.attempt_id, record) for record in records]
     open_records = [record for record in current if record.is_open]
     queue_data = policy.load_queue(queue_path)
     failed: set[str] = set()

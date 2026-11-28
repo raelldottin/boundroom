@@ -47,6 +47,7 @@ nav:
   - Architecture overview: reference/architecture.md
   - Security model: reference/security-model.md
   - Exit codes and errors: reference/exit-codes.md
+  - Running slices in lanes: reference/run-lanes.md
   - Troubleshooting: reference/troubleshooting.md
   - Mutation testing: reference/mutation-testing.md
   - Mutation report, November 2026: reference/mutation-report-2026-11.md

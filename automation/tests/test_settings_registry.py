@@ -22,6 +22,7 @@ from automation.supervisor import (
     evaluate_handoff,
     kanban_projection,
     operator_status,
+    run_lanes,
     run_next,
     runner_profile,
     settings,
@@ -82,6 +83,7 @@ class CompletenessTests(unittest.TestCase):
     def test_ps1_every_flag_of_every_entry_point_is_registered(self) -> None:
         parsers: dict[settings.EntryPoint, set[str]] = {
             "run_next": parser_options(run_next.build_parser()),
+            "run_lanes": parser_options(run_lanes.build_parser()),
             "evaluate_handoff": parser_options(evaluate_handoff.build_parser()),
             "kanban_projection": parser_options(kanban_projection.build_parser()),
             "operator_status": parser_options(operator_status.build_parser()),
@@ -192,6 +194,7 @@ class DefaultsTests(unittest.TestCase):
     def test_flag_defaults_match_the_parsers(self) -> None:
         parsers: dict[settings.EntryPoint, argparse.ArgumentParser] = {
             "run_next": run_next.build_parser(),
+            "run_lanes": run_lanes.build_parser(),
             "evaluate_handoff": evaluate_handoff.build_parser(),
             "kanban_projection": kanban_projection.build_parser(),
             "operator_status": operator_status.build_parser(),

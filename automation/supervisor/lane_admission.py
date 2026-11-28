@@ -2,8 +2,8 @@
 
 ``admit`` is the rule SPEC-014 "How many lanes run" states, as a pure function: it reads only
 its arguments, with no clock, environment, Git, subprocess or file access, so every case is an
-output-based test. Nothing calls it yet. The lane controller (RA-LANE-005) will call it each time
-a lane starts or ends.
+output-based test. The lane controller, ``run_lanes`` (RA-LANE-005), calls it to pick each
+slice; with several lanes (RA-LANE-006) it will call it each time a lane starts or ends.
 
     lanes started now = min(free lane slots under the ceiling,
                             slices admissible now,
@@ -27,8 +27,8 @@ a lane starts or ends.
   and reserves its paths, so no later slice may start on paths it needs. A slice that claims the
   whole repository therefore lets running lanes drain, then runs alone.
 - **Exclusive.** A slice with ``"exclusive": true`` runs alone: it waits for every running lane,
-  and nothing starts beside it. The schema gains the field in RA-LANE-005; until then it is read
-  with a default of false.
+  and nothing starts beside it. The schema has the field since RA-LANE-005; absent, it is read
+  as false.
 
 SPEC-014 writes the signature as ``admit(queue, running, held, limits)``. Holds are recomputed from
 queue order on every call, so they are an output here, not an input the caller must keep in step.
