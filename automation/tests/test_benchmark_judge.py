@@ -171,7 +171,7 @@ class JudgePromptTests(unittest.TestCase):
     def test_exactly_twenty_failing_tests_are_all_shown(self) -> None:
         prompt = self._prompt([f"t{n}" for n in range(20)])
         self.assertIn("- `t19`", prompt)
-        self.assertNotIn("more", prompt)
+        self.assertNotIn("- and ", prompt.split("Failing tests:", 1)[1].split("##", 1)[0])
 
     def test_no_failing_tests_reads_as_none(self) -> None:
         prompt = self._prompt([])
@@ -784,7 +784,7 @@ class SummarizeRoundsTests(unittest.TestCase):
         self.assertEqual([1, 2], [entry["round"] for entry in summary["rounds"]])
         self.assertEqual(2, summary["repeats_run"])
 
-    def test_the_summary_ends_at_the_first_missing_round(self) -> None:
+    def test_a_missing_round_ends_the_summary_at_the_round_before_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
             self._write(run_dir, 1, "continue", "below_min_repeats")

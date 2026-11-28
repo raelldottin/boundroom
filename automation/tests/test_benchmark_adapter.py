@@ -240,6 +240,10 @@ class CopyRegularTreeTests(unittest.TestCase):
         )
         self.assertEqual({"report.json": "{}"}, self.copied())
 
+    def test_a_tree_far_deeper_than_the_limit_is_refused_once_at_the_limit(self) -> None:
+        self.source.joinpath(*["d"] * 74).mkdir(parents=True)
+        self.assertEqual([{"path": "/".join(["d"] * 65), "reason": "too_deep"}], copy_regular_tree(self.source, self.copy))
+
     def test_directories_are_copied_sixty_four_deep_and_no_deeper(self) -> None:
         deepest = self.source.joinpath(*["d"] * 65)
         deepest.mkdir(parents=True)
@@ -266,7 +270,9 @@ class CopyRegularTreeTests(unittest.TestCase):
 
         self.assertEqual(0o444, stat.S_IMODE((self.copy / "read-only").stat().st_mode))
         self.assertEqual(0o755, stat.S_IMODE((self.copy / "setuid").stat().st_mode))
-        self.assertEqual(1_100_000_000_000_000_000, (self.copy / "setuid").stat().st_mtime_ns)
+        for name in ("read-only", "setuid"):
+            copied = (self.copy / name).stat()
+            self.assertEqual((1_000_000_000_000_000_000, 1_100_000_000_000_000_000), (copied.st_atime_ns, copied.st_mtime_ns))
 
     def test_a_directory_copy_stays_the_harness_s_to_clean_up_and_keeps_its_times(self) -> None:
         sealed = self.source / "sealed"
@@ -361,9 +367,8 @@ class CleanroomDocker(FakeDocker):
 class CleanroomCellTests(unittest.TestCase):
     """One cleanroom cell end to end, with Docker and the agent session stood in for."""
 
-    def run_cell(self, docker: CleanroomDocker, out_tar: Path) -> tuple[adapter.SubmissionResult, list[tuple[str, str]]]:
-        """Run one cell; return its result and each session's command and sandbox image."""
-        sessions: list[tuple[str, str]] = []
+    def run_cell(self, docker: CleanroomDocker, out_tar: Path, sessions: list[tuple[str, str]]) -> adapter.SubmissionResult:
+        """Run one cell; ``sessions`` collects each session's command and sandbox image, even when the cell is refused."""
 
         def runner(command: str, workspace: Path, env: Mapping[str, str], timeout: int) -> int:
             sessions.append((command, env.get(adapter.SANDBOX_IMAGE_ENV, "")))
@@ -380,13 +385,14 @@ class CleanroomCellTests(unittest.TestCase):
             unittest.mock.patch.object(witness, "_subprocess_docker", docker),
         ):
             result = SupervisorAgentAdapter(repo_root=REPO_ROOT, runner=runner, cleanroom=True).produce_submission(TASK, out_tar)
-        return result, sessions
+        return result
 
     def test_a_sound_cleanroom_cell_is_proved_before_and_during_the_session(self) -> None:
         docker = CleanroomDocker()
         with tempfile.TemporaryDirectory() as tmp:
             cell_dir = Path(tmp) / "B" / "r1" / TASK.instance_id
-            result, sessions = self.run_cell(docker, cell_dir / "submission.tar.gz")
+            sessions: list[tuple[str, str]] = []
+            result = self.run_cell(docker, cell_dir / "submission.tar.gz", sessions)
             receipt = json.loads((cell_dir / "cleanroom.json").read_text(encoding="utf-8"))
             probe_receipt = json.loads((cell_dir / "agent-sessions" / "sandbox-probe.sandbox.json").read_text(encoding="utf-8"))
             with tarfile.open(cell_dir / "submission.tar.gz", "r:gz") as tar:
@@ -419,12 +425,15 @@ class CleanroomCellTests(unittest.TestCase):
         docker = CleanroomDocker(network_mode="bridge")
         with tempfile.TemporaryDirectory() as tmp:
             cell_dir = Path(tmp) / "B" / "r1" / TASK.instance_id
+            sessions: list[tuple[str, str]] = []
             with self.assertRaises(cleanroom.CleanroomError) as refusal:
-                self.run_cell(docker, cell_dir / "submission.tar.gz")
+                self.run_cell(docker, cell_dir / "submission.tar.gz", sessions)
             receipt_kept = (cell_dir / "cleanroom.json").is_file()
         self.assertIn("NetworkMode='bridge'", str(refusal.exception))
         self.assertIn("no sound default container", str(refusal.exception))
         self.assertTrue(receipt_kept)
+        self.assertEqual(1, len(sessions))
+        self.assertIn("--sandbox-probe", sessions[0][0])
 
 
 if __name__ == "__main__":
