@@ -280,7 +280,9 @@ class LaneRun(run_next.Workspace):
         process = subprocess.Popen(command, cwd=cwd, shell=True, env=env, start_new_session=True)
         self.process = process
         try:
-            code = process.wait(timeout=timeout_seconds)
+            # communicate(), as subprocess.run waits, so a timeout reads as run_next's does.
+            process.communicate(timeout=timeout_seconds)
+            code = process.returncode
         except subprocess.TimeoutExpired:
             lane_workspace.stop_process_group(process)
             self.process = None

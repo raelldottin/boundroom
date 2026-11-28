@@ -11,7 +11,8 @@ over the other with the same flags and the same scripted agent, and compares:
 - where the repository's branch ends, for runs whose slices all land.
 
 Only the fields that name the worktree differ: the worktree path, the handoff path under it, and
-the report's ``lane`` block. ``normalize`` replaces those and nothing else. Commits are deterministic
+the report's ``lane`` block. ``normalize`` replaces those, and the seconds in a timeout message, which
+vary between two runs of run_next itself, and nothing else. Commits are deterministic
 and the clock run_next names handoffs by is fixed, so ``base_sha``, ``head_sha`` and the handoff's
 file name are compared as they are.
 

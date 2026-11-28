@@ -323,5 +323,10 @@ def _replace(value: Any, patterns: list[re.Pattern[str]], drop: tuple[str, ...])
     if isinstance(value, str):
         for pattern in patterns:
             value = pattern.sub("<worktree>", value)
-        return value
+        # subprocess reports the time left on its timer, such as 4.99991 or 5, so two runs of
+        # run_next itself differ here. This is the one normalized field that doesn't name a worktree.
+        return TIMED_OUT.sub(r"\1<seconds> seconds", value)
     return value
+
+
+TIMED_OUT = re.compile(r"(timed out after )[0-9.]+ seconds?")
