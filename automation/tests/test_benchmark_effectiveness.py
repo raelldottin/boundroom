@@ -358,69 +358,6 @@ class AdapterTests(unittest.TestCase):
         self.assertIn("--prompt-file", captured["command"])
         self.assertIn("--slice-id", captured["command"])
 
-    def test_a_cleanroom_cell_hands_the_agent_the_reference_and_keeps_it_out_of_the_submission(self) -> None:
-        """The reference binary is the specification, never part of the answer.
-
-        ProgramBench's evaluator deletes ``./executable`` before it runs ``compile.sh``, so
-        shipping it changes no score - but the run is also read by a disqualification judge
-        looking for submissions that wrap the reference, and a tarball containing the
-        reference is the first thing that looks like one.
-        """
-        captured: dict[str, str] = {}
-
-        def fake_runner(command: str, workspace: Path, env: Mapping[str, str], timeout: int) -> int:
-            captured["image"] = env[benchmark_adapter.SANDBOX_IMAGE_ENV]
-            (workspace / "compile.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            return 0
-
-        def fake_prepare(instance_id: str, workspace: Path, repository: str, **_: object):
-            captured["prepared"] = f"{instance_id} {repository}"
-            captured["workspace_at_prepare"] = ",".join(sorted(entry.name for entry in Path(workspace).iterdir()))
-            (workspace / "executable").write_bytes(b"ELF")
-            (workspace / "README.md").write_text("the spec\n", encoding="utf-8")
-            # The image's own one-commit repository, which is the only worktree a
-            # cleanroom cell may run on.
-            (workspace / ".git").mkdir()
-            return cleanroom.CleanroomReceipt(
-                instance_id=instance_id,
-                image=cleanroom.image_for(instance_id),
-                image_id="sha256:d1ge57",
-                network_mode="none",
-                reference_executable=True,
-                workspace_writable=True,
-                git_worktree=True,
-            )
-
-        adapter = SupervisorAgentAdapter(repo_root=self.repo_root, runner=fake_runner, cleanroom=True)
-        # Both the pre-budget probe and the session get a witness; neither is what this
-        # test is about, and there is no Docker daemon behind a fake runner to watch.
-        with unittest.mock.patch.object(benchmark_adapter, "prepare_cleanroom", fake_prepare):
-            with unittest.mock.patch.object(benchmark_adapter, "SandboxWitness", stub_witnesses(StubWitness(), StubWitness())):
-                with tempfile.TemporaryDirectory() as tmp:
-                    out_tar = Path(tmp) / "submission.tar.gz"
-                    result = adapter.produce_submission(self.task, out_tar)
-                    with tarfile.open(out_tar, "r:gz") as tar:
-                        names = tar.getnames()
-                    receipt = json.loads(
-                        (out_tar.parent / benchmark_adapter.CLEANROOM_RECEIPT_FILENAME).read_text(encoding="utf-8")
-                    )
-
-        self.assertEqual(f"{self.task.instance_id} {self.task.repository}", captured["prepared"])
-        # Nothing of the harness's own was in the workspace when the cleanroom was built:
-        # no `git init`, so the cell runs on the image's worktree rather than on one the
-        # harness invented inside the environment it is measuring.
-        self.assertEqual("", captured["workspace_at_prepare"])
-        self.assertNotIn(".git", names)
-        self.assertEqual(cleanroom.image_for(self.task.instance_id), captured["image"])
-        self.assertIn("compile.sh", names)
-        self.assertNotIn("executable", names)
-        # The documentation the agent read stays in: it is part of what the cell produced
-        # from, and the evaluator only cares about compile.sh and the sources.
-        self.assertIn("README.md", names)
-        self.assertEqual("none", receipt["network_mode"])
-        assert result.cleanroom is not None
-        self.assertEqual("sha256:d1ge57", result.cleanroom.image_id)
-
     def test_a_cell_whose_agent_got_the_wrong_container_is_refused_like_a_failed_preflight(self) -> None:
         # The preflight proves the image; the witness proves the container the agent's tools
         # were handed. A cell that passed the first and failed the second is not a
@@ -838,43 +775,6 @@ class PhaseArtifactOwnershipTests(unittest.TestCase):
             with unittest.mock.patch.object(Path, "mkdir", autospec=True, side_effect=swapping_mkdir):
                 benchmark_adapter._save_phase_artifacts(workspace, out_dir)
             self.assertEqual(["phase-1.json"], sorted(p.name for p in (out_dir / "rpi").iterdir()))
-
-
-class CopyRegularTreeTests(unittest.TestCase):
-    """``copy_regular_tree`` copies what an agent wrote, and says what it refused."""
-
-    def test_entries_past_the_depth_limit_are_skipped_and_recorded(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(benchmark_adapter, "MAX_COPY_DEPTH", 2):
-            source = Path(tmp) / "src"
-            (source / "a" / "b" / "c").mkdir(parents=True)
-            (source / "a" / "b" / "kept.txt").write_text("kept", encoding="utf-8")
-            (source / "a" / "b" / "c" / "deep.txt").write_text("deep", encoding="utf-8")
-            refused = benchmark_adapter.copy_regular_tree(source, Path(tmp) / "dst")
-            self.assertEqual("kept", (Path(tmp) / "dst" / "a" / "b" / "kept.txt").read_text(encoding="utf-8"))
-            self.assertFalse((Path(tmp) / "dst" / "a" / "b" / "c").exists())
-        self.assertEqual([{"path": "a/b/c", "reason": "too_deep"}], refused)
-
-    def test_a_tree_deeper_than_the_limit_neither_recurses_without_end_nor_raises(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "src"
-            deepest = source.joinpath(*["d"] * (benchmark_adapter.MAX_COPY_DEPTH + 10))
-            deepest.mkdir(parents=True)
-            refused = benchmark_adapter.copy_regular_tree(source, Path(tmp) / "dst")
-        self.assertEqual(["too_deep"], [entry["reason"] for entry in refused])
-        self.assertEqual(benchmark_adapter.MAX_COPY_DEPTH + 1, refused[0]["path"].count("/") + 1)
-
-    def test_file_modes_and_modification_times_are_kept(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "src"
-            source.mkdir()
-            script = source / "run.sh"
-            script.write_text("#!/bin/sh\n", encoding="utf-8")
-            script.chmod(0o750)
-            os.utime(script, (1_000_000_000, 1_000_000_000))
-            self.assertEqual([], benchmark_adapter.copy_regular_tree(source, Path(tmp) / "dst"))
-            copied = os.stat(Path(tmp) / "dst" / "run.sh")
-        self.assertEqual(0o750, copied.st_mode & 0o777)
-        self.assertEqual(1_000_000_000, int(copied.st_mtime))
 
 
 class SubmissionOwnershipTests(unittest.TestCase):

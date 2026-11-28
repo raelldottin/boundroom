@@ -424,6 +424,23 @@ def copy_regular_tree_from(root: int, destination: Path) -> list[dict[str, str]]
     return refused
 
 
+def entry_open_refusal(error: OSError) -> Optional[str]:
+    """Why a listed entry that could not be opened is refused, or None when it is simply gone.
+
+    The entry was listed a moment earlier, so a missing one was removed since (nothing to copy,
+    nothing refused) and a link was swapped in since (``symlink``). Anything else the harness
+    can't open is ``unreadable``. Running out of descriptors is the harness's failure, not the
+    entry's, so the error is raised again rather than recorded against it.
+    """
+    if error.errno == errno.ENOENT:
+        return None
+    if error.errno == errno.ELOOP:
+        return "symlink"
+    if error.errno in (errno.EMFILE, errno.ENFILE):
+        raise error
+    return "unreadable"
+
+
 def _copy_regular_entries(directory: int, destination: Path, prefix: str, depth: int, refused: list[dict[str, str]]) -> None:
     """Copy the real directories and single-name regular files under an open directory descriptor."""
     destination.mkdir(parents=True, exist_ok=True)
@@ -440,15 +457,10 @@ def _copy_regular_entries(directory: int, destination: Path, prefix: str, depth:
         relative = prefix + name
         try:
             descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-        except FileNotFoundError:
-            continue  # Gone since the listing: nothing to copy, nothing refused.
         except OSError as error:
-            if error.errno == errno.ELOOP:
-                refused.append({"path": relative, "reason": "symlink"})  # Swapped for a link since the listing.
-            elif error.errno in (errno.EMFILE, errno.ENFILE):
-                raise
-            else:
-                refused.append({"path": relative, "reason": "unreadable"})
+            reason = entry_open_refusal(error)
+            if reason is not None:
+                refused.append({"path": relative, "reason": reason})
             continue
         try:
             info = os.fstat(descriptor)
