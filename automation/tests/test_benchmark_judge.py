@@ -4,13 +4,14 @@ import io
 import json
 import os
 import shlex
+import shutil
 import tarfile
 import tempfile
 import types
 import unittest
 import unittest.mock
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from automation.benchmark import judge as judge_module
 from automation.benchmark import lanes as lanes_module
@@ -124,10 +125,62 @@ class ParseVerdictTests(unittest.TestCase):
                 self.assertEqual(error, verdict.error)
                 self.assertFalse(verdict.passes(0))
 
-    def test_reasons_are_capped_in_number_and_length(self) -> None:
+    def test_reasons_are_capped_at_five_of_three_hundred_characters(self) -> None:
         verdict = self._parse(json.dumps({"score": 9, "good_enough": True, "reasons": ["x" * 1000] * 9}))
-        self.assertEqual(judge_module.MAX_REASONS, len(verdict.reasons))
-        self.assertTrue(all(len(reason) == judge_module.MAX_REASON_CHARS for reason in verdict.reasons))
+        self.assertEqual(5, len(verdict.reasons))
+        self.assertEqual({300}, {len(reason) for reason in verdict.reasons})
+
+    def test_scores_at_both_ends_of_the_scale_are_valid(self) -> None:
+        for score in (0, 10):
+            with self.subTest(score=score):
+                verdict = self._parse(json.dumps({"score": score, "good_enough": True}))
+                self.assertIsNone(verdict.error)
+                self.assertEqual(score, verdict.score)
+                self.assertEqual((), verdict.reasons)
+
+    def test_a_score_below_zero_is_invalid(self) -> None:
+        self.assertEqual("verdict_invalid_score", self._parse(json.dumps({"score": -1, "good_enough": True})).error)
+
+    def test_a_verdict_of_exactly_64_kib_is_read_and_one_byte_more_is_refused(self) -> None:
+        body = json.dumps({"score": 9, "good_enough": True})
+        exact = body + " " * (64 * 1024 - len(body))
+        self.assertIsNone(self._parse(exact).error)
+        self.assertEqual("verdict_not_a_regular_file", self._parse(exact + " ").error)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
+    def test_a_verdict_the_harness_cannot_open_is_unreadable_not_a_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "verdict.json"
+            path.write_text(json.dumps({"score": 10, "good_enough": True}), encoding="utf-8")
+            path.chmod(0)
+            verdict = parse_verdict(path)
+        self.assertEqual("verdict_unreadable", verdict.error)
+        self.assertFalse(verdict.passes(0))
+
+
+class JudgePromptTests(unittest.TestCase):
+    def _prompt(self, failing: list[str]) -> str:
+        return judge_module.judge_prompt(TASK, InstanceScore(TASK.instance_id, 40, 40 - len(failing)), failing)
+
+    def test_the_prompt_shows_at_most_twenty_failing_tests_and_counts_the_rest(self) -> None:
+        prompt = self._prompt([f"t{n}" for n in range(25)])
+        self.assertIn("`t19`", prompt)
+        self.assertIn("and 5 more", prompt)
+        self.assertNotIn("`t20`", prompt)
+
+    def test_exactly_twenty_failing_tests_are_all_shown(self) -> None:
+        prompt = self._prompt([f"t{n}" for n in range(20)])
+        self.assertIn("- `t19`", prompt)
+        self.assertNotIn("more", prompt)
+
+    def test_no_failing_tests_reads_as_none(self) -> None:
+        prompt = self._prompt([])
+        self.assertIn("none", prompt.split("Failing tests:", 1)[1].split("##", 1)[0])
+
+    def test_the_prompt_states_the_scale_and_the_reason_limit(self) -> None:
+        prompt = self._prompt([])
+        self.assertIn('{"score": <integer 0-10>, "good_enough": <true or false>, "reasons": ["<one sentence>"]}', prompt)
+        self.assertIn("Give at most 5 reasons.", prompt)
 
 
 class JudgeSessionTests(unittest.TestCase):
@@ -335,15 +388,122 @@ class JudgeOutputTrustTests(unittest.TestCase):
             sorted(record["refused"], key=lambda entry: entry["path"]),
         )
 
-    def test_a_failure_copying_the_record_is_the_cells_error_not_a_crash(self) -> None:
-        for failure in (OSError(24, "Too many open files"), RecursionError("maximum recursion depth exceeded")):
-            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as tmp:
-                with unittest.mock.patch.object(judge_module, "copy_regular_tree", side_effect=failure):
-                    verdict, record_dir = self._judge(FakeJudge(), Path(tmp))
-                    record = json.loads((record_dir / judge_module.REFUSED_FILENAME).read_text(encoding="utf-8"))
-                self.assertEqual("judge_record_unreadable", verdict.error)
-                self.assertFalse(verdict.passes(0))
-                self.assertIn(type(failure).__name__, record["error"])
+    def test_an_archive_exactly_at_both_caps_is_judged(self) -> None:
+        fake = FakeJudge()
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            unittest.mock.patch.multiple(judge_module, MAX_SUBMISSION_BYTES=10, MAX_SUBMISSION_MEMBERS=2),
+        ):
+            verdict, _ = self._judge(fake, Path(tmp), {"a.c": "x" * 4, "b.c": "y" * 6})
+        self.assertIsNone(verdict.error)
+        self.assertEqual(["submission", "submission/a.c", "submission/b.c"], fake.calls[0]["files"])
+
+    def test_the_size_cap_counts_every_file_in_the_archive(self) -> None:
+        fake = FakeJudge()
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(judge_module, "MAX_SUBMISSION_BYTES", 10):
+            verdict, _ = self._judge(fake, Path(tmp), {"a.c": "x" * 6, "b.c": "y" * 6})
+        self.assertEqual("submission_too_large", verdict.error)
+        self.assertEqual([], fake.calls)
+
+    def test_a_verdict_that_is_a_fifo_is_refused_as_special(self) -> None:
+        def fifo_judge(command, workspace, env, timeout):
+            os.mkfifo(Path(workspace) / judge_module.VERDICT_FILENAME)
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict, record_dir = self._judge(fifo_judge, Path(tmp))
+            record = json.loads((record_dir / judge_module.REFUSED_FILENAME).read_text(encoding="utf-8"))
+        self.assertEqual("verdict_not_a_regular_file", verdict.error)
+        self.assertEqual([{"path": "verdict.json", "reason": "special"}], record["refused"])
+
+    def test_a_sessions_directory_that_is_a_symlink_is_refused_whole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secrets_dir = root / "secrets"
+            secrets_dir.mkdir()
+            (secrets_dir / "id_ed25519").write_text("PRIVATE", encoding="utf-8")
+
+            def linking_judge(command, workspace, env, timeout):
+                Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).symlink_to(secrets_dir, target_is_directory=True)
+                return FakeJudge()(command, workspace, env, timeout)
+
+            verdict, record_dir = self._judge(linking_judge, root)
+            record = json.loads((record_dir / judge_module.REFUSED_FILENAME).read_text(encoding="utf-8"))
+            copied = (record_dir / "agent-sessions").exists()
+        self.assertTrue(verdict.passes(7))
+        self.assertEqual({"refused": [{"path": "agent-sessions", "reason": "symlink"}], "error": None}, record)
+        self.assertFalse(copied)
+
+    def test_an_earlier_refusal_record_is_removed_even_when_the_submission_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record_dir = root / "rec"
+            record_dir.mkdir()
+            (record_dir / judge_module.REFUSED_FILENAME).write_text('{"refused": [], "error": null}', encoding="utf-8")
+            (root / "s.tar.gz").write_bytes(b"not a gzip stream")
+            verdict = Judge(REPO_ROOT, runner=FakeJudge()).judge(
+                TASK, root / "s.tar.gz", InstanceScore(TASK.instance_id, 1, 1), [], record_dir
+            )
+            self.assertEqual("submission_unreadable", verdict.error)
+            self.assertFalse((record_dir / judge_module.REFUSED_FILENAME).exists())
+
+    @unittest.skipIf(os.geteuid() == 0, "root deletes a file whatever its directory's mode")
+    def test_files_the_session_leaves_undeletable_do_not_cost_the_verdict(self) -> None:
+        for where in ("workspace", "control"):
+            locked: list[Path] = []
+
+            def locking_judge(command, workspace, env, timeout, where=where, locked=locked):
+                base = Path(workspace) if where == "workspace" else Path(env["BOUNDROOM_HERMES_USAGE_DIR"]).parent
+                directory = base / "locked"
+                directory.mkdir()
+                (directory / "kept.txt").write_text("x", encoding="utf-8")
+                directory.chmod(0o500)
+                locked.append(directory)
+                return FakeJudge()(command, workspace, env, timeout)
+
+            with self.subTest(where=where), tempfile.TemporaryDirectory() as tmp:
+                try:
+                    verdict, _ = self._judge(locking_judge, Path(tmp))
+                finally:
+                    for directory in locked:
+                        if directory.exists():
+                            directory.chmod(0o700)
+                        shutil.rmtree(directory.parent, ignore_errors=True)
+                self.assertTrue(verdict.passes(7))
+
+    def test_a_record_that_cannot_be_written_is_the_cells_error_not_a_crash(self) -> None:
+        def reporting_judge(command, workspace, env, timeout):
+            sessions = Path(env["BOUNDROOM_HERMES_USAGE_DIR"])
+            sessions.mkdir(parents=True)
+            (sessions / "judge.usage.json").write_text("{}", encoding="utf-8")
+            return FakeJudge()(command, workspace, env, timeout)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            record_dir = Path(tmp) / "rec"
+            record_dir.mkdir()
+            # A file where the session reports' copy has to go: the copy can't make its directory.
+            (record_dir / "agent-sessions").write_text("", encoding="utf-8")
+            verdict, _ = self._judge(reporting_judge, Path(tmp))
+            record = json.loads((record_dir / judge_module.REFUSED_FILENAME).read_text(encoding="utf-8"))
+            verdict_kept = (record_dir / judge_module.VERDICT_FILENAME).exists()
+        self.assertEqual("judge_record_unreadable", verdict.error)
+        self.assertEqual(0, verdict.returncode)
+        self.assertFalse(verdict.passes(0))
+        self.assertFalse(verdict_kept)
+        self.assertEqual([], record["refused"])
+        self.assertTrue(record["error"].startswith("FileExistsError: "))
+
+    def test_running_out_of_stack_while_copying_the_record_is_the_cells_error(self) -> None:
+        # MAX_COPY_DEPTH bounds the copy's recursion, so no tree on disk exhausts the stack; the
+        # stub stands in for a harness already deep in its own.
+        failure = RecursionError("maximum recursion depth exceeded")
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(judge_module, "copy_regular_tree", side_effect=failure):
+                verdict, record_dir = self._judge(FakeJudge(), Path(tmp))
+            record = json.loads((record_dir / judge_module.REFUSED_FILENAME).read_text(encoding="utf-8"))
+        self.assertEqual("judge_record_unreadable", verdict.error)
+        self.assertFalse(verdict.passes(0))
+        self.assertTrue(record["error"].startswith("RecursionError"))
 
 
 class StopGateDecisionTests(unittest.TestCase):
@@ -516,14 +676,122 @@ class StopGateDecisionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 StopGate(judge=Judge(REPO_ROOT, runner=FakeJudge()))
 
+    def test_a_judge_timeout_of_one_second_is_allowed(self) -> None:
+        fake = FakeJudge()
+        with tempfile.TemporaryDirectory() as tmp:
+            submission = _submission(Path(tmp) / "s.tar.gz", {"main.c": ""})
+            Judge(REPO_ROOT, runner=fake, timeout_seconds=1).judge(
+                TASK, submission, InstanceScore(TASK.instance_id, 1, 1), [], Path(tmp) / "rec"
+            )
+        self.assertEqual(1, fake.calls[0]["timeout"])
+
     def test_settings_out_of_range_are_refused(self) -> None:
         judge = Judge(REPO_ROOT, runner=FakeJudge())
-        with self.assertRaises(ValueError):
-            StopGate(judge=judge, min_repeats=0)
-        with self.assertRaises(ValueError):
-            StopGate(judge=judge, min_score=11)
-        with self.assertRaises(ValueError):
-            StopGate(judge=judge, pass_fraction=1.5)
+        out_of_range: tuple[dict[str, Any], ...] = (
+            {"min_repeats": 0},
+            {"min_score": -1},
+            {"min_score": 11},
+            {"pass_fraction": -0.01},
+            {"pass_fraction": 1.01},
+        )
+        for settings in out_of_range:
+            with self.subTest(**settings), self.assertRaises(ValueError):
+                StopGate(judge=judge, **settings)
+
+    def test_settings_at_the_ends_of_their_ranges_are_allowed(self) -> None:
+        judge = Judge(REPO_ROOT, runner=FakeJudge())
+        at_the_ends: tuple[dict[str, Any], ...] = (
+            {"min_repeats": 1},
+            {"min_score": 0},
+            {"min_score": 10},
+            {"pass_fraction": 0.0},
+            {"pass_fraction": 1.0},
+        )
+        for settings in at_the_ends:
+            with self.subTest(**settings):
+                gate = StopGate(judge=judge, **settings)
+                self.assertEqual({**{"min_repeats": 2, "pass_fraction": 0.95, "min_score": 7}, **settings}, gate.settings)
+
+    def test_a_cell_with_no_test_executions_has_not_passed_the_tests(self) -> None:
+        fake = FakeJudge()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            _cell(run_dir, "A", 2, "inst", {"test_results": []})
+            record = self._decide(run_dir, fake, lanes=("A",), pass_fraction=0.0)
+        self.assertEqual(("continue", "tests_not_passed"), (record["decision"], record["reason"]))
+        self.assertEqual("tests_below_threshold", record["cells"][0]["status"])
+        self.assertEqual([], fake.calls)
+
+    def test_the_cell_record_keeps_the_pass_fraction_to_four_places(self) -> None:
+        nineteen_of_21 = {"test_results": [{"name": f"t{n}", "status": "passed" if n < 19 else "failed"} for n in range(21)]}
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            _cell(run_dir, "A", 2, "inst", nineteen_of_21)
+            cell = self._decide(run_dir, FakeJudge(), lanes=("A",))["cells"][0]
+        self.assertEqual(
+            {"lane": "A", "instance_id": "inst", "pass_fraction": 0.9048, "total_tests": 21, "status": "tests_below_threshold"},
+            {key: value for key, value in cell.items() if key != "judge_id"},
+        )
+
+    def test_the_round_record_is_written_as_indented_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            _cell(run_dir, "A", 1, "inst", PASSING_EVAL)
+            record = self._decide(run_dir, FakeJudge(), repeat=1, lanes=("A",))
+            text = (run_dir / "judge" / "r1" / "stop-gate.json").read_text(encoding="utf-8")
+        self.assertEqual(json.dumps(record, indent=2) + "\n", text)
+
+
+class SummarizeRoundsTests(unittest.TestCase):
+    def _write(self, run_dir: Path, repeat: int, decision: str, reason: str) -> None:
+        round_dir = run_dir / "judge" / f"r{repeat}"
+        round_dir.mkdir(parents=True)
+        record = {"round": repeat, "ceiling": 4, "decision": decision, "reason": reason, "settings": {"min_score": 7}}
+        (round_dir / "stop-gate.json").write_text(json.dumps(record), encoding="utf-8")
+
+    def test_a_run_without_round_records_has_no_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(judge_module.summarize_rounds(Path(tmp), 3))
+
+    def test_the_summary_ends_at_the_first_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write(run_dir, 1, "continue", "below_min_repeats")
+            self._write(run_dir, 2, "stop", "quality_reached")
+            self._write(run_dir, 3, "stop", "ceiling")
+            summary = judge_module.summarize_rounds(run_dir, 4)
+        self.assertEqual(
+            {
+                "settings": {"min_score": 7},
+                "ceiling": 4,
+                "repeats_run": 2,
+                "stopped_by": "quality_reached",
+                "rounds": [
+                    {"round": 1, "decision": "continue", "reason": "below_min_repeats"},
+                    {"round": 2, "decision": "stop", "reason": "quality_reached"},
+                ],
+            },
+            summary,
+        )
+
+    def test_the_summary_covers_only_the_repeats_asked_about(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            for repeat in (1, 2, 3):
+                self._write(run_dir, repeat, "continue", "judge_not_passed")
+            summary = judge_module.summarize_rounds(run_dir, 2)
+        assert summary is not None
+        self.assertEqual([1, 2], [entry["round"] for entry in summary["rounds"]])
+        self.assertEqual(2, summary["repeats_run"])
+
+    def test_the_summary_ends_at_the_first_missing_round(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._write(run_dir, 1, "continue", "below_min_repeats")
+            self._write(run_dir, 3, "stop", "ceiling")
+            summary = judge_module.summarize_rounds(run_dir, 3)
+        assert summary is not None
+        self.assertEqual((1, "below_min_repeats"), (summary["repeats_run"], summary["stopped_by"]))
 
 
 def _factory(lane: str) -> SupervisorAgentAdapter:
